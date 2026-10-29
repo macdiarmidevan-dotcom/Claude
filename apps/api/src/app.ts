@@ -6,7 +6,7 @@ import { AppError, notFound } from "./errors.ts";
 import { lookupApiKey, type ApiKeyContext } from "./keys.ts";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { buildMcpServer } from "./mcp.ts";
-import { dayRange, getAddOns, getCourseBySlug, getTeeSheet, type Course } from "./courses.ts";
+import { dayRange, getAddOns, getCourseBySlug, getRates, getTeeSheet, type Course } from "./courses.ts";
 import {
   createBooking,
   getBooking,
@@ -176,7 +176,8 @@ export function buildApp(db: Db): FastifyInstance {
   app.get("/v1/courses/:slug", async (req) => {
     const course = await courseFor(req);
     const { id, organizationId, ...publicFields } = course;
-    return { ...publicFields, addOns: await getAddOns(db, course.id) };
+    // Rates let the tee sheet show each time's price.
+    return { ...publicFields, addOns: await getAddOns(db, course.id), rates: await getRates(db, course.id) };
   });
 
   // Staff tee sheet: every tee time for the day with its bookings.
