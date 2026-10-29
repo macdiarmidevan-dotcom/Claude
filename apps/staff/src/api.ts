@@ -1,4 +1,5 @@
 // Typed client for the golf API. Staff use a secret (sk_) key for their course.
+import type { RateRule } from "@golf/core";
 import { createDemoClient, DEMO, DEMO_URL } from "./demo";
 
 export type Station = "proshop" | "starter";
@@ -17,6 +18,7 @@ export interface Course {
   timeZone: string;
   holes: number;
   addOns: { code: string; name: string; priceCents: number }[];
+  rates: RateRule[];
 }
 
 export type BookingStatus = "confirmed" | "checked_in" | "teed_off" | "cancelled" | "no_show";

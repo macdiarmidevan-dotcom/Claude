@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import type { Client, PaymentMethod, SheetBooking, SheetTeeTime, Station, Waiver } from "./api";
 import { WaiverModal } from "./WaiverModal";
-import { colors, formatTime, money, paymentMethodLabel, statusColor, statusLabel } from "./theme";
+import { colors, type WebPress, formatTime, money, paymentMethodLabel, statusColor, statusLabel } from "./theme";
 
 interface Props {
   client: Client;
@@ -14,23 +14,14 @@ interface Props {
   onClose: () => void;
 }
 
-/** Native confirm dialogs on iOS/Android, window.confirm on the web. */
-function confirm(title: string, message: string, action: string): Promise<boolean> {
-  if (Platform.OS === "web") return Promise.resolve(window.confirm(`${title}\n\n${message}`));
-  return new Promise((resolve) =>
-    Alert.alert(title, message, [
-      { text: "Keep", style: "cancel", onPress: () => resolve(false) },
-      { text: action, style: "destructive", onPress: () => resolve(true) },
-    ]),
-  );
-}
-
 export function TeeTimePanel({ client, teeTime, sheet, courseHoles, station, onChanged, onClose }: Props) {
   const [error, setError] = useState<string>();
   const [moving, setMoving] = useState<SheetBooking>();
   // sendOff: the starter is sending the group off the tee; otherwise just editing carts.
   const [cartsFor, setCartsFor] = useState<{ booking: SheetBooking; sendOff: boolean }>();
   const [payingFor, setPayingFor] = useState<SheetBooking>();
+  // Asked on the page rather than in a pop-up dialog, which some browsers and screen readers block.
+  const [cancelling, setCancelling] = useState<string>();
   // Carts waiting on their drivers' waiver signatures before they're saved.
   const [signing, setSigning] = useState<{ booking: SheetBooking; carts: string[]; unsigned: string[]; sendOff: boolean; waiver: Waiver }>();
   const [note, setNote] = useState(teeTime.note ?? "");
@@ -61,7 +52,7 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, station, onC
         </Pressable>
       </View>
 
-      {error && <Text style={styles.error}>{error}</Text>}
+      {error && <Text style={styles.error} accessibilityLiveRegion="assertive" role="alert">{error}</Text>}
 
       <Text style={styles.section}>Groups</Text>
       {active.length === 0 && <Text style={styles.muted}>No one booked yet.</Text>}
@@ -86,7 +77,7 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, station, onC
           {station === "starter" && b.status === "confirmed" && (
             <Text style={styles.warning}>Not checked in at the pro shop yet</Text>
           )}
-          {cartsFor?.booking.id !== b.id && moving?.id !== b.id && payingFor?.id !== b.id && (
+          {cartsFor?.booking.id !== b.id && moving?.id !== b.id && payingFor?.id !== b.id && cancelling !== b.id && (
             <View style={styles.actions}>
               {station === "proshop" && (b.status === "confirmed" || b.status === "no_show") && (
                 <Action
@@ -104,16 +95,26 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, station, onC
               {b.status === "confirmed" && <Action label="No-show" onPress={() => run(() => client.noShow(b.id))} />}
               {(b.status === "confirmed" || b.status === "checked_in") && <Action label="Move" onPress={() => setMoving(b)} />}
               {b.status === "confirmed" && (
+                <Action label="Cancel" danger onPress={() => setCancelling(b.id)} />
+              )}
+            </View>
+          )}
+          {cancelling === b.id && (
+            <View style={{ marginTop: 10 }} accessibilityLiveRegion="polite">
+              <Text style={styles.muted}>
+                Cancel {b.customerName}'s booking for {b.players} {b.players === 1 ? "player" : "players"}? Their spots open up again.
+              </Text>
+              <View style={styles.actions}>
                 <Action
-                  label="Cancel"
+                  label="Cancel booking"
                   danger
-                  onPress={async () => {
-                    if (await confirm("Cancel booking?", `${b.customerName}, ${b.players} players`, "Cancel booking")) {
-                      run(() => client.cancel(b.id));
-                    }
+                  onPress={() => {
+                    setCancelling(undefined);
+                    run(() => client.cancel(b.id));
                   }}
                 />
-              )}
+                <Action label="Keep booking" onPress={() => setCancelling(undefined)} />
+              </View>
             </View>
           )}
           {payingFor?.id === b.id && (
@@ -223,8 +224,9 @@ function Action({ label, onPress, primary, danger }: { label: string; onPress: (
     <Pressable
       accessibilityRole="button"
       onPress={onPress}
-      style={({ pressed }) => [
+      style={({ pressed, focused }: WebPress) => [
         styles.action,
+        focused && { outlineColor: colors.focus, outlineWidth: 2, outlineStyle: "solid" } as object,
         primary && { backgroundColor: colors.green, borderColor: colors.green },
         danger && { borderColor: colors.noShow },
         pressed && { opacity: 0.7 },

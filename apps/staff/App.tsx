@@ -4,7 +4,7 @@ import { StatusBar } from "expo-status-bar";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { Settings } from "./src/api";
 import { SetupScreen } from "./src/SetupScreen";
-import { TeeSheetScreen } from "./src/TeeSheetScreen";
+import { Workspace } from "./src/Workspace";
 import { colors } from "./src/theme";
 import { DEMO, DEMO_URL } from "./src/demo";
 
@@ -45,7 +45,7 @@ export default function App() {
           <ActivityIndicator color="#fff" />
         </View>
       ) : settings ? (
-        <TeeSheetScreen settings={settings} onChangeSettings={save} onSignOut={signOut} />
+        <Workspace settings={settings} onChangeSettings={save} onSignOut={signOut} />
       ) : (
         <SetupScreen initial={lastSettings} onSave={save} />
       )}

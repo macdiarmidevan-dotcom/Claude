@@ -154,7 +154,7 @@ export function createDemoClient(apiKey: string): Client {
   }, 120));
 
   return {
-    course: () => reply(() => ({ ...riverBend, addOns: riverBendAddOns })),
+    course: () => reply(() => ({ ...riverBend, addOns: riverBendAddOns, rates: riverBendRates })),
     teeSheet: (date: string) =>
       reply(() => {
         ensureDay(date);

@@ -26,3 +26,19 @@ export function nowIn(timeZone: string): string {
     new Date(),
   );
 }
+
+/** The Monday on or before a date, so the week strip always runs Monday to Sunday. */
+export function weekStart(date: string): string {
+  const day = new Date(`${date}T12:00:00Z`).getUTCDay(); // 0 = Sunday
+  return addDays(date, -((day + 6) % 7));
+}
+
+/** "Mon" and "18" for the week strip. */
+export function dayParts(date: string): { weekday: string; day: string; long: string } {
+  const d = new Date(`${date}T12:00:00Z`);
+  return {
+    weekday: d.toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" }),
+    day: String(d.getUTCDate()),
+    long: formatDate(date),
+  };
+}
