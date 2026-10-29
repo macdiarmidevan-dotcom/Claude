@@ -13,6 +13,7 @@ const METHODS: { id: SalePaymentMethod; label: string }[] = [
   { id: "card", label: "Card" },
   { id: "cash", label: "Cash" },
   { id: "gift_card", label: "Gift card" },
+  { id: "house_account", label: "House account" },
   { id: "comp", label: "Comp" },
 ];
 const methodLabel = (m: string) => METHODS.find((x) => x.id === m)?.label ?? m;
@@ -106,6 +107,8 @@ function Register({ client, products, onSold }: { client: Client; products: Prod
   const [custom, setCustom] = useState(false);
   const [taxBps, setTaxBps] = useState(0);
   const [method, setMethod] = useState<SalePaymentMethod>("card");
+  // Left empty for a paper gift certificate the shop doesn't track.
+  const [giftCode, setGiftCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [done, setDone] = useState<Sale>();
@@ -146,7 +149,9 @@ function Register({ client, products, onSold }: { client: Client; products: Prod
         paymentMethod: method,
         golferId: golfer?.id ?? null,
         ...(cardPaymentId ? { cardPaymentId } : {}),
+        ...(method === "gift_card" && giftCode.trim() ? { giftCardCode: giftCode.trim() } : {}),
       });
+      setGiftCode("");
       setDone(sale);
       setTicket([]);
       setGolfer(null);
@@ -244,12 +249,28 @@ function Register({ client, products, onSold }: { client: Client; products: Prod
               <Chip key={m.id} label={m.label} on={method === m.id} onPress={() => setMethod(m.id)} />
             ))}
           </View>
+          {method === "gift_card" && (
+            <TextInput
+              accessibilityLabel="Gift card code"
+              placeholder="Gift card code (blank for a paper certificate)"
+              autoCapitalize="characters"
+              value={giftCode}
+              onChangeText={setGiftCode}
+              style={[styles.input, { marginTop: 8 }]}
+            />
+          )}
+          {method === "house_account" && !golfer && <Text style={[styles.small, { color: colors.warn, marginTop: 8 }]}>Add the golfer's account to the sale to charge it.</Text>}
           {method === "card" && reader.needsReader && (
             <Text style={[styles.small, { color: colors.warn, marginTop: 8 }]}>Pick this device's card reader in Settings to send cards to it.</Text>
           )}
           {error && <Text role="alert" style={styles.error}>{error}</Text>}
           <View style={[styles.choices, { marginTop: 14 }]}>
-            <Button label={busy ? "Charging…" : `Charge ${money(subtotal + tax)}`} primary disabled={busy} onPress={() => charge()} />
+            <Button
+              label={busy ? "Charging…" : method === "house_account" ? `Charge ${money(subtotal + tax)} to account` : `Charge ${money(subtotal + tax)}`}
+              primary
+              disabled={busy || (method === "house_account" && !golfer)}
+              onPress={() => charge()}
+            />
             <Button label="Clear" disabled={busy} onPress={() => setTicket([])} />
           </View>
           {charging && reader.terminal && (

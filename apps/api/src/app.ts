@@ -84,6 +84,21 @@ import {
   setStandingTimeActive,
   updateEvent,
 } from "./events.ts";
+import {
+  adjustAccount,
+  adjustGiftCard,
+  findGiftCard,
+  getAccount,
+  getGiftCard,
+  getStatement,
+  listAccounts,
+  listGiftCards,
+  openAccount,
+  payAccount,
+  runStatements,
+  sellGiftCard,
+  updateAccount,
+} from "./accounts.ts";
 import { addTabItems, closeTab, getTab, listTabs, openTab, prepTickets, renameTab, setItemStatus, voidTab, voidTabItem } from "./tabs.ts";
 import { findRainCheck, getRainCheckDays, issueRainCheck, listRainChecks, refundRound, saveRainCheckDays, voidRainCheck } from "./rainchecks.ts";
 import { deleteSync, getSync, runSync, saveSync, type FetchReport } from "./sync.ts";
@@ -204,6 +219,13 @@ const ACTIONS: Record<string, string> = {
   "POST /v1/courses/:slug/tabs/:id/close": "Closed a tab",
   "POST /v1/courses/:slug/tabs/:id/void": "Voided a tab",
   "DELETE /v1/courses/:slug/tabs/:id/items/:itemId": "Took an item off a tab",
+  "POST /v1/courses/:slug/gift-cards": "Sold a gift card",
+  "POST /v1/courses/:slug/gift-cards/:id/adjust": "Changed a gift card",
+  "POST /v1/courses/:slug/house-accounts": "Opened a house account",
+  "PATCH /v1/courses/:slug/house-accounts/:id": "Changed a house account",
+  "POST /v1/courses/:slug/house-accounts/:id/payments": "Took a house account payment",
+  "POST /v1/courses/:slug/house-accounts/:id/adjust": "Adjusted a house account",
+  "POST /v1/courses/:slug/house-accounts/statements": "Made house account statements",
 };
 
 const player = z.object({
@@ -251,22 +273,25 @@ const waiverSignature = z.object({
     .regex(/^[MLQCZmlqcz0-9.,\s-]+$/, "signature must be SVG path data"),
 });
 const waivers = z.array(waiverSignature).max(8).optional();
-const paymentMethod = z.enum(["card", "cash", "prepaid", "punch_card", "season_pass", "loyalty", "rain_check", "gift_card", "comp"]);
+const paymentMethod = z.enum(["card", "cash", "prepaid", "punch_card", "season_pass", "loyalty", "rain_check", "gift_card", "house_account", "comp"]);
 const saleLine = z.union([
   z.object({ productId: z.uuid(), quantity: z.number().int().min(1).max(999) }),
   z.object({ description: z.string().max(200), unitCents: z.number().int().min(0).max(10_000_000), quantity: z.number().int().min(1).max(999), taxable: z.boolean().optional() }),
 ]);
-const salePaymentMethod = z.enum(["card", "cash", "gift_card", "comp"]);
+const salePaymentMethod = z.enum(["card", "cash", "gift_card", "house_account", "comp"]);
+const giftCardCode = z.string().trim().min(6).max(20);
 const checkInBody = z.object({
   cartNumbers: cartNumbers.optional(),
   waivers,
   payment: z.object({ method: paymentMethod }).optional(),
-  items: z.object({ lines: z.array(saleLine).max(100), paymentMethod: salePaymentMethod }).optional(),
+  items: z.object({ lines: z.array(saleLine).max(100), paymentMethod: salePaymentMethod, giftCardCode: giftCardCode.optional() }).optional(),
   round: z.object({ residency: z.enum(["resident", "nonresident"]), riding: z.boolean() }).optional(),
   cardPaymentId: z.uuid().optional(),
   pass: z.object({ golferPassId: z.uuid(), rounds: z.number().int().min(1).max(8) }).optional(),
   points: z.number().int().positive().max(10_000_000).optional(),
   rainCheck: z.string().trim().min(4).max(20).optional(),
+  /** A gift card put toward the round; anything it doesn't cover is paid the usual way. */
+  giftCard: giftCardCode.optional(),
 });
 const teeOffBody = z.object({ cartNumbers: cartNumbers.optional(), waivers });
 const cartsBody = z.object({ cartNumbers, waivers });
@@ -626,7 +651,7 @@ export function buildApp(db: Db, opts: { fetchReport?: FetchReport; paymentsFetc
   app.post("/v1/courses/:slug/sales", async (req, reply) => {
     const course = await courseFor(req);
     const body = z
-      .object({ lines: z.array(saleLine).max(100), paymentMethod: salePaymentMethod, golferId: z.uuid().nullish(), cardPaymentId: z.uuid().nullish() })
+      .object({ lines: z.array(saleLine).max(100), paymentMethod: salePaymentMethod, golferId: z.uuid().nullish(), cardPaymentId: z.uuid().nullish(), giftCardCode: giftCardCode.nullish() })
       .parse(req.body);
     return reply.status(201).send(await createSale(db, course, req.staff?.user.id, body));
   });
@@ -896,6 +921,74 @@ export function buildApp(db: Db, opts: { fetchReport?: FetchReport; paymentsFetc
     return reply.status(201).send(await addEventPayment(db, course, req.staff?.user.id, idParams.parse(req.params).id, body));
   });
 
+  // Gift cards and house accounts. Anyone can sell a gift card, look one up, or take a payment on
+  // an account; managers open accounts, set limits, fix balances and make the monthly statements.
+  app.get("/v1/courses/:slug/gift-cards", async (req) => {
+    const course = await courseFor(req);
+    const { q, code } = z.object({ q: z.string().max(100).optional(), code: z.string().max(30).optional() }).parse(req.query);
+    return code ? findGiftCard(db, course, code) : listGiftCards(db, course, { q });
+  });
+  app.get("/v1/courses/:slug/gift-cards/:id", async (req) => getGiftCard(db, await courseFor(req), idParams.parse(req.params).id));
+  app.post("/v1/courses/:slug/gift-cards", async (req, reply) => {
+    const body = z
+      .object({
+        amountCents: z.number().int().min(100).max(1_000_000),
+        method: z.enum(["card", "cash", "check", "comp"]),
+        cardPaymentId: z.uuid().nullish(),
+        golferId: z.uuid().nullish(),
+        recipientName: z.string().max(100).nullish(),
+        code: giftCardCode.nullish(),
+        note: z.string().max(300).nullish(),
+      })
+      .parse(req.body);
+    // Giving a card away (a prize or a make-good) is a manager's call.
+    const course = body.method === "comp" ? await managedCourseFor(req) : await courseFor(req);
+    return reply.status(201).send(await sellGiftCard(db, course, req.staff?.user.id, body));
+  });
+  app.post("/v1/courses/:slug/gift-cards/:id/adjust", async (req) => {
+    const course = await managedCourseFor(req);
+    const body = z.object({ changeCents: z.number().int().min(-1_000_000).max(1_000_000).optional(), void: z.boolean().optional(), note: z.string().max(300) }).parse(req.body);
+    return adjustGiftCard(db, course, req.staff?.user.id, idParams.parse(req.params).id, body);
+  });
+  app.get("/v1/courses/:slug/house-accounts", async (req) => listAccounts(db, await courseFor(req)));
+  app.get("/v1/courses/:slug/house-accounts/:id", async (req) => getAccount(db, await courseFor(req), idParams.parse(req.params).id));
+  app.post("/v1/courses/:slug/house-accounts", async (req, reply) => {
+    const course = await managedCourseFor(req);
+    const body = z
+      .object({ golferId: z.uuid(), creditLimitCents: z.number().int().min(0).max(10_000_000).nullish(), billingEmail: z.email().nullish(), notes: z.string().max(500).nullish() })
+      .parse(req.body);
+    return reply.status(201).send(await openAccount(db, course, body));
+  });
+  app.patch("/v1/courses/:slug/house-accounts/:id", async (req) => {
+    const course = await managedCourseFor(req);
+    const body = z
+      .object({
+        creditLimitCents: z.number().int().min(0).max(10_000_000).nullish(),
+        status: z.enum(["active", "suspended", "closed"]).optional(),
+        billingEmail: z.email().nullish(),
+        notes: z.string().max(500).nullish(),
+      })
+      .parse(req.body);
+    return updateAccount(db, course, idParams.parse(req.params).id, body);
+  });
+  app.post("/v1/courses/:slug/house-accounts/:id/payments", async (req, reply) => {
+    const course = await courseFor(req);
+    const body = z
+      .object({ amountCents: z.number().int().min(1).max(10_000_000), method: z.enum(["card", "cash", "check"]), cardPaymentId: z.uuid().nullish(), note: z.string().max(200).nullish() })
+      .parse(req.body);
+    return reply.status(201).send(await payAccount(db, course, req.staff?.user.id, idParams.parse(req.params).id, body));
+  });
+  app.post("/v1/courses/:slug/house-accounts/:id/adjust", async (req) => {
+    const course = await managedCourseFor(req);
+    const body = z.object({ amountCents: z.number().int().min(-10_000_000).max(10_000_000).refine((n) => n !== 0, "Enter an amount"), description: z.string().max(200) }).parse(req.body);
+    return adjustAccount(db, course, req.staff?.user.id, idParams.parse(req.params).id, body);
+  });
+  app.post("/v1/courses/:slug/house-accounts/statements", async (req) => {
+    const course = await managedCourseFor(req);
+    return runStatements(db, course, z.object({ month: z.string().regex(/^\d{4}-\d{2}$/) }).parse(req.body).month);
+  });
+  app.get("/v1/courses/:slug/statements/:id", async (req) => getStatement(db, await courseFor(req), idParams.parse(req.params).id));
+
   // Food and bar: open tabs, the kitchen and bar screens, and paying a tab at the end.
   const isManager = (req: FastifyRequest) => req.apiKey!.role === "manager";
   const tabItem = z.union([
@@ -937,7 +1030,7 @@ export function buildApp(db: Db, opts: { fetchReport?: FetchReport; paymentsFetc
   });
   app.post("/v1/courses/:slug/tabs/:id/close", async (req) => {
     const course = await courseFor(req);
-    const body = z.object({ paymentMethod: salePaymentMethod, cardPaymentId: z.uuid().nullish() }).parse(req.body);
+    const body = z.object({ paymentMethod: salePaymentMethod, cardPaymentId: z.uuid().nullish(), giftCardCode: giftCardCode.nullish() }).parse(req.body);
     return closeTab(db, course, req.staff?.user.id, idParams.parse(req.params).id, body);
   });
   app.post("/v1/courses/:slug/tabs/:id/void", async (req) => {

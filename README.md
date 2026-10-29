@@ -157,6 +157,14 @@ Menu items are products with **Food or drink** turned on, and optionally **Made 
 
 ![The kitchen screen](docs/screenshots/kitchen-screen.png)
 
+## Gift cards and house accounts
+
+**Gift cards & accounts › Gift cards** sells a card for any amount, by card, cash or check (managers can also give one away). The golfer gets a code like `GC-7K2M-9QXA`, and the card can go on their golfer account so it shows up at check-in. More can be added to an existing card. A gift card pays for a round (anything it doesn't cover is paid the usual way), a register sale, or a food and bar tab, by picking it from the golfer's account or typing the code. Leaving the code blank records a paper certificate the shop doesn't track. Selling a card is money taken but not revenue. The revenue counts when the card is spent, and reports say how much of the day's money was gift cards sold. Managers can fix a balance or void a lost card, and every change is in the card's history.
+
+**Gift cards & accounts › House accounts** is for members who charge to an account and are billed monthly. A manager opens an account for a golfer, with an optional limit. Rounds at check-in, register sales and food and bar tabs can then be charged with **House account**, and each charge lists what was bought. A charge over the limit, or on an account that's on hold, is refused. Charges count as revenue on the day they're made. Payments on the account (check, cash or card) count as money taken that day and go in the cash drawer count, without counting the revenue twice. Once a month is over, a manager presses **Make … statements**: each account gets a statement with the opening balance, every charge and payment, and the amount due (15 days later). Running it again for the same month does nothing new. Statements open as a printable page. Emailing them waits on golfer messaging (item 9).
+
+![A house account](docs/screenshots/house-account.png)
+
 ## AI assistant
 
 Managers can ask Claude, ChatGPT or another MCP client about the course: "how many rounds today?", "who still owes?", "is Mike Sullivan booked this week?", "what did we take last week?". Add a custom connector with the address `https://<your server>/v1/courses/<course>/mcp` and the manager key as a Bearer token.

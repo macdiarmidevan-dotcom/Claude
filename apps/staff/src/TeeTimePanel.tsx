@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { quotePlayer } from "@golf/core";
 import type { ScrollViewInstance } from "react-native";
-import type { Client, Course, RoundChoice, GolferAccount, PaymentMethod, Product, SalePaymentMethod, SheetBooking, SheetTeeTime, Station, Waiver, Redemption, Wallet, RainCheck } from "./api";
+import type { Client, Course, GiftCard, RoundChoice, GolferAccount, PaymentMethod, Product, SalePaymentMethod, SheetBooking, SheetTeeTime, Station, Waiver, Redemption, Wallet, RainCheck } from "./api";
 import { WaiverModal } from "./WaiverModal";
 import { CardChargeModal, useCardReader } from "./CardReader";
 import { GolferPicker, useSearch } from "./Golfers";
@@ -460,9 +460,11 @@ const PAYMENT_OPTIONS: { method: PaymentMethod; label: string }[] = [
   { method: "cash", label: "Cash" },
   // A card the course tracks on paper, not one sold on the golfer's account.
   { method: "punch_card", label: "Paper punch card" },
-  { method: "gift_card", label: "Gift card" },
+  // A paper certificate; gift cards with a code are taken off above.
+  { method: "gift_card", label: "Paper gift certificate" },
   { method: "comp", label: "Comp" },
 ];
+const HOUSE_ACCOUNT = { method: "house_account" as const, label: "House account" };
 
 type PriceFn = (p: { players: number; holes: number; resident: boolean; riding: boolean }) => number | undefined;
 
@@ -495,7 +497,7 @@ function PriceLine({ cents, what }: { cents: number | undefined; what: string })
 const ITEM_METHODS: { method: SalePaymentMethod; label: string }[] = [
   { method: "card", label: "Card" },
   { method: "cash", label: "Cash" },
-  { method: "gift_card", label: "Gift card" },
+  { method: "gift_card", label: "Paper gift certificate" },
 ];
 
 /**
@@ -579,19 +581,37 @@ function CheckoutForm({
       .catch(() => setRcError("No rain check with that code"));
   };
   const rcOff = rainCheck ? Math.min(rainCheck.remainingCents, roundOwed - passCovers - pointsOff) : 0;
-  const owed = roundOwed - passCovers - pointsOff - rcOff;
+  // A gift card goes on after everything else; whatever it doesn't cover is paid below.
+  const [giftCard, setGiftCard] = useState<GiftCard>();
+  const [gcCode, setGcCode] = useState("");
+  const [gcError, setGcError] = useState<string>();
+  const [gcOpen, setGcOpen] = useState(false);
+  const findGift = () => {
+    setGcError(undefined);
+    client
+      .findGiftCard(gcCode)
+      .then((g) => (g.status !== "active" ? setGcError("That gift card was voided") : g.balanceCents <= 0 ? setGcError("That gift card has nothing left on it") : (setGiftCard(g), setGcCode(""))))
+      .catch(() => setGcError("No gift card with that code"));
+  };
+  const gcOff = giftCard ? Math.min(giftCard.balanceCents, roundOwed - passCovers - pointsOff - rcOff) : 0;
+  const owed = roundOwed - passCovers - pointsOff - rcOff - gcOff;
   const redeem: Redemption | undefined =
-    pass || usedRewards || rcOff
+    pass || usedRewards || rcOff || gcOff
       ? {
           ...(pass && passUse ? { pass: { golferPassId: pass.id, rounds: passUse.rounds } } : {}),
           ...(usedRewards ? { points: usedRewards * wallet!.loyalty.rewardPoints } : {}),
           ...(rcOff ? { rainCheck: rainCheck!.code } : {}),
+          ...(gcOff ? { giftCard: giftCard!.code } : {}),
         }
       : undefined;
+  // Members with a house account can put it all on the account.
+  const account = wallet?.houseAccount?.status === "active" ? wallet.houseAccount : undefined;
+  const roundOptions = account ? [...PAYMENT_OPTIONS.slice(0, 2), HOUSE_ACCOUNT, ...PAYMENT_OPTIONS.slice(2)] : PAYMENT_OPTIONS;
+  const itemOptions = account ? [...ITEM_METHODS, HOUSE_ACCOUNT] : ITEM_METHODS;
   const add = (p: Product) =>
     setCart((c) => (c.some((x) => x.product.id === p.id) ? c.map((x) => (x.product.id === p.id ? { ...x, quantity: x.quantity + 1 } : x)) : [...c, { product: p, quantity: 1 }]));
   const setQty = (id: string, n: number) => setCart((c) => (n < 1 ? c.filter((x) => x.product.id !== id) : c.map((x) => (x.product.id === id ? { ...x, quantity: n } : x))));
-  const sameMethod = method === "card" || method === "cash" || method === "gift_card";
+  const sameMethod = method === "card" || method === "cash" || method === "gift_card" || method === "house_account";
   const payItemsWith: SalePaymentMethod = sameMethod ? (method as SalePaymentMethod) : itemMethod;
   const itemsSubtotal = cart.reduce((s, x) => s + x.product.priceCents * x.quantity, 0);
   const itemsTax = Math.round((cart.filter((x) => x.product.taxable).reduce((s, x) => s + x.product.priceCents * x.quantity, 0) * taxBps) / 10_000);
@@ -608,7 +628,7 @@ function CheckoutForm({
   // Quick picks: drinks and snacks first, since that's what golfers grab on the way out.
   const shown = (products ?? [])
     .filter((p) => (match ? p.name.toLowerCase().includes(match) || p.sku?.toLowerCase() === match : true))
-    .sort((a, b) => Number(b.category === "Food & drink") - Number(a.category === "Food & drink"))
+    .sort((a, b) => Number(b.foodBev) - Number(a.foodBev))
     .slice(0, match ? 12 : 8);
 
   return (
@@ -649,6 +669,15 @@ function CheckoutForm({
             {rainCheck.remainingCents > rcOff ? ` (${money(rainCheck.remainingCents - rcOff)} left after)` : ""}
           </Text>
           <Text style={[styles.name, { color: colors.checkedIn }]}>−{money(rcOff)}</Text>
+        </View>
+      )}
+      {gcOff > 0 && giftCard && (
+        <View style={styles.billRow}>
+          <Text style={styles.muted}>
+            Gift card {giftCard.code}
+            {giftCard.balanceCents > gcOff ? ` (${money(giftCard.balanceCents - gcOff)} left after)` : ""}
+          </Text>
+          <Text style={[styles.name, { color: colors.checkedIn }]}>−{money(gcOff)}</Text>
         </View>
       )}
       {pointsOff > 0 && (
@@ -748,6 +777,36 @@ function CheckoutForm({
         </>
       )}
 
+      {roundOwed > 0 && (
+        <>
+          <Text style={[styles.muted, { marginTop: 8, marginBottom: 6 }]}>Gift card</Text>
+          <View style={styles.actions}>
+            {(wallet?.giftCards ?? []).map((g) => (
+              <Toggle key={g.id} label={`${g.code} · ${money(g.balanceCents)}`} on={giftCard?.id === g.id} onPress={() => setGiftCard(giftCard?.id === g.id ? undefined : g)} />
+            ))}
+            {giftCard && !wallet?.giftCards.some((g) => g.id === giftCard.id) && (
+              <Toggle label={`${giftCard.code} · ${money(giftCard.balanceCents)} ✕`} on onPress={() => setGiftCard(undefined)} />
+            )}
+            {!gcOpen && <Action label="Enter a code" onPress={() => setGcOpen(true)} />}
+          </View>
+          {gcOpen && (
+            <View style={[styles.actions, { marginTop: 4 }]}>
+              <TextInput
+                style={[styles.input, { flex: 1, minWidth: 140 }]}
+                accessibilityLabel="Gift card code"
+                placeholder="Code, e.g. GC-7K2M-9QXA"
+                autoCapitalize="characters"
+                value={gcCode}
+                onChangeText={setGcCode}
+                onSubmitEditing={findGift}
+              />
+              <Action label="Apply" onPress={findGift} />
+            </View>
+          )}
+          {gcError && <Text style={styles.warning}>{gcError}</Text>}
+        </>
+      )}
+
       <Text style={[styles.muted, { marginTop: 8, marginBottom: 6 }]}>Add items</Text>
       <TextInput style={[styles.input, { marginBottom: 6 }]} accessibilityLabel="Search pro shop items" placeholder="Search items, e.g. water" value={q} onChangeText={setQ} />
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
@@ -774,17 +833,23 @@ function CheckoutForm({
         <>
           <Text style={[styles.muted, { marginTop: 12, marginBottom: 6 }]}>Round paid by</Text>
           <View style={styles.actions}>
-            {PAYMENT_OPTIONS.map((o) => (
+            {roundOptions.map((o) => (
               <Toggle key={o.method} label={o.label} on={method === o.method} onPress={() => setMethod(o.method)} />
             ))}
           </View>
+          {method === "house_account" && account && (
+            <Text style={styles.muted}>
+              Goes on the monthly statement. Owes {money(account.balanceCents)}
+              {account.availableCents !== null ? `, ${money(account.availableCents)} left on the limit` : ""}.
+            </Text>
+          )}
         </>
       )}
       {cart.length > 0 && (owed === 0 || !sameMethod) && (
         <>
           <Text style={[styles.muted, { marginTop: 12, marginBottom: 6 }]}>Items paid by</Text>
           <View style={styles.actions}>
-            {ITEM_METHODS.map((o) => (
+            {itemOptions.map((o) => (
               <Toggle key={o.method} label={o.label} on={itemMethod === o.method} onPress={() => setItemMethod(o.method)} />
             ))}
           </View>

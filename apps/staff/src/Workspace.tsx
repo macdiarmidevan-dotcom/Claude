@@ -11,12 +11,13 @@ import { GolfersScreen } from "./Golfers";
 import { ScheduleScreen } from "./ScheduleScreen";
 import { ProShopScreen } from "./ProShopScreen";
 import { CardPaymentSettings, CardReaderProvider } from "./CardReader";
+import { AccountsScreen } from "./AccountsScreen";
 import { EventsScreen } from "./EventsScreen";
 import { FoodBarScreen } from "./FoodBarScreen";
 import { ReportsScreen } from "./ReportsScreen";
 import { colors, type WebPress } from "./theme";
 
-type Section = "tee-sheet" | "import" | "staff" | "customers" | "events" | "food" | "reports" | "schedule" | "inventory" | "settings";
+type Section = "tee-sheet" | "import" | "staff" | "customers" | "events" | "food" | "accounts" | "reports" | "schedule" | "inventory" | "settings";
 
 const SECTIONS: { id: Section; label: string; soon?: string; managers?: boolean }[] = [
   { id: "tee-sheet", label: "Tee sheet" },
@@ -25,6 +26,7 @@ const SECTIONS: { id: Section; label: string; soon?: string; managers?: boolean 
   { id: "customers", label: "Golfers" },
   { id: "events", label: "Leagues & events" },
   { id: "food", label: "Food & bar" },
+  { id: "accounts", label: "Gift cards & accounts" },
   { id: "reports", label: "Reports" },
   { id: "schedule", label: "Staff schedule" },
   { id: "inventory", label: "Pro shop" },
@@ -149,6 +151,11 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
           <>
             <Header title="Food & bar" onOpenMenu={openMenu} />
             {course && <FoodBarScreen client={client} isManager={isManager} timeZone={course.timeZone} />}
+          </>
+        ) : section === "accounts" ? (
+          <>
+            <Header title="Gift cards & accounts" onOpenMenu={openMenu} />
+            <AccountsScreen client={client} isManager={isManager} />
           </>
         ) : section === "reports" ? (
           <>

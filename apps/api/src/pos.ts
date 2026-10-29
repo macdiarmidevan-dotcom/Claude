@@ -4,11 +4,12 @@ import { withTransaction, type Db, type DbClient } from "./db.ts";
 import { badRequest, conflict, notFound } from "./errors.ts";
 import { useCardPayment } from "./payments.ts";
 import { earnPoints, reverseSalePoints } from "./loyalty.ts";
+import { chargeAccount, reverseSalePayment, spendGiftCard } from "./accounts.ts";
 
 // The pro shop: products and their stock, and the register that sells them. Every change to a
 // product's stock is recorded with who made it and why, so a count that's off can be traced.
 
-export type SalePaymentMethod = "card" | "cash" | "gift_card" | "comp";
+export type SalePaymentMethod = "card" | "cash" | "gift_card" | "house_account" | "comp";
 export type Station = "kitchen" | "bar";
 
 export interface Product {
@@ -228,7 +229,7 @@ export async function createSale(
   db: Db,
   course: Course,
   staffId: string | undefined,
-  input: { lines: SaleLineInput[]; paymentMethod: SalePaymentMethod; golferId?: string | null; cardPaymentId?: string | null },
+  input: { lines: SaleLineInput[]; paymentMethod: SalePaymentMethod; golferId?: string | null; cardPaymentId?: string | null; giftCardCode?: string | null },
 ) {
   const id = await withTransaction(db, async (client) => {
     const saleId = await insertSale(client, course, staffId, input);
@@ -249,7 +250,7 @@ export async function insertSale(
   client: DbClient,
   course: Course,
   staffId: string | undefined,
-  input: { lines: (SaleLineInput | TabLine)[]; paymentMethod: SalePaymentMethod; golferId?: string | null },
+  input: { lines: (SaleLineInput | TabLine)[]; paymentMethod: SalePaymentMethod; golferId?: string | null; giftCardCode?: string | null },
 ): Promise<string> {
   if (!input.lines.length) throw badRequest("empty_sale", "Add something to the sale first");
   if (input.golferId) {
@@ -304,6 +305,15 @@ export async function insertSale(
       await client.query("UPDATE products SET stock = $2 WHERE id = $1", [p.id, p.stock]);
       await recordMovement(client, p.id, -l.quantity, p.stock, "sale", saleId, null, staffId);
     }
+  }
+  // A gift card with a code pays the whole sale from its balance; a house account is billed monthly.
+  if (input.paymentMethod === "gift_card" && input.giftCardCode) {
+    const card = await spendGiftCard(client, course, input.giftCardCode, subtotal + tax, { saleId, staffId });
+    await client.query("UPDATE sales SET gift_card_id = $2 WHERE id = $1", [saleId, card.id]);
+  }
+  if (input.paymentMethod === "house_account") {
+    const what = lines.map((l) => (l.quantity > 1 ? `${l.quantity} × ${l.description}` : l.description)).join(", ");
+    await chargeAccount(client, course, input.golferId, subtotal + tax, { description: `Sale #${numbers[0].number}: ${what.length > 120 ? what.slice(0, 117) + "…" : what}`, saleId, staffId });
   }
   // Golfers earn loyalty points on what they buy (not on comps, which they didn't pay for).
   if (input.golferId && input.paymentMethod !== "comp") await earnPoints(client, course, input.golferId, subtotal, "sale", { saleId, staffId });
@@ -396,6 +406,7 @@ export async function refundSale(
     if (rows[0].status === "refunded") throw conflict("already_refunded", "This sale was already refunded");
     if (rows[0].card_payment_id && refundCard) await refundCard(client, rows[0].card_payment_id, rows[0].total_cents);
     await reverseSalePoints(client, course, id, staffId);
+    await reverseSalePayment(client, id, staffId);
     await client.query("UPDATE sales SET status = 'refunded', refunded_at = now(), refunded_by = $2 WHERE id = $1", [id, staffId ?? null]);
     const { rows: lines } = await client.query(
       `SELECT l.product_id, l.quantity FROM sale_lines l JOIN products p ON p.id = l.product_id

@@ -7,7 +7,7 @@ import { revenue } from "./insights.ts";
 // Reports for managers and the end-of-day close. Tee sheet money comes from bookings and
 // their payments; pro shop money from register sales. Everything is read-only except the close.
 
-const METHODS = ["cash", "card", "check", "gift_card", "punch_card", "season_pass", "loyalty", "rain_check", "prepaid", "comp"] as const;
+const METHODS = ["cash", "card", "check", "gift_card", "house_account", "punch_card", "season_pass", "loyalty", "rain_check", "prepaid", "comp"] as const;
 type Method = (typeof METHODS)[number];
 const emptyMethods = () => Object.fromEntries(METHODS.map((m) => [m, 0])) as Record<Method, number>;
 
@@ -50,6 +50,20 @@ export async function report(db: DbClient, course: Course, from: string, to: str
        FROM sale_lines l JOIN sales s ON s.id = l.sale_id
       WHERE s.course_id = $1 AND s.created_at >= $2 AND s.created_at < $3 AND s.status = 'completed' AND l.food_bev
       GROUP BY 1`,
+    range,
+  );
+  // Gift cards sold and house account payments are money in, but not revenue: the revenue was (or
+  // will be) counted when the card is spent or the charge was made.
+  const { rows: held } = await db.query(
+    `SELECT to_char(e.created_at AT TIME ZONE $4, 'YYYY-MM-DD') AS day, 'gift' AS what, e.method, SUM(e.change_cents)::int AS cents
+       FROM gift_card_entries e JOIN gift_cards g ON g.id = e.gift_card_id
+      WHERE g.course_id = $1 AND e.created_at >= $2 AND e.created_at < $3 AND e.kind IN ('sold', 'reload')
+      GROUP BY 1, 2, 3
+     UNION ALL
+     SELECT to_char(e.created_at AT TIME ZONE $4, 'YYYY-MM-DD'), 'account', e.method, -SUM(e.amount_cents)::int
+       FROM house_entries e JOIN house_accounts a ON a.id = e.house_account_id
+      WHERE a.course_id = $1 AND e.created_at >= $2 AND e.created_at < $3 AND e.kind = 'payment'
+      GROUP BY 1, 2, 3`,
     range,
   );
   const { rows: rounds } = await db.query(
@@ -114,6 +128,18 @@ export async function report(db: DbClient, course: Course, from: string, to: str
       eventsCents += e.cents;
     }
   }
+  let giftCardsSoldCents = 0;
+  let accountPaymentsCents = 0;
+  for (const h of held) {
+    collected[h.method as Method] += h.cents;
+    if (h.method === "comp") {
+      giftCardsSoldCents += h.cents;
+      continue;
+    }
+    at(h.day).collectedCents += h.cents;
+    if (h.what === "gift") giftCardsSoldCents += h.cents;
+    else accountPaymentsCents += h.cents;
+  }
   const played = rounds.filter((r) => r.status === "checked_in" || r.status === "teed_off");
   for (const r of played) at(r.day).rounds += r.players;
   const sources: Record<string, number> = {};
@@ -138,6 +164,8 @@ export async function report(db: DbClient, course: Course, from: string, to: str
       proShopByCategory: categories.filter((c) => !c.food_bev).map((c) => ({ category: c.category, cents: c.cents, items: c.items })),
       foodBevByCategory: categories.filter((c) => c.food_bev).map((c) => ({ category: c.category, cents: c.cents, items: c.items })),
     },
+    /** Money in that isn't revenue yet (gift cards) or was revenue earlier (house account payments). */
+    other: { giftCardsSoldCents, accountPaymentsCents },
     // Money taken by type. Prepaid is what the booking provider collected online; comps are free.
     collected: { ...collected, totalCents: Object.values(collected).reduce((s, c) => s + c, 0) },
     rounds: {
@@ -173,7 +201,15 @@ async function expectedFor(db: DbClient, course: Course, date: string) {
       WHERE e.course_id = $1 AND p.created_at >= $2 AND p.created_at < $3 GROUP BY 1`,
     range,
   );
-  for (const r of [...tee, ...shop, ...events]) totals[r.method as Method] += r.cents;
+  const { rows: held } = await db.query(
+    `SELECT e.method, SUM(e.change_cents)::int AS cents FROM gift_card_entries e JOIN gift_cards g ON g.id = e.gift_card_id
+      WHERE g.course_id = $1 AND e.created_at >= $2 AND e.created_at < $3 AND e.kind IN ('sold', 'reload') GROUP BY 1
+     UNION ALL
+     SELECT e.method, -SUM(e.amount_cents)::int FROM house_entries e JOIN house_accounts a ON a.id = e.house_account_id
+      WHERE a.course_id = $1 AND e.created_at >= $2 AND e.created_at < $3 AND e.kind = 'payment' GROUP BY 1`,
+    range,
+  );
+  for (const r of [...tee, ...shop, ...events, ...held]) totals[r.method as Method] += r.cents;
   return totals;
 }
 
