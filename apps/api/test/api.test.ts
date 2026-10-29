@@ -208,8 +208,8 @@ describe("booking", () => {
 
   it("lets only a manager reword the waiver, keeping the old version", async () => {
     const me = (key: string) => app.inject({ url: "/v1/courses/river-bend/me", headers: auth(key) });
-    expect((await me(secretKey)).json()).toEqual({ role: "staff" });
-    expect((await me(managerKey)).json()).toEqual({ role: "manager" });
+    expect((await me(secretKey)).json()).toEqual({ role: "staff", user: null });
+    expect((await me(managerKey)).json()).toEqual({ role: "manager", user: null });
 
     const teeTimeId = await teeTimeAt("13:58");
     const { id } = (await book(secretKey, { teeTimeId, holes: 9, customer: golfer, players: [{}] })).json();

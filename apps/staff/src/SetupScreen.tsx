@@ -1,27 +1,45 @@
 import { useState } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
-import { createClient, type Settings, type Station } from "./api";
+import { createClient, signIn, type Settings, type Station } from "./api";
 import { colors } from "./theme";
-import { DEMO } from "./demo";
+import { DEMO, DEMO_PASSWORD } from "./demo";
 
+/**
+ * Signing in. Each employee and manager uses their own email and password, so the app knows who
+ * checked a group in and only shows manager tools to managers. A shared device key is still
+ * offered for a kiosk that nobody signs in to.
+ */
 export function SetupScreen({ initial, onSave }: { initial?: Settings; onSave: (s: Settings) => void }) {
   const [apiUrl, setApiUrl] = useState(initial?.apiUrl ?? "http://localhost:3000");
   const [courseSlug, setCourseSlug] = useState(initial?.courseSlug ?? "river-bend");
-  const [apiKey, setApiKey] = useState(initial?.apiKey ?? "");
+  const [mode, setMode] = useState<"account" | "key">("account");
+  const [email, setEmail] = useState(DEMO ? "manager@riverbend.example" : "");
+  const [password, setPassword] = useState(DEMO ? DEMO_PASSWORD : "");
+  const [apiKey, setApiKey] = useState(initial?.apiKey?.startsWith("sk_") ? initial.apiKey : "");
   const [station, setStation] = useState<Station>(initial?.station ?? "starter");
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
+  // In the demo the server and course are pretend, so they stay out of the way.
+  const [showServer, setShowServer] = useState(!DEMO);
+
+  const ready = mode === "account" ? email.trim() !== "" && password !== "" : apiKey.trim() !== "";
 
   async function connect() {
     setBusy(true);
     setError(undefined);
-    const settings = { apiUrl: apiUrl.trim(), courseSlug: courseSlug.trim(), apiKey: apiKey.trim(), station };
+    const where = { apiUrl: apiUrl.trim(), courseSlug: courseSlug.trim() };
     try {
-      // The tee sheet needs a secret key, so check that rather than just the course.
-      await createClient(settings).teeSheet(new Date().toISOString().slice(0, 10));
-      onSave(settings);
+      if (mode === "account") {
+        const { token } = await signIn(where.apiUrl, where.courseSlug, email.trim(), password);
+        onSave({ ...where, apiKey: token, station });
+      } else {
+        const settings = { ...where, apiKey: apiKey.trim(), station };
+        // The tee sheet needs a secret key, so check that rather than just the course.
+        await createClient(settings).teeSheet(new Date().toISOString().slice(0, 10));
+        onSave(settings);
+      }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Couldn't connect");
+      setError(e instanceof Error ? e.message : "Couldn't sign in");
     } finally {
       setBusy(false);
     }
@@ -30,26 +48,58 @@ export function SetupScreen({ initial, onSave }: { initial?: Settings; onSave: (
   return (
     <View style={styles.page}>
       <View style={styles.card}>
-        <Text style={styles.title}>Tee Sheet</Text>
+        <Text role="heading" style={styles.title}>Sign in</Text>
         <Text style={styles.subtitle}>
           {DEMO
-            ? "This is a demo with a pretend River Bend tee sheet. Press Connect to look around. Nothing you do is saved. The key below signs you in as a manager; change it to demo-staff to see what other staff see."
-            : "Connect this device to your course. Your manager has the staff key."}
+            ? `This is a demo with a pretend River Bend tee sheet. Nothing you do is saved. You're signing in as the manager. To see what other staff see, use proshop@riverbend.example or starter@riverbend.example. Every demo password is "${DEMO_PASSWORD}".`
+            : mode === "account"
+              ? "Use the email and password your manager set up for you."
+              : "A shared device key signs this device in without a person. Your manager has it."}
         </Text>
-        <Field label="Server" value={apiUrl} onChangeText={setApiUrl} />
-        <Field label="Course" value={courseSlug} onChangeText={setCourseSlug} />
-        <Field label="Staff key" value={apiKey} onChangeText={setApiKey} secureTextEntry placeholder="sk_…" />
+        {showServer ? (
+          <>
+            <Field label="Server" value={apiUrl} onChangeText={setApiUrl} />
+            <Field label="Course" value={courseSlug} onChangeText={setCourseSlug} />
+          </>
+        ) : null}
+        {mode === "account" ? (
+          <>
+            <Field label="Email" value={email} onChangeText={setEmail} keyboardType="email-address" autoComplete="email" textContentType="username" />
+            <Field
+              label="Password"
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry
+              autoComplete="current-password"
+              textContentType="password"
+              onSubmitEditing={() => ready && !busy && connect()}
+            />
+          </>
+        ) : (
+          <Field label="Device key" value={apiKey} onChangeText={setApiKey} secureTextEntry placeholder="sk_…" />
+        )}
         <Text style={styles.label}>This device is for</Text>
         <StationPicker value={station} onChange={setStation} />
-        {error && <Text style={styles.error}>{error}</Text>}
+        {error && <Text role="alert" style={styles.error}>{error}</Text>}
         <Pressable
           accessibilityRole="button"
-          style={[styles.button, (busy || !apiKey) && { opacity: 0.5 }]}
-          disabled={busy || !apiKey}
+          style={[styles.button, (busy || !ready) && { opacity: 0.5 }]}
+          disabled={busy || !ready}
           onPress={connect}
         >
-          <Text style={styles.buttonText}>{busy ? "Connecting…" : "Connect"}</Text>
+          <Text style={styles.buttonText}>{busy ? "Signing in…" : "Sign in"}</Text>
         </Pressable>
+        <View style={styles.links}>
+          <Pressable accessibilityRole="button" hitSlop={8} onPress={() => { setMode(mode === "account" ? "key" : "account"); setError(undefined); }}>
+            <Text style={styles.link}>{mode === "account" ? "Use a shared device key instead" : "Sign in with email instead"}</Text>
+          </Pressable>
+          {!showServer && (
+            <Pressable accessibilityRole="button" hitSlop={8} onPress={() => setShowServer(true)}>
+              <Text style={styles.link}>Server settings</Text>
+            </Pressable>
+          )}
+        </View>
+        {mode === "account" && !DEMO && <Text style={styles.hint}>Forgot your password? A manager can reset it under Staff accounts.</Text>}
       </View>
     </View>
   );
@@ -85,7 +135,7 @@ function Field(props: { label: string } & React.ComponentProps<typeof TextInput>
   return (
     <View style={{ marginBottom: 14 }}>
       <Text style={styles.label}>{label}</Text>
-      <TextInput autoCapitalize="none" autoCorrect={false} style={styles.input} {...input} />
+      <TextInput accessibilityLabel={label} autoCapitalize="none" autoCorrect={false} style={styles.input} {...input} />
     </View>
   );
 }
@@ -102,4 +152,7 @@ const styles = StyleSheet.create({
   segmentItem: { flex: 1, paddingVertical: 10, paddingHorizontal: 14, alignItems: "center" },
   button: { backgroundColor: colors.green, borderRadius: 10, padding: 14, alignItems: "center", marginTop: 6 },
   buttonText: { color: "#fff", fontSize: 16, fontWeight: "600" },
+  links: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", gap: 12, marginTop: 16 },
+  link: { color: colors.green, fontWeight: "600", textDecorationLine: "underline", fontSize: 14 },
+  hint: { color: colors.muted, fontSize: 13, marginTop: 12 },
 });

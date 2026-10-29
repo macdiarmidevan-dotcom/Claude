@@ -3,7 +3,10 @@
 import { generateTeeTimes, parseTeeSheetCsv, quotePlayer, riverBend, riverBendAddOns, riverBendRates, riverBendTeeSheet } from "@golf/core";
 import {
   ApiError,
+  type ActivityEntry,
   type Client,
+  type Role,
+  type StaffUser,
   type ImportResult,
   type ImportRun,
   type ImportSource,
@@ -29,7 +32,34 @@ interface DemoTeeTime extends Omit<SheetTeeTime, "bookings" | "bookedPlayers"> {
 
 const conflict = (code: string, message: string) => new ApiError(409, code, message);
 
+// Pretend staff accounts. They live outside the client so signing in and the signed-in app share them.
+export const DEMO_PASSWORD = "riverbend";
+const accounts: (StaffUser & { password: string })[] = [
+  { id: "u-1", name: "Morgan Ellis", email: "manager@riverbend.example", role: "manager", active: true, lastLoginAt: null, password: DEMO_PASSWORD },
+  { id: "u-2", name: "Jordan Price", email: "proshop@riverbend.example", role: "staff", active: true, lastLoginAt: null, password: DEMO_PASSWORD },
+  { id: "u-3", name: "Sam Torres", email: "starter@riverbend.example", role: "staff", active: true, lastLoginAt: null, password: DEMO_PASSWORD },
+];
+const activity: ActivityEntry[] = [];
+const publicUser = ({ password: _, ...u }: StaffUser & { password: string }): StaffUser => u;
+
+export async function demoSignIn(email: string, password: string) {
+  await new Promise((r) => setTimeout(r, 200));
+  const a = accounts.find((x) => x.email === email.trim().toLowerCase());
+  if (!a || a.password !== password) throw new ApiError(401, "wrong_login", "Wrong email or password");
+  if (!a.active) throw new ApiError(401, "wrong_login", "This account has been turned off. Ask a manager");
+  a.lastLoginAt = new Date().toISOString();
+  return { token: `demo-session:${a.id}`, user: publicUser(a) };
+}
+
 export function createDemoClient(apiKey: string): Client {
+  // A demo sign-in carries the account id; the older demo-manager / demo-staff keys act as shared device keys.
+  const account = () => accounts.find((a) => apiKey === `demo-session:${a.id}` && a.active);
+  const role = (): Role => account()?.role ?? (apiKey.includes("manager") ? "manager" : "staff");
+  const managerOnly = () => {
+    if (role() !== "manager") throw new ApiError(403, "manager_only", "Only a manager can change this");
+  };
+  const log = (action: string, golfer?: string) =>
+    activity.unshift({ actor: account()?.name ?? "Shared device key", action, golfer: golfer ?? null, bookingId: null, detail: {}, at: new Date().toISOString() });
   const teeTimes = new Map<string, DemoTeeTime>();
   const days = new Set<string>();
   const bookings: DemoBooking[] = [];
@@ -266,7 +296,12 @@ export function createDemoClient(apiKey: string): Client {
         if (patch.status === "blocked" && live(t.id).length) throw conflict("has_bookings", "Move or cancel the groups before blocking this time");
         return Object.assign(t, patch);
       }),
-    book: (walkIn: WalkIn) => reply(() => book(walkIn)),
+    book: (walkIn: WalkIn) =>
+      reply(() => {
+        const b = book(walkIn);
+        log("Added a booking", walkIn.customer.name);
+        return b;
+      }),
     checkIn: (bookingId: string, method?: PaymentMethod) =>
       reply(() => {
         const b = find(bookingId);
@@ -275,19 +310,66 @@ export function createDemoClient(apiKey: string): Client {
         if (balance > 0 && !method) throw conflict("payment_required", "Take payment before checking in");
         if (balance > 0 && method) b.paid.push({ amountCents: balance, method });
         b.status = "checked_in";
+        log("Checked in at the pro shop", b.customerName);
         return b;
       }),
     waiver: () => reply(() => waiver),
-    me: () => reply(() => ({ role: apiKey.includes("manager") ? ("manager" as const) : ("staff" as const) })),
+    me: () => reply(() => ({ role: role(), user: account() ? publicUser(account()!) : null })),
+    logout: () => reply(() => ({ ok: true })),
+    changePassword: (current: string, next: string) =>
+      reply(() => {
+        const a = account();
+        if (!a) throw new ApiError(400, "no_account", "Device keys don't have a password");
+        if (a.password !== current) throw new ApiError(400, "wrong_password", "Your current password isn't right");
+        if (next.length < 8) throw new ApiError(400, "weak_password", "Passwords need at least 8 characters");
+        a.password = next;
+        return { ok: true };
+      }),
+    staff: () =>
+      reply(() => {
+        managerOnly();
+        return accounts.map(publicUser).sort((a, b) => Number(b.active) - Number(a.active) || a.name.localeCompare(b.name));
+      }),
+    addStaff: (input: { name: string; email: string; role: Role; password: string }) =>
+      reply(() => {
+        managerOnly();
+        const email = input.email.trim().toLowerCase();
+        if (accounts.some((a) => a.email === email)) throw conflict("email_taken", "Someone here already uses that email");
+        if (input.password.length < 8) throw new ApiError(400, "weak_password", "Passwords need at least 8 characters");
+        const a = { id: id(), name: input.name.trim(), email, role: input.role, active: true, lastLoginAt: null, password: input.password };
+        accounts.push(a);
+        log("Added a staff account");
+        return publicUser(a);
+      }),
+    updateStaff: (userId: string, patch: { name?: string; role?: Role; active?: boolean; password?: string }) =>
+      reply(() => {
+        managerOnly();
+        const a = accounts.find((x) => x.id === userId)!;
+        if (a.role === "manager" && a.active && (patch.role === "staff" || patch.active === false)) {
+          if (a.id === account()?.id) throw conflict("self_demote", "You can't remove your own manager access. Ask another manager");
+          if (!accounts.some((x) => x.id !== a.id && x.role === "manager" && x.active)) throw conflict("last_manager", "The course needs at least one active manager");
+        }
+        if (patch.password !== undefined && patch.password.length < 8) throw new ApiError(400, "weak_password", "Passwords need at least 8 characters");
+        Object.assign(a, Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)));
+        log("Changed a staff account");
+        return publicUser(a);
+      }),
+    activity: () =>
+      reply(() => {
+        managerOnly();
+        return activity.slice(0, 100);
+      }),
     saveWaiver: (w: { title: string; body: string }) =>
       reply(() => {
-        if (!apiKey.includes("manager")) throw new ApiError(403, "manager_only", "Only a manager can change this");
+        managerOnly();
+        log("Changed the cart waiver");
         waiver = { id: `waiver-${waiver.version + 1}`, version: waiver.version + 1, ...w };
         return waiver;
       }),
     importTeeSheet: (input: { source: ImportSource; csv: string; fileName?: string; dryRun?: boolean }) =>
       reply(() => {
-        if (!apiKey.includes("manager")) throw new ApiError(403, "manager_only", "Only a manager can change this");
+        managerOnly();
+        if (!input.dryRun) log("Imported the tee sheet");
         return importFile(input);
       }),
     imports: () => reply(() => runs),
@@ -297,11 +379,20 @@ export function createDemoClient(apiKey: string): Client {
         if (b.status !== "checked_in") throw conflict("not_checked_in", "Check this group in at the pro shop first");
         assignCarts(b, carts, signatures);
         b.status = "teed_off";
+        log("Sent off the first tee", b.customerName);
         return b;
       }),
     setCarts: (bookingId: string, carts: string[], signatures: WaiverSignature[]) => reply(() => assignCarts(find(bookingId), carts, signatures)),
-    noShow: (bookingId: string) => reply(() => Object.assign(find(bookingId), { status: "no_show" as const })),
-    cancel: (bookingId: string) => reply(() => Object.assign(find(bookingId), { status: "cancelled" as const })),
+    noShow: (bookingId: string) =>
+      reply(() => {
+        log("Marked a no-show", find(bookingId).customerName);
+        return Object.assign(find(bookingId), { status: "no_show" as const });
+      }),
+    cancel: (bookingId: string) =>
+      reply(() => {
+        log("Cancelled a booking", find(bookingId).customerName);
+        return Object.assign(find(bookingId), { status: "cancelled" as const });
+      }),
     move: (bookingId: string, teeTimeId: string) =>
       reply(() => {
         const b = find(bookingId);

@@ -1,12 +1,14 @@
-// Typed client for the golf API. Staff use a secret (sk_) key for their course.
+// Typed client for the golf API. Staff sign in with their own email and password, which gives a
+// session token (st_…). A shared device key (sk_) still works for kiosks.
 import type { RateRule } from "@golf/core";
-import { createDemoClient, DEMO, DEMO_URL } from "./demo";
+import { createDemoClient, demoSignIn, DEMO, DEMO_URL } from "./demo";
 
 export type Station = "proshop" | "starter";
 
 export interface Settings {
   apiUrl: string;
   courseSlug: string;
+  /** The signed-in person's session token, or a shared device key. */
   apiKey: string;
   /** Which job this device does: the pro shop takes payment and checks in, the starter sends groups off. */
   station: Station;
@@ -99,6 +101,32 @@ export interface ImportRun {
   createdAt: string;
 }
 
+export type Role = "staff" | "manager";
+
+export interface StaffUser {
+  id: string;
+  name: string;
+  email: string;
+  role: Role;
+  active: boolean;
+  lastLoginAt: string | null;
+}
+
+export interface Me {
+  role: Role;
+  /** Empty when the device uses a shared key rather than a person's sign-in. */
+  user: StaffUser | null;
+}
+
+export interface ActivityEntry {
+  actor: string;
+  action: string;
+  golfer: string | null;
+  bookingId: string | null;
+  detail: Record<string, unknown>;
+  at: string;
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -107,6 +135,19 @@ export class ApiError extends Error {
   ) {
     super(message);
   }
+}
+
+/** Signs someone in with their email and password. The token goes in Settings.apiKey. */
+export async function signIn(apiUrl: string, courseSlug: string, email: string, password: string): Promise<{ token: string; user: StaffUser }> {
+  if (DEMO && apiUrl === DEMO_URL) return demoSignIn(email, password);
+  const res = await fetch(`${apiUrl.replace(/\/$/, "")}/v1/courses/${encodeURIComponent(courseSlug)}/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new ApiError(res.status, data?.error?.code ?? "error", data?.error?.message ?? `Sign in failed (${res.status})`);
+  return data;
 }
 
 export function createClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "apiKey">): Client {
@@ -142,8 +183,16 @@ function createHttpClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "ap
     checkIn: (id: string, method?: PaymentMethod) =>
       request(`/bookings/${id}/check-in`, { method: "POST", body: method ? { payment: { method } } : {} }),
     waiver: () => request<Waiver>("/waiver"),
-    /** Managers can change course settings; other staff keys can't. */
-    me: () => request<{ role: "staff" | "manager" }>("/me"),
+    /** Who is signed in. Managers can change course settings; other staff can't. */
+    me: () => request<Me>("/me"),
+    logout: () => request("/logout", { method: "POST" }),
+    changePassword: (current: string, next: string) => request("/me/password", { method: "PUT", body: { current, next } }),
+    staff: () => request<StaffUser[]>("/staff"),
+    addStaff: (input: { name: string; email: string; role: Role; password: string }) =>
+      request<StaffUser>("/staff", { method: "POST", body: input }),
+    updateStaff: (id: string, patch: { name?: string; role?: Role; active?: boolean; password?: string }) =>
+      request<StaffUser>(`/staff/${id}`, { method: "PATCH", body: patch }),
+    activity: () => request<ActivityEntry[]>("/activity"),
     saveWaiver: (waiver: { title: string; body: string }) => request<Waiver>("/waiver", { method: "PUT", body: waiver }),
     importTeeSheet: (body: { source: ImportSource; csv: string; fileName?: string; dryRun?: boolean }) =>
       request<ImportResult>("/imports", { method: "POST", body }),
