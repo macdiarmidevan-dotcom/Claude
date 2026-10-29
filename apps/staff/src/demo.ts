@@ -38,6 +38,14 @@ import {
   type GolferPass,
   type LoyaltySettings,
   type PassType,
+  type StatementDetail,
+  type AccountEntry,
+  type GiftCard,
+  type GiftCardDetail,
+  type GiftCardMethod,
+  type HouseAccount,
+  type HouseAccountDetail,
+  type Statement,
   type PrepStation,
   type PrepTicket,
   type Tab,
@@ -61,7 +69,7 @@ import {
   type WalkIn,
 } from "./api";
 import { addDays, todayIn, weekStart } from "./dates";
-import { money } from "./theme";
+import { formatTime, money } from "./theme";
 
 export const DEMO = process.env.EXPO_PUBLIC_DEMO === "1";
 export const DEMO_URL = "demo";
@@ -309,7 +317,7 @@ export function createDemoClient(apiKey: string): Client {
     movements.set(p.id, list);
   }
   type RingLine = SaleLineInput | { productId: string; quantity: number; unitCents: number } | { description: string; unitCents: number; quantity: number; taxable: boolean; category: string; foodBev: boolean };
-  function ringUp(input: { lines: RingLine[]; paymentMethod: SalePaymentMethod; golferId?: string | null }): Sale {
+  function ringUp(input: { lines: RingLine[]; paymentMethod: SalePaymentMethod; golferId?: string | null; giftCardCode?: string | null }): Sale {
     if (!input.lines.length) throw new ApiError(400, "empty_sale", "Add something to the sale first");
     const lines = input.lines.map((l) => {
       if ("productId" in l) {
@@ -323,9 +331,13 @@ export function createDemoClient(apiKey: string): Client {
     const subtotalCents = lines.reduce((t, l) => t + l.totalCents, 0);
     const taxCents = input.paymentMethod === "comp" ? 0 : Math.round((lines.filter((l) => l.taxable).reduce((t, l) => t + l.totalCents, 0) * pos.salesTaxBps) / 10_000);
     const g = input.golferId ? golfers.find((x) => x.id === input.golferId) : undefined;
+    const number = sales.length + 1001;
+    if (input.paymentMethod === "gift_card" && input.giftCardCode) spendGift(input.giftCardCode, subtotalCents + taxCents, { saleNumber: number });
+    if (input.paymentMethod === "house_account")
+      chargeHouse(input.golferId, subtotalCents + taxCents, `Sale #${number}: ${lines.map((l) => (l.quantity > 1 ? `${l.quantity} × ${l.description}` : l.description)).join(", ")}`, { saleNumber: number });
     const sale: Sale = {
       id: id(),
-      number: sales.length + 1001,
+      number,
       at: new Date().toISOString(),
       staff: account()?.name ?? null,
       golfer: g ? { id: g.id, name: g.name } : null,
@@ -346,12 +358,13 @@ export function createDemoClient(apiKey: string): Client {
   }
   function demoClose(date: string): DayClose {
     ensureDay(date);
-    const expected: Record<MoneyMethod, number> = { cash: 0, card: 0, gift_card: 0, punch_card: 0, season_pass: 0, loyalty: 0, rain_check: 0, check: 0, prepaid: 0, comp: 0 };
+    const expected: Record<MoneyMethod, number> = { cash: 0, card: 0, gift_card: 0, punch_card: 0, season_pass: 0, loyalty: 0, rain_check: 0, check: 0, house_account: 0, prepaid: 0, comp: 0 };
     for (const b of bookings) if (teeTimes.get(b.teeTimeId)?.date === date) for (const p of b.paid) expected[p.method] += p.amountCents;
     for (const sale of sales)
       if (sale.status === "completed" && new Intl.DateTimeFormat("en-CA", { timeZone: riverBend.timeZone }).format(new Date(sale.at)) === date) expected[sale.paymentMethod] += sale.totalCents;
     for (const ev of events)
       for (const p of ev.payments) if (p.method !== "comp" && new Intl.DateTimeFormat("en-CA", { timeZone: riverBend.timeZone }).format(new Date(p.at)) === date) expected[p.method] += p.amountCents;
+    for (const h of heldMoney((iso) => new Intl.DateTimeFormat("en-CA", { timeZone: riverBend.timeZone }).format(new Date(iso)), (d) => d === date)) expected[h.method] += h.cents;
     return { date, expected, close: closes.get(date) ?? null };
   }
   const log = (action: string, golfer?: string) =>
@@ -454,6 +467,11 @@ export function createDemoClient(apiKey: string): Client {
     return {
       passes: golferPasses.filter((p) => p.golferId === golferId).map(passView),
       rainChecks: rainChecks.filter((r) => r.golferId === golferId).map(rcView),
+      giftCards: giftCards.filter((g) => g.golferId === golferId && g.status === "active" && g.balanceCents > 0).map(gcView),
+      houseAccount: (() => {
+        const a = houseAccounts.find((x) => x.golferId === golferId);
+        return a ? accountView(a) : null;
+      })(),
       loyalty: {
         ...loyalty,
         enabled: loyalty.pointsPerDollar > 0,
@@ -567,6 +585,7 @@ export function createDemoClient(apiKey: string): Client {
       }
     }
     for (const time of ["08:30", "08:38", "08:46"]) Object.assign(at(date, time), { status: "blocked", note: "Senior league shotgun" });
+    seedAccounts();
   }
 
   const played = (status: string) => status === "checked_in" || status === "teed_off";
@@ -787,6 +806,108 @@ export function createDemoClient(apiKey: string): Client {
     }
     return p;
   }
+  // Gift cards and house accounts.
+  const giftCards: (GiftCardDetail & { golferId: string | null })[] = [];
+  type DemoAccount = Omit<HouseAccount, "golfer" | "balanceCents" | "unbilledCents" | "availableCents" | "lastStatement"> & { golferId: string; entries: AccountEntry[]; statements: Statement[] };
+  const houseAccounts: DemoAccount[] = [];
+  const GC_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const gcCode = () => {
+    const part = () => Array.from({ length: 4 }, () => GC_CHARS[Math.floor(Math.random() * GC_CHARS.length)]).join("");
+    return `GC-${part()}-${part()}`;
+  };
+  const gcView = ({ golferId: _, history: __, ...g }: (typeof giftCards)[number]): GiftCard => ({ ...g });
+  const gcDetail = ({ golferId: _, ...g }: (typeof giftCards)[number]): GiftCardDetail => ({ ...g, history: [...g.history] });
+  function gcEntry(g: (typeof giftCards)[number], change: number, kind: GiftCardDetail["history"][number]["kind"], extra: Partial<GiftCardDetail["history"][number]> = {}) {
+    g.balanceCents += change;
+    g.history.unshift({ changeCents: change, balanceAfter: g.balanceCents, kind, method: null, saleNumber: null, bookingId: null, note: null, staff: account()?.name ?? null, at: new Date().toISOString(), ...extra });
+  }
+  function findGift(code: string) {
+    const g = giftCards.find((x) => x.code === code.trim().toUpperCase().replace(/\s+/g, ""));
+    if (!g) throw new ApiError(404, "not_found", "Gift card not found");
+    return g;
+  }
+  function spendGift(code: string, cents: number, extra: { saleNumber?: number; bookingId?: string }, upTo = false) {
+    const g = findGift(code);
+    if (g.status !== "active") throw conflict("gift_card_void", "That gift card was voided");
+    if (g.balanceCents <= 0) throw conflict("gift_card_empty", "That gift card has nothing left on it");
+    if (!upTo && g.balanceCents < cents) throw conflict("not_enough_on_card", `The gift card only has ${money(g.balanceCents)} left. Use it toward a round, or pay another way`);
+    const amount = Math.min(cents, g.balanceCents);
+    gcEntry(g, -amount, "redeem", extra);
+    return { card: g, amount };
+  }
+  const balanceOf = (a: DemoAccount) => a.entries.reduce((s, e) => s + e.amountCents, 0);
+  function accountView(a: DemoAccount): HouseAccount {
+    const g = golfers.find((x) => x.id === a.golferId)!;
+    const { entries, statements, golferId: _, ...rest } = a;
+    const balance = balanceOf(a);
+    return {
+      ...rest,
+      billingEmail: a.billingEmail ?? g.email,
+      golfer: { id: g.id, name: g.name, email: g.email, phone: g.phone },
+      balanceCents: balance,
+      unbilledCents: entries.filter((e) => !e.statementId).reduce((s, e) => s + e.amountCents, 0),
+      availableCents: a.creditLimitCents === null ? null : Math.max(0, a.creditLimitCents - balance),
+      lastStatement: statements[0] ?? null,
+    };
+  }
+  const accountDetail = (a: DemoAccount): HouseAccountDetail => ({ ...accountView(a), entries: [...a.entries], statements: [...a.statements] });
+  function findAccount(accountId: string) {
+    const a = houseAccounts.find((x) => x.id === accountId);
+    if (!a) throw new ApiError(404, "not_found", "House account not found");
+    return a;
+  }
+  function accountEntry(a: DemoAccount, amountCents: number, kind: AccountEntry["kind"], description: string, extra: Partial<AccountEntry> = {}) {
+    a.entries.unshift({ id: id(), amountCents, kind, description, method: null, saleNumber: null, bookingId: null, statementId: null, staff: account()?.name ?? null, at: new Date().toISOString(), ...extra });
+  }
+  function chargeHouse(golferId: string | null | undefined, cents: number, description: string, extra: Partial<AccountEntry> = {}) {
+    if (!golferId) throw new ApiError(400, "no_account", "Pick the golfer's account to charge it");
+    const a = houseAccounts.find((x) => x.golferId === golferId);
+    if (!a) throw conflict("no_house_account", "This golfer doesn't have a house account");
+    if (a.status !== "active") throw conflict("account_not_active", a.status === "suspended" ? "This house account is on hold. Ask a manager" : "This house account is closed");
+    if (a.creditLimitCents !== null && balanceOf(a) + cents > a.creditLimitCents)
+      throw conflict("over_limit", `That would go over the account's limit. ${money(Math.max(0, a.creditLimitCents - balanceOf(a)))} available`);
+    if (cents > 0) accountEntry(a, cents, "charge", description, extra);
+  }
+  /** Gift cards sold and house account payments: money in on a day that isn't revenue. */
+  function heldMoney(dayOf: (iso: string) => string, inDay: (d: string) => boolean) {
+    const rows: { day: string; what: "gift" | "account"; method: MoneyMethod; cents: number }[] = [];
+    for (const g of giftCards) for (const h of g.history) if ((h.kind === "sold" || h.kind === "reload") && h.method && inDay(dayOf(h.at))) rows.push({ day: dayOf(h.at), what: "gift", method: h.method as MoneyMethod, cents: h.changeCents });
+    for (const a of houseAccounts) for (const e of a.entries) if (e.kind === "payment" && e.method && inDay(dayOf(e.at))) rows.push({ day: dayOf(e.at), what: "account", method: e.method as MoneyMethod, cents: -e.amountCents });
+    return rows;
+  }
+  function seedAccounts() {
+    const by = (name: string) => golfers.find((g) => g.name === name)!;
+    const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString();
+    // A birthday gift card on Linda's account, partly spent.
+    const linda = by("Linda Hart");
+    giftCards.push({
+      id: id(), code: "GC-7HRT-2QMX", initialCents: 5000, balanceCents: 0, golfer: { id: linda.id, name: linda.name }, golferId: linda.id, recipientName: "Linda",
+      status: "active", issuedBy: "Jordan Price", createdAt: daysAgo(40), history: [],
+    });
+    const lg = giftCards[0];
+    gcEntry(lg, 5000, "sold", { method: "card", staff: "Jordan Price", at: daysAgo(40) });
+    gcEntry(lg, -1100, "redeem", { saleNumber: 988, staff: "Jordan Price", at: daysAgo(12) });
+    giftCards.push({ id: id(), code: "GC-B4KW-9ZPE", initialCents: 10000, balanceCents: 0, golfer: null, golferId: null, recipientName: "Holiday gift", status: "active", issuedBy: "Morgan Ellis", createdAt: daysAgo(70), history: [] });
+    gcEntry(giftCards[1], 10000, "sold", { method: "cash", staff: "Morgan Ellis", at: daysAgo(70) });
+    // Chris is a member who charges everything and pays by check each month.
+    const chris = by("Chris Patel");
+    const acct: DemoAccount = { id: id(), golferId: chris.id, creditLimitCents: 150000, status: "active", billingEmail: null, notes: null, createdAt: daysAgo(400), entries: [], statements: [] };
+    houseAccounts.push(acct);
+    const first = new Date();
+    first.setDate(1);
+    const lastStart = new Date(first.getFullYear(), first.getMonth() - 1, 1);
+    const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const lastEnd = new Date(first.getFullYear(), first.getMonth(), 0);
+    const st: Statement = { id: id(), periodStart: ymd(lastStart), periodEnd: ymd(lastEnd), openingCents: 0, chargesCents: 31850, paymentsCents: 0, closingCents: 31850, dueOn: ymd(new Date(first.getFullYear(), first.getMonth(), 15)) };
+    acct.statements.unshift(st);
+    const at = (d: number) => new Date(lastStart.getFullYear(), lastStart.getMonth(), d, 15).toISOString();
+    accountEntry(acct, 16800, "charge", "Round, 4 players, 18 holes", { staff: "Jordan Price", at: at(4), statementId: st.id });
+    accountEntry(acct, 6550, "charge", "Sale #961: Titleist Pro V1 (dozen), Divot tool with ball marker", { saleNumber: 961, staff: "Jordan Price", at: at(4), statementId: st.id });
+    accountEntry(acct, 8500, "charge", "Round, 2 players, 18 holes", { staff: "Casey Morgan", at: at(19), statementId: st.id });
+    accountEntry(acct, -31850, "payment", "Payment by check 2207", { method: "check", staff: "Jordan Price", at: daysAgo(2) });
+    accountEntry(acct, 4200, "charge", "Sale #1003: Turn burger, Draft beer, Draft beer", { staff: "Casey Morgan", at: daysAgo(1) });
+  }
+
   // Food and bar tabs.
   const tabs: (Omit<Tab, "subtotalCents" | "taxCents" | "waiting">)[] = [];
   function tabView(t: (typeof tabs)[number]): Tab {
@@ -1063,7 +1184,7 @@ export function createDemoClient(apiKey: string): Client {
     checkIn: (
       bookingId: string,
       method?: PaymentMethod,
-      items?: { lines: SaleLineInput[]; paymentMethod: SalePaymentMethod },
+      items?: { lines: SaleLineInput[]; paymentMethod: SalePaymentMethod; giftCardCode?: string },
       round?: RoundChoice,
       cardPaymentId?: string,
       redemption?: Redemption,
@@ -1095,11 +1216,19 @@ export function createDemoClient(apiKey: string): Client {
           }
         }
         if (redemption?.rainCheck) useRainCheck(b, redemption.rainCheck);
+        if (redemption?.giftCard) {
+          const used = spendGift(redemption.giftCard, payment(b).balanceCents, { bookingId: b.id }, true);
+          if (used.amount > 0) b.paid.push({ amountCents: used.amount, method: "gift_card" });
+        }
         const balance = payment(b).balanceCents;
         if (balance > 0 && !method) throw conflict("payment_required", "Take payment before checking in");
+        if (balance > 0 && method === "house_account") {
+          const t = teeTimes.get(b.teeTimeId)!;
+          chargeHouse(b.golferId, balance, `Round, ${b.players} ${b.players === 1 ? "player" : "players"}, ${b.holes} holes, ${formatTime(t.localTime)}`, { bookingId: b.id });
+        }
         if (items?.lines.length) earnSale(ringUp({ ...items, golferId: b.golferId }));
         if (balance > 0 && method) b.paid.push({ amountCents: balance, method });
-        if (balance > 0 && method && ["card", "cash", "gift_card"].includes(method)) earn(b.golferId, balance, "round");
+        if (balance > 0 && method && ["card", "cash", "gift_card", "house_account"].includes(method)) earn(b.golferId, balance, "round");
         b.status = "checked_in";
         if (card) card.bookingId = b.id;
         log("Checked in at the pro shop", b.customerName);
@@ -1438,7 +1567,7 @@ export function createDemoClient(apiKey: string): Client {
         log("Changed stock");
         return { ...p };
       }),
-    sell: (input: { lines: SaleLineInput[]; paymentMethod: SalePaymentMethod; golferId?: string | null; cardPaymentId?: string }) =>
+    sell: (input: { lines: SaleLineInput[]; paymentMethod: SalePaymentMethod; golferId?: string | null; cardPaymentId?: string; giftCardCode?: string | null }) =>
       reply(() => {
         const card = input.cardPaymentId ? useCard(input.cardPaymentId) : undefined;
         const sale = ringUp(input);
@@ -1474,6 +1603,12 @@ export function createDemoClient(apiKey: string): Client {
         const sale = sales.find((x) => x.id === saleId)!;
         if (sale.status === "refunded") throw conflict("already_refunded", "This sale was already refunded");
         sale.status = "refunded";
+        // Money paid from a gift card or charged to an account goes back there.
+        for (const g of giftCards) if (g.history.some((h) => h.kind === "redeem" && h.saleNumber === sale.number)) gcEntry(g, sale.totalCents, "adjust", { saleNumber: sale.number, note: `Refund of sale #${sale.number}` });
+        if (sale.paymentMethod === "house_account") {
+          const a = houseAccounts.find((x) => x.golferId === sale.golfer?.id);
+          if (a) accountEntry(a, -sale.totalCents, "adjustment", `Refund of sale #${sale.number}`, { saleNumber: sale.number });
+        }
         for (const l of sale.lines) {
           const p = products.find((x) => x.id === l.productId);
           if (p?.trackStock) move(p, l.quantity, "refund", sale.number, null);
@@ -1492,7 +1627,7 @@ export function createDemoClient(apiKey: string): Client {
           if (!days.has(date)) days.set(date, { date, greenFeesCents: 0, cartsAndExtrasCents: 0, proShopCents: 0, foodBevCents: 0, eventsCents: 0, taxCents: 0, collectedCents: 0, rounds: 0 });
           return days.get(date)!;
         };
-        const collected: Record<MoneyMethod, number> = { cash: 0, card: 0, gift_card: 0, punch_card: 0, season_pass: 0, loyalty: 0, rain_check: 0, check: 0, prepaid: 0, comp: 0 };
+        const collected: Record<MoneyMethod, number> = { cash: 0, card: 0, gift_card: 0, punch_card: 0, season_pass: 0, loyalty: 0, rain_check: 0, check: 0, house_account: 0, prepaid: 0, comp: 0 };
         const bySource: Record<string, number> = {};
         let played = 0;
         let booked = 0;
@@ -1552,6 +1687,18 @@ export function createDemoClient(apiKey: string): Client {
             d.eventsCents += p.amountCents;
             d.collectedCents += p.amountCents;
           }
+        let giftCardsSoldCents = 0;
+        let accountPaymentsCents = 0;
+        for (const h of heldMoney(dayOf, inRange)) {
+          collected[h.method] += h.cents;
+          if (h.method === "comp") {
+            giftCardsSoldCents += h.cents;
+            continue;
+          }
+          at(h.day).collectedCents += h.cents;
+          if (h.what === "gift") giftCardsSoldCents += h.cents;
+          else accountPaymentsCents += h.cents;
+        }
         const list = [...days.values()].sort((a, b) => a.date.localeCompare(b.date));
         const sum = (k: keyof Omit<Day, "date">) => list.reduce((t, d) => t + d[k], 0);
         const spots = [...teeTimes.values()].filter((t) => inRange(t.date) && t.status === "open").reduce((t, x) => t + x.maxPlayers, 0);
@@ -1572,6 +1719,7 @@ export function createDemoClient(apiKey: string): Client {
             foodBevByCategory: [...fbCategories.values()].sort((a, b) => b.cents - a.cents),
           },
           collected: { ...collected, totalCents: Object.values(collected).reduce((t, c) => t + c, 0) },
+          other: { giftCardsSoldCents, accountPaymentsCents },
           rounds: { played, booked, noShows, openSpots: spots, occupancy: spots ? Math.round((booked / spots) * 1000) / 10 : null, bySource },
           labor: {
             hours: Math.round(worked.reduce((t, p) => t + (Date.parse(p.clockOut!) - Date.parse(p.clockIn)) / 3_600_000, 0) * 10) / 10,
@@ -1987,7 +2135,7 @@ export function createDemoClient(apiKey: string): Client {
         log("Took an item off a tab");
         return tabView(t);
       }),
-    closeTab: (tabId: string, paymentMethod: SalePaymentMethod, cardPaymentId?: string) =>
+    closeTab: (tabId: string, paymentMethod: SalePaymentMethod, cardPaymentId?: string, giftCardCode?: string) =>
       reply(() => {
         const t = findTab(tabId);
         const kept = t.items.filter((i) => i.status !== "void");
@@ -1999,6 +2147,7 @@ export function createDemoClient(apiKey: string): Client {
           ),
           paymentMethod,
           golferId: t.golfer?.id ?? null,
+          giftCardCode,
         });
         earnSale(sale);
         if (card) card.saleId = sale.id;
@@ -2043,6 +2192,142 @@ export function createDemoClient(apiKey: string): Client {
             }
         if (!updated) throw new ApiError(404, "not_found", "Item not found");
         return { updated };
+      }),
+    giftCards: (q = "") =>
+      reply(() => {
+        ensureDay(todayIn(riverBend.timeZone));
+        const m = q.trim().toLowerCase();
+        return giftCards
+          .filter((g) => !m || g.code.toLowerCase().includes(m) || g.recipientName?.toLowerCase().includes(m) || g.golfer?.name?.toLowerCase().includes(m))
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+          .map(gcView);
+      }),
+    findGiftCard: (code: string) => reply(() => gcDetail(findGift(code))),
+    giftCard: (cardId: string) =>
+      reply(() => {
+        const g = giftCards.find((x) => x.id === cardId);
+        if (!g) throw new ApiError(404, "not_found", "Gift card not found");
+        return gcDetail(g);
+      }),
+    sellGiftCard: (input: { amountCents: number; method: GiftCardMethod; cardPaymentId?: string; golferId?: string | null; recipientName?: string | null; code?: string | null; note?: string | null }) =>
+      reply(() => {
+        if (input.method === "comp") managerOnly();
+        if (input.amountCents < 100) throw new ApiError(400, "invalid_amount", "A gift card is at least $1");
+        const card = input.cardPaymentId ? useCard(input.cardPaymentId) : undefined;
+        let g: (typeof giftCards)[number];
+        if (input.code) {
+          g = findGift(input.code);
+          if (g.status !== "active") throw conflict("gift_card_void", "That gift card was voided");
+          gcEntry(g, input.amountCents, "reload", { method: input.method, note: input.note ?? null });
+        } else {
+          const owner = input.golferId ? golfer(input.golferId) : undefined;
+          g = {
+            id: id(), code: gcCode(), initialCents: input.amountCents, balanceCents: 0, golfer: owner ? { id: owner.id, name: owner.name } : null, golferId: owner?.id ?? null,
+            recipientName: input.recipientName?.trim() || null, status: "active", issuedBy: account()?.name ?? null, createdAt: new Date().toISOString(), history: [],
+          };
+          giftCards.push(g);
+          gcEntry(g, input.amountCents, "sold", { method: input.method, note: input.note ?? null });
+        }
+        if (card) card.saleId = g.id;
+        log("Sold a gift card", g.golfer?.name ?? undefined);
+        return gcDetail(g);
+      }),
+    adjustGiftCard: (cardId: string, input: { changeCents?: number; void?: boolean; note: string }) =>
+      reply(() => {
+        managerOnly();
+        const g = giftCards.find((x) => x.id === cardId)!;
+        if (!input.note.trim()) throw new ApiError(400, "note_required", "Say why");
+        if (g.status !== "active") throw conflict("gift_card_void", "That gift card was voided");
+        if (input.void) {
+          gcEntry(g, -g.balanceCents, "void", { note: input.note.trim() });
+          g.status = "void";
+        } else if (input.changeCents) {
+          if (g.balanceCents + input.changeCents < 0) throw new ApiError(400, "negative_balance", "That would take the card below zero");
+          gcEntry(g, input.changeCents, "adjust", { note: input.note.trim() });
+        }
+        log("Changed a gift card");
+        return gcDetail(g);
+      }),
+    houseAccounts: () =>
+      reply(() => {
+        ensureDay(todayIn(riverBend.timeZone));
+        return houseAccounts.map(accountView).sort((a, b) => a.status.localeCompare(b.status) || a.golfer.name.localeCompare(b.golfer.name));
+      }),
+    houseAccount: (accountId: string) => reply(() => accountDetail(findAccount(accountId))),
+    openHouseAccount: (input: { golferId: string; creditLimitCents?: number | null; billingEmail?: string | null; notes?: string | null }) =>
+      reply(() => {
+        managerOnly();
+        golfer(input.golferId);
+        if (houseAccounts.some((a) => a.golferId === input.golferId)) throw conflict("account_exists", "This golfer already has a house account");
+        const a: DemoAccount = {
+          id: id(), golferId: input.golferId, creditLimitCents: input.creditLimitCents ?? null, status: "active", billingEmail: input.billingEmail?.trim() || null,
+          notes: input.notes?.trim() || null, createdAt: new Date().toISOString(), entries: [], statements: [],
+        };
+        houseAccounts.push(a);
+        log("Opened a house account", golfers.find((g) => g.id === a.golferId)?.name);
+        return accountDetail(a);
+      }),
+    updateHouseAccount: (accountId: string, patch: { creditLimitCents?: number | null; status?: HouseAccount["status"]; billingEmail?: string | null; notes?: string | null }) =>
+      reply(() => {
+        managerOnly();
+        const a = findAccount(accountId);
+        if (patch.status === "closed" && balanceOf(a) !== 0) throw conflict("balance_owing", "Settle the balance before closing the account");
+        Object.assign(a, Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)));
+        log("Changed a house account");
+        return accountDetail(a);
+      }),
+    payHouseAccount: (accountId: string, input: { amountCents: number; method: "card" | "cash" | "check"; cardPaymentId?: string; note?: string | null }) =>
+      reply(() => {
+        const a = findAccount(accountId);
+        if (input.amountCents <= 0) throw new ApiError(400, "invalid_amount", "Enter an amount");
+        const card = input.cardPaymentId ? useCard(input.cardPaymentId) : undefined;
+        if (card) card.saleId = a.id;
+        const note = input.note?.trim();
+        accountEntry(a, -input.amountCents, "payment", input.method === "check" ? `Payment by check${note ? ` ${note}` : ""}` : `Payment by ${input.method}${note ? `: ${note}` : ""}`, { method: input.method });
+        log("Took a house account payment", golfers.find((g) => g.id === a.golferId)?.name);
+        return accountDetail(a);
+      }),
+    adjustHouseAccount: (accountId: string, input: { amountCents: number; description: string }) =>
+      reply(() => {
+        managerOnly();
+        const a = findAccount(accountId);
+        if (!input.description.trim()) throw new ApiError(400, "description_required", "Say what it's for");
+        accountEntry(a, input.amountCents, "adjustment", input.description.trim());
+        return accountDetail(a);
+      }),
+    runStatements: (month: string) =>
+      reply(() => {
+        managerOnly();
+        const [y, m] = month.split("-").map(Number);
+        const start = new Date(y, m - 1, 1);
+        const end = new Date(y, m, 1);
+        if (end.getTime() > Date.now() + 86_400_000) throw new ApiError(400, "month_not_over", "Statements are made once the month is over");
+        const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+        let made = 0;
+        for (const a of houseAccounts.filter((x) => x.status !== "closed")) {
+          if (a.statements.some((st) => st.periodStart === ymd(start))) continue;
+          const opening = a.entries.filter((e) => e.statementId).reduce((t, e) => t + e.amountCents, 0);
+          const entries = a.entries.filter((e) => !e.statementId && Date.parse(e.at) < end.getTime());
+          if (!entries.length && opening === 0) continue;
+          const charges = entries.filter((e) => e.amountCents > 0).reduce((t, e) => t + e.amountCents, 0);
+          const payments = -entries.filter((e) => e.amountCents < 0).reduce((t, e) => t + e.amountCents, 0);
+          const st: Statement = {
+            id: id(), periodStart: ymd(start), periodEnd: ymd(new Date(y, m, 0)), openingCents: opening, chargesCents: charges, paymentsCents: payments,
+            closingCents: opening + charges - payments, dueOn: ymd(new Date(y, m, 15)),
+          };
+          entries.forEach((e) => (e.statementId = st.id));
+          a.statements.unshift(st);
+          made++;
+        }
+        log("Made house account statements");
+        return { month, statements: made };
+      }),
+    statement: (statementId: string) =>
+      reply((): StatementDetail => {
+        const a = houseAccounts.find((x) => x.statements.some((st) => st.id === statementId));
+        if (!a) throw new ApiError(404, "not_found", "Statement not found");
+        const st = a.statements.find((x) => x.id === statementId)!;
+        return { ...st, account: accountView(a), entries: a.entries.filter((e) => e.statementId === statementId).sort((x, y) => x.at.localeCompare(y.at)) };
       }),
     standingTimes: () =>
       reply(() => {

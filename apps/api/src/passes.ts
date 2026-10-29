@@ -1,3 +1,4 @@
+import { accountForGolfer, listGiftCards } from "./accounts.ts";
 import type { Course } from "./courses.ts";
 import { withTransaction, type Db, type DbClient } from "./db.ts";
 import { badRequest, conflict, notFound } from "./errors.ts";
@@ -116,6 +117,8 @@ export async function getWallet(db: DbClient, course: Course, golferId: string) 
   return {
     passes: passes.map((p) => toGolferPass(p)),
     rainChecks: await listRainChecks(db, course, { golferId }),
+    giftCards: (await listGiftCards(db, course, { golferId })).filter((g) => g.status === "active" && g.balanceCents > 0),
+    houseAccount: await accountForGolfer(db, course, golferId),
     loyalty: {
       enabled: rates.pointsPerDollar > 0,
       points,

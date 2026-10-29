@@ -21,6 +21,7 @@ const PAY: { method: SalePaymentMethod; label: string }[] = [
   { method: "card", label: "Card" },
   { method: "cash", label: "Cash" },
   { method: "gift_card", label: "Gift card" },
+  { method: "house_account", label: "House account" },
   { method: "comp", label: "Comp" },
 ];
 const STATUS: Record<TabItem["status"], string> = { sent: "Being made", ready: "Ready", served: "Served", void: "Taken off" };
@@ -259,6 +260,7 @@ function TabView({
   const [order, setOrder] = useState<{ product: Product; quantity: number; note: string }[]>([]);
   const [other, setOther] = useState({ description: "", price: "" });
   const [method, setMethod] = useState<SalePaymentMethod>("card");
+  const [giftCode, setGiftCode] = useState("");
   const [charging, setCharging] = useState(false);
   const [voiding, setVoiding] = useState(false);
   const [reason, setReason] = useState("");
@@ -295,7 +297,7 @@ function TabView({
     }
   }
   async function pay(cardPaymentId?: string) {
-    const r = await run(() => client.closeTab(tab.id, method, cardPaymentId));
+    const r = await run(() => client.closeTab(tab.id, method, cardPaymentId, method === "gift_card" ? giftCode.trim() || undefined : undefined));
     if (r) onPaid(r.sale);
   }
 
@@ -408,10 +410,21 @@ function TabView({
       <View style={styles.card}>
         <Text style={styles.title}>Pay the tab</Text>
         <View style={styles.row}>
-          {PAY.map((m) => (
+          {PAY.filter((m) => m.method !== "house_account" || tab.golfer).map((m) => (
             <Chip key={m.method} label={m.label} on={method === m.method} onPress={() => setMethod(m.method)} />
           ))}
         </View>
+        {method === "gift_card" && (
+          <TextInput
+            accessibilityLabel="Gift card code"
+            placeholder="Gift card code (blank for a paper certificate)"
+            autoCapitalize="characters"
+            value={giftCode}
+            onChangeText={setGiftCode}
+            style={[styles.input, { marginBottom: 8 }]}
+          />
+        )}
+        {method === "house_account" && <Text style={styles.help}>Goes on {tab.golfer?.name}'s monthly statement.</Text>}
         {method === "comp" && <Text style={styles.help}>A comp is given away, so no tax is charged.</Text>}
         {tab.waiting > 0 && <Text style={[styles.help, { color: colors.warn }]}>{tab.waiting} items are still being made. Paying takes them off the kitchen and bar screens.</Text>}
         <View style={styles.row}>

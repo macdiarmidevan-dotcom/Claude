@@ -1,4 +1,4 @@
-import type { DateTime } from "luxon";
+import { DateTime } from "luxon";
 import { NoRateError, quotePlayer, type PlayerProfile } from "@golf/core";
 import { withTransaction, type Db, type DbClient } from "./db.ts";
 import { badRequest, conflict, notFound } from "./errors.ts";
@@ -8,6 +8,7 @@ import { useCardPayment } from "./payments.ts";
 import { earnPoints } from "./loyalty.ts";
 import { redeemPass, redeemPoints } from "./passes.ts";
 import { redeemRainCheck } from "./rainchecks.ts";
+import { chargeAccount, spendGiftCard } from "./accounts.ts";
 
 export type BookingSource = "staff" | "phone" | "teeitup" | "golfnow" | "import" | "standing";
 
@@ -69,7 +70,7 @@ export interface WaiverSignature {
   signature: string;
 }
 
-export type PaymentMethod = "card" | "cash" | "prepaid" | "punch_card" | "season_pass" | "loyalty" | "rain_check" | "gift_card" | "comp";
+export type PaymentMethod = "card" | "cash" | "prepaid" | "punch_card" | "season_pass" | "loyalty" | "rain_check" | "gift_card" | "house_account" | "comp";
 
 export interface PaymentSummary {
   status: "paid" | "partial" | "unpaid";
@@ -369,7 +370,7 @@ export async function checkIn(
      */
     round?: { residency: PlayerProfile["residency"]; riding: boolean } | undefined;
     /** Pro shop items bought at check-in (water, snacks, balls), rung up as one sale. */
-    items?: { lines: SaleLineInput[]; paymentMethod: SalePaymentMethod } | undefined;
+    items?: { lines: SaleLineInput[]; paymentMethod: SalePaymentMethod; giftCardCode?: string | undefined } | undefined;
     /**
      * A card payment taken on a connected reader. One tap pays everything going on the card:
      * the round, the items, or both, so it must match that total exactly.
@@ -381,6 +382,8 @@ export async function checkIn(
     points?: number | undefined;
     /** A rain check's code, put toward the round. */
     rainCheck?: string | undefined;
+    /** A gift card's code, put toward the round. */
+    giftCard?: string | undefined;
     staffId?: string | undefined;
   },
 ): Promise<Booking> {
@@ -415,6 +418,18 @@ export async function checkIn(
       const b = await getBooking(client, course, id);
       await redeemRainCheck(client, course, { id, balanceCents: b.payment.balanceCents }, opts.rainCheck, opts.staffId);
     }
+    if (opts.giftCard) {
+      const b = await getBooking(client, course, id);
+      const card = await spendGiftCard(client, course, opts.giftCard, b.payment.balanceCents, { bookingId: id, staffId: opts.staffId }, { upTo: true });
+      if (card.amountCents > 0) {
+        await client.query("INSERT INTO booking_payments (booking_id, amount_cents, method, gift_card_id, staff_user_id) VALUES ($1, $2, 'gift_card', $3, $4)", [
+          id,
+          card.amountCents,
+          card.id,
+          opts.staffId ?? null,
+        ]);
+      }
+    }
     const booking = await getBooking(client, course, id);
     const roundOnCard = opts.payment?.method === "card" ? booking.payment.balanceCents : 0;
     onCard += roundOnCard;
@@ -423,13 +438,17 @@ export async function checkIn(
       await useCardPayment(client, course, opts.cardPaymentId, onCard, { bookingId: roundOnCard ? id : undefined, saleId: saleId && opts.items?.paymentMethod === "card" ? saleId : undefined });
       if (saleId && opts.items?.paymentMethod === "card") await client.query("UPDATE sales SET card_payment_id = $2 WHERE id = $1", [saleId, opts.cardPaymentId]);
     }
+    if (opts.payment?.method === "house_account" && booking.payment.balanceCents > 0) {
+      const when = DateTime.fromISO(booking.teeTime.startsAt).setZone(course.timeZone).toFormat("LLL d, h:mm a");
+      await chargeAccount(client, course, golferId, booking.payment.balanceCents, { description: `Round, ${booking.players} ${booking.players === 1 ? "player" : "players"}, ${when}`, bookingId: id, staffId: opts.staffId });
+    }
     if (opts.payment && booking.payment.balanceCents > 0) {
       await addPayment(client, course, id, booking.payment.balanceCents, opts.payment.method, roundOnCard && opts.cardPaymentId ? opts.cardPaymentId : undefined);
     } else if (booking.payment.balanceCents > 0) {
       throw conflict("payment_required", `This group still owes ${booking.payment.balanceCents} cents`);
     }
     // Points for the money paid on the round today. Rounds on a pass, points or comps don't earn.
-    const paidToday = opts.payment && ["card", "cash", "gift_card"].includes(opts.payment.method) ? booking.payment.balanceCents : 0;
+    const paidToday = opts.payment && ["card", "cash", "gift_card", "house_account"].includes(opts.payment.method) ? booking.payment.balanceCents : 0;
     if (golferId && paidToday) await earnPoints(client, course, golferId, paidToday, "round", { bookingId: id, staffId: opts.staffId });
     if (opts.cartNumbers) await updateCarts(client, course, id, opts.cartNumbers, opts.waivers);
     await changeStatus(client, course, id, "checked_in");

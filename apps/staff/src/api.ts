@@ -26,7 +26,7 @@ export interface Course {
 }
 
 export type BookingStatus = "confirmed" | "checked_in" | "teed_off" | "cancelled" | "no_show";
-export type PaymentMethod = "card" | "cash" | "prepaid" | "punch_card" | "season_pass" | "loyalty" | "rain_check" | "gift_card" | "comp";
+export type PaymentMethod = "card" | "cash" | "prepaid" | "punch_card" | "season_pass" | "loyalty" | "rain_check" | "gift_card" | "house_account" | "comp";
 
 export interface PaymentSummary {
   status: "paid" | "partial" | "unpaid";
@@ -290,7 +290,75 @@ export interface Swap {
   createdAt: string;
 }
 
-export type SalePaymentMethod = "card" | "cash" | "gift_card" | "comp";
+export type SalePaymentMethod = "card" | "cash" | "gift_card" | "house_account" | "comp";
+
+export interface GiftCard {
+  id: string;
+  code: string;
+  initialCents: number;
+  balanceCents: number;
+  golfer: { id: string; name: string | null } | null;
+  recipientName: string | null;
+  status: "active" | "void";
+  issuedBy: string | null;
+  createdAt: string;
+}
+
+export interface GiftCardDetail extends GiftCard {
+  history: { changeCents: number; balanceAfter: number; kind: "sold" | "reload" | "redeem" | "adjust" | "void"; method: string | null; saleNumber: number | null; bookingId: string | null; note: string | null; staff: string | null; at: string }[];
+}
+
+export type GiftCardMethod = "card" | "cash" | "check" | "comp";
+
+export interface Statement {
+  id: string;
+  periodStart: string;
+  periodEnd: string;
+  openingCents: number;
+  chargesCents: number;
+  paymentsCents: number;
+  closingCents: number;
+  dueOn: string;
+}
+
+export interface HouseAccount {
+  id: string;
+  golfer: { id: string; name: string; email: string; phone: string };
+  creditLimitCents: number | null;
+  status: "active" | "suspended" | "closed";
+  billingEmail: string | null;
+  notes: string | null;
+  balanceCents: number;
+  /** Charges and payments not on a statement yet. */
+  unbilledCents: number;
+  /** What's left under the limit; empty when there's no limit. */
+  availableCents: number | null;
+  lastStatement: Statement | null;
+  createdAt: string;
+}
+
+export interface AccountEntry {
+  id: string;
+  amountCents: number;
+  kind: "charge" | "payment" | "adjustment";
+  description: string;
+  method: string | null;
+  saleNumber: number | null;
+  bookingId: string | null;
+  statementId: string | null;
+  staff: string | null;
+  at: string;
+}
+
+export interface HouseAccountDetail extends HouseAccount {
+  entries: AccountEntry[];
+  statements: Statement[];
+}
+
+export interface StatementDetail extends Statement {
+  account: HouseAccount;
+  entries: AccountEntry[];
+}
 
 export type PassKind = "punch_card" | "season_pass";
 
@@ -349,6 +417,9 @@ export interface RainCheck {
 export interface Wallet {
   passes: GolferPass[];
   rainChecks: RainCheck[];
+  /** The golfer's gift cards with money on them. */
+  giftCards: GiftCard[];
+  houseAccount: HouseAccount | null;
   loyalty: LoyaltySettings & {
     enabled: boolean;
     points: number;
@@ -363,6 +434,8 @@ export interface Redemption {
   points?: number;
   /** A rain check's code. */
   rainCheck?: string;
+  /** A gift card's code, put toward the round. */
+  giftCard?: string;
 }
 
 export interface StandingTime {
@@ -576,7 +649,7 @@ export interface SalesDay {
   };
 }
 
-export type MoneyMethod = "cash" | "card" | "check" | "gift_card" | "punch_card" | "season_pass" | "loyalty" | "rain_check" | "prepaid" | "comp";
+export type MoneyMethod = "cash" | "card" | "check" | "gift_card" | "house_account" | "punch_card" | "season_pass" | "loyalty" | "rain_check" | "prepaid" | "comp";
 
 export interface Report {
   from: string;
@@ -598,6 +671,8 @@ export interface Report {
     foodBevByCategory: { category: string; cents: number; items: number }[];
   };
   collected: Record<MoneyMethod, number> & { totalCents: number };
+  /** Money in that isn't revenue: gift cards sold (spent later) and house account payments (charged earlier). */
+  other: { giftCardsSoldCents: number; accountPaymentsCents: number };
   rounds: { played: number; booked: number; noShows: number; openSpots: number; occupancy: number | null; bySource: Record<string, number> };
   labor: { hours: number; people: number };
   days: { date: string; greenFeesCents: number; cartsAndExtrasCents: number; proShopCents: number; foodBevCents: number; eventsCents: number; taxCents: number; collectedCents: number; rounds: number }[];
@@ -674,7 +749,7 @@ function createHttpClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "ap
     checkIn: (
       id: string,
       method?: PaymentMethod,
-      items?: { lines: SaleLineInput[]; paymentMethod: SalePaymentMethod },
+      items?: { lines: SaleLineInput[]; paymentMethod: SalePaymentMethod; giftCardCode?: string },
       round?: RoundChoice,
       cardPaymentId?: string,
       redeem?: Redemption,
@@ -723,7 +798,7 @@ function createHttpClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "ap
     productHistory: (id: string) => request<StockMovement[]>(`/products/${id}/history`),
     changeStock: (id: string, change: { kind: "receive" | "count" | "adjust"; quantity: number; note?: string | null }) =>
       request<Product>(`/products/${id}/stock`, { method: "POST", body: change }),
-    sell: (sale: { lines: SaleLineInput[]; paymentMethod: SalePaymentMethod; golferId?: string | null; cardPaymentId?: string }) =>
+    sell: (sale: { lines: SaleLineInput[]; paymentMethod: SalePaymentMethod; golferId?: string | null; cardPaymentId?: string; giftCardCode?: string | null }) =>
       request<Sale>("/sales", { method: "POST", body: sale }),
     paymentSettings: () => request<PaymentSettings>("/settings/payments"),
     savePaymentSettings: (input: { provider: ProcessorId; account?: Record<string, string>; credentials?: Record<string, string>; tipping?: boolean }) =>
@@ -746,8 +821,28 @@ function createHttpClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "ap
     renameTab: (id: string, name: string) => request<Tab>(`/tabs/${id}`, { method: "PATCH", body: { name } }),
     addTabItems: (id: string, lines: TabItemInput[]) => request<Tab>(`/tabs/${id}/items`, { method: "POST", body: { lines } }),
     voidTabItem: (id: string, itemId: string) => request<Tab>(`/tabs/${id}/items/${itemId}`, { method: "DELETE" }),
-    closeTab: (id: string, paymentMethod: SalePaymentMethod, cardPaymentId?: string) =>
-      request<{ tab: Tab; sale: Sale }>(`/tabs/${id}/close`, { method: "POST", body: { paymentMethod, ...(cardPaymentId ? { cardPaymentId } : {}) } }),
+    closeTab: (id: string, paymentMethod: SalePaymentMethod, cardPaymentId?: string, giftCardCode?: string) =>
+      request<{ tab: Tab; sale: Sale }>(`/tabs/${id}/close`, {
+        method: "POST",
+        body: { paymentMethod, ...(cardPaymentId ? { cardPaymentId } : {}), ...(giftCardCode ? { giftCardCode } : {}) },
+      }),
+    giftCards: (q = "") => request<GiftCard[]>(`/gift-cards?q=${encodeURIComponent(q)}`),
+    findGiftCard: (code: string) => request<GiftCardDetail>(`/gift-cards?code=${encodeURIComponent(code)}`),
+    giftCard: (id: string) => request<GiftCardDetail>(`/gift-cards/${id}`),
+    sellGiftCard: (input: { amountCents: number; method: GiftCardMethod; cardPaymentId?: string; golferId?: string | null; recipientName?: string | null; code?: string | null; note?: string | null }) =>
+      request<GiftCardDetail>("/gift-cards", { method: "POST", body: input }),
+    adjustGiftCard: (id: string, input: { changeCents?: number; void?: boolean; note: string }) => request<GiftCardDetail>(`/gift-cards/${id}/adjust`, { method: "POST", body: input }),
+    houseAccounts: () => request<HouseAccount[]>("/house-accounts"),
+    houseAccount: (id: string) => request<HouseAccountDetail>(`/house-accounts/${id}`),
+    openHouseAccount: (input: { golferId: string; creditLimitCents?: number | null; billingEmail?: string | null; notes?: string | null }) =>
+      request<HouseAccountDetail>("/house-accounts", { method: "POST", body: input }),
+    updateHouseAccount: (id: string, patch: { creditLimitCents?: number | null; status?: HouseAccount["status"]; billingEmail?: string | null; notes?: string | null }) =>
+      request<HouseAccountDetail>(`/house-accounts/${id}`, { method: "PATCH", body: patch }),
+    payHouseAccount: (id: string, input: { amountCents: number; method: "card" | "cash" | "check"; cardPaymentId?: string; note?: string | null }) =>
+      request<HouseAccountDetail>(`/house-accounts/${id}/payments`, { method: "POST", body: input }),
+    adjustHouseAccount: (id: string, input: { amountCents: number; description: string }) => request<HouseAccountDetail>(`/house-accounts/${id}/adjust`, { method: "POST", body: input }),
+    runStatements: (month: string) => request<{ month: string; statements: number }>("/house-accounts/statements", { method: "POST", body: { month } }),
+    statement: (id: string) => request<StatementDetail>(`/statements/${id}`),
     voidTab: (id: string, reason: string) => request<Tab>(`/tabs/${id}/void`, { method: "POST", body: { reason } }),
     prep: (station: PrepStation) => request<PrepTicket[]>(`/prep/${station}`),
     setPrepStatus: (itemIds: string[], status: "sent" | "ready" | "served") => request<{ updated: number }>("/prep/items", { method: "POST", body: { itemIds, status } }),

@@ -200,7 +200,7 @@ export async function closeTab(
   course: Course,
   staffId: string | undefined,
   id: string,
-  input: { paymentMethod: SalePaymentMethod; cardPaymentId?: string | null },
+  input: { paymentMethod: SalePaymentMethod; cardPaymentId?: string | null; giftCardCode?: string | null },
 ) {
   const saleId = await withTransaction(db, async (client) => {
     const tab = await openOnly(client, course, id);
@@ -211,7 +211,7 @@ export async function closeTab(
         ? { productId: i.product_id, quantity: i.quantity, unitCents: i.unit_cents }
         : { description: i.description, unitCents: i.unit_cents, quantity: i.quantity, taxable: i.taxable, category: i.category, foodBev: i.food_bev, station: i.station },
     );
-    const saleId = await insertSale(client, course, staffId, { lines, paymentMethod: input.paymentMethod, golferId: tab.customer_id });
+    const saleId = await insertSale(client, course, staffId, { lines, paymentMethod: input.paymentMethod, golferId: tab.customer_id, giftCardCode: input.giftCardCode });
     if (input.cardPaymentId) {
       if (input.paymentMethod !== "card") throw badRequest("not_card", "A card payment can only pay a tab closed as card");
       const { rows } = await client.query("SELECT total_cents FROM sales WHERE id = $1", [saleId]);

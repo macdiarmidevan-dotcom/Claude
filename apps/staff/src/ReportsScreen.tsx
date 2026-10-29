@@ -20,6 +20,7 @@ const METHOD_LABEL: Record<MoneyMethod, string> = {
   card: "Card",
   check: "Check",
   gift_card: "Gift card",
+  house_account: "Charged to house accounts",
   punch_card: "Punch card",
   season_pass: "Season pass",
   loyalty: "Loyalty points",
@@ -128,7 +129,13 @@ function ManagerReports({ client, today }: { client: Client; today: string }) {
               title="Money taken"
               rows={(Object.keys(METHOD_LABEL) as MoneyMethod[]).filter((m) => r.collected[m]).map((m) => [METHOD_LABEL[m], r.collected[m]])}
               total={["Total", r.collected.totalCents]}
-              note="Prepaid online was collected by the booking provider, not at the course."
+              note={[
+                "Prepaid online was collected by the booking provider, not at the course.",
+                r.other.giftCardsSoldCents ? `Includes ${money(r.other.giftCardsSoldCents)} of gift cards sold, which count as revenue when they're spent.` : "",
+                r.other.accountPaymentsCents ? `Includes ${money(r.other.accountPaymentsCents)} paid on house accounts, already counted as revenue when charged.` : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
             />
             <Breakdown title="Pro shop by category" rows={r.revenue.proShopByCategory.map((c) => [`${c.category} (${c.items})`, c.cents])} empty="No pro shop sales." />
             {r.revenue.foodBevByCategory.length > 0 && <Breakdown title="Food and drink by category" rows={r.revenue.foodBevByCategory.map((c) => [`${c.category} (${c.items})`, c.cents])} />}
