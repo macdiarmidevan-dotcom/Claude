@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import type { Client, PaymentMethod, SheetBooking, SheetTeeTime, Station } from "./api";
+import type { Client, PaymentMethod, SheetBooking, SheetTeeTime, Station, Waiver } from "./api";
+import { WaiverModal } from "./WaiverModal";
 import { colors, formatTime, money, paymentMethodLabel, statusColor, statusLabel } from "./theme";
 
 interface Props {
@@ -30,6 +31,8 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, station, onC
   // sendOff: the starter is sending the group off the tee; otherwise just editing carts.
   const [cartsFor, setCartsFor] = useState<{ booking: SheetBooking; sendOff: boolean }>();
   const [payingFor, setPayingFor] = useState<SheetBooking>();
+  // Carts waiting on their drivers' waiver signatures before they're saved.
+  const [signing, setSigning] = useState<{ booking: SheetBooking; carts: string[]; unsigned: string[]; sendOff: boolean; waiver: Waiver }>();
   const [note, setNote] = useState(teeTime.note ?? "");
   const spotsLeft = teeTime.maxPlayers - teeTime.bookedPlayers;
   const active = teeTime.bookings.filter((b) => b.status !== "cancelled");
@@ -127,9 +130,18 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, station, onC
             <CartForm
               booking={b}
               sendOff={cartsFor.sendOff}
-              onSave={(carts) => {
+              onSave={async (carts) => {
+                const { sendOff } = cartsFor;
                 setCartsFor(undefined);
-                run(() => (cartsFor.sendOff ? client.teeOff(b.id, carts) : client.setCarts(b.id, carts)));
+                const unsigned = carts.filter((c) => !b.signedCarts.includes(c));
+                if (unsigned.length === 0) {
+                  return run(() => (sendOff ? client.teeOff(b.id, carts, []) : client.setCarts(b.id, carts, [])));
+                }
+                try {
+                  setSigning({ booking: b, carts, unsigned, sendOff, waiver: await client.waiver() });
+                } catch (e) {
+                  setError(e instanceof Error ? e.message : "Couldn't load the cart waiver");
+                }
               }}
               onCancel={() => setCartsFor(undefined)}
             />
@@ -147,6 +159,21 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, station, onC
           )}
         </View>
       ))}
+
+      {signing && (
+        <WaiverModal
+          waiver={signing.waiver}
+          carts={signing.unsigned}
+          onCancel={() => setSigning(undefined)}
+          onDone={(signatures) => {
+            const { booking, carts, sendOff } = signing;
+            setSigning(undefined);
+            run(() =>
+              sendOff ? client.teeOff(booking.id, carts, signatures) : client.setCarts(booking.id, carts, signatures),
+            );
+          }}
+        />
+      )}
 
       {teeTime.status === "open" && spotsLeft > 0 && (
         <WalkInForm
@@ -230,7 +257,7 @@ function CartForm({ booking, sendOff, onSave, onCancel }: { booking: SheetBookin
   const carts = value.split(/[\s,]+/).filter(Boolean);
   return (
     <View style={{ marginTop: 10 }}>
-      <Text style={styles.muted}>Cart numbers (leave empty if walking)</Text>
+      <Text style={styles.muted}>Cart numbers (leave empty if walking). Each driver signs the cart waiver next.</Text>
       <TextInput
         style={[styles.input, { marginTop: 6 }]}
         placeholder="e.g. 12, 14"

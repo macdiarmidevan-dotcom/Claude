@@ -39,7 +39,22 @@ export interface SheetBooking {
   source: string;
   totalCents: number;
   cartNumbers: string[];
+  /** Carts whose driver has signed the waiver for this booking. */
+  signedCarts: string[];
   payment: PaymentSummary;
+}
+
+export interface Waiver {
+  id: string;
+  version: number;
+  title: string;
+  body: string;
+}
+
+export interface WaiverSignature {
+  cartNumber: string;
+  driverName: string;
+  signature: string;
 }
 
 export interface SheetTeeTime {
@@ -98,10 +113,11 @@ export function createClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | 
     book: (walkIn: WalkIn) => request(`/bookings`, { method: "POST", body: { ...walkIn, source: "staff" } }),
     checkIn: (id: string, method?: PaymentMethod) =>
       request(`/bookings/${id}/check-in`, { method: "POST", body: method ? { payment: { method } } : {} }),
-    teeOff: (id: string, cartNumbers: string[]) =>
-      request(`/bookings/${id}/tee-off`, { method: "POST", body: { cartNumbers } }),
-    setCarts: (id: string, cartNumbers: string[]) =>
-      request(`/bookings/${id}/carts`, { method: "PUT", body: { cartNumbers } }),
+    waiver: () => request<Waiver>("/waiver"),
+    teeOff: (id: string, cartNumbers: string[], waivers: WaiverSignature[]) =>
+      request(`/bookings/${id}/tee-off`, { method: "POST", body: { cartNumbers, waivers } }),
+    setCarts: (id: string, cartNumbers: string[], waivers: WaiverSignature[]) =>
+      request(`/bookings/${id}/carts`, { method: "PUT", body: { cartNumbers, waivers } }),
     noShow: (id: string) => request(`/bookings/${id}/no-show`, { method: "POST" }),
     cancel: (id: string) => request(`/bookings/${id}/cancel`, { method: "POST" }),
     move: (id: string, teeTimeId: string) => request(`/bookings/${id}/move`, { method: "POST", body: { teeTimeId } }),

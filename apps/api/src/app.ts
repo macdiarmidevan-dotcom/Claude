@@ -10,6 +10,7 @@ import {
   getBooking,
   listBookingsForDay,
   checkIn,
+  getActiveWaiver,
   moveBooking,
   recordPayment,
   setCartNumbers,
@@ -52,12 +53,25 @@ const teeTimePatch = z.object({
 });
 const moveBody = z.object({ teeTimeId: z.uuid() });
 const cartNumbers = z.array(z.string().trim().min(1).max(10)).max(8);
+const waiverSignature = z.object({
+  cartNumber: z.string().trim().min(1).max(10),
+  driverName: z.string().trim().min(1).max(200),
+  // SVG path data: move/line/curve commands and numbers only.
+  signature: z
+    .string()
+    .min(10)
+    .max(50_000)
+    .regex(/^[MLQCZmlqcz0-9.,\s-]+$/, "signature must be SVG path data"),
+});
+const waivers = z.array(waiverSignature).max(8).optional();
 const paymentMethod = z.enum(["card", "cash", "prepaid", "punch_card", "gift_card", "comp"]);
 const checkInBody = z.object({
   cartNumbers: cartNumbers.optional(),
+  waivers,
   payment: z.object({ method: paymentMethod }).optional(),
 });
-const teeOffBody = z.object({ cartNumbers: cartNumbers.optional() });
+const teeOffBody = z.object({ cartNumbers: cartNumbers.optional(), waivers });
+const cartsBody = z.object({ cartNumbers, waivers });
 const paymentBody = z.object({ amountCents: z.number().int().positive(), method: paymentMethod });
 const idParams = z.object({ slug: z.string(), id: z.uuid() });
 const slugParams = z.object({ slug: z.string() });
@@ -106,6 +120,14 @@ export function buildApp(db: Db): FastifyInstance {
     if (req.apiKey!.kind !== "secret") throw new AppError(403, "forbidden", "This API needs a staff (sk_) key");
     return course;
   }
+
+  // The liability waiver each cart driver signs.
+  app.get("/v1/courses/:slug/waiver", async (req) => {
+    const course = await courseFor(req);
+    const waiver = await getActiveWaiver(db, course);
+    if (!waiver) throw notFound("Waiver");
+    return waiver;
+  });
 
   app.get("/v1/courses/:slug", async (req) => {
     const course = await courseFor(req);
@@ -167,7 +189,8 @@ export function buildApp(db: Db): FastifyInstance {
   app.post("/v1/courses/:slug/bookings/:id/tee-off", async (req) => {
     const course = await courseFor(req);
     const { id } = idParams.parse(req.params);
-    return teeOff(db, course, id, teeOffBody.parse(req.body ?? {}).cartNumbers);
+    const body = teeOffBody.parse(req.body ?? {});
+    return teeOff(db, course, id, body.cartNumbers, body.waivers);
   });
 
   app.post("/v1/courses/:slug/bookings/:id/payments", async (req, reply) => {
@@ -180,7 +203,8 @@ export function buildApp(db: Db): FastifyInstance {
   app.put("/v1/courses/:slug/bookings/:id/carts", async (req) => {
     const course = await courseFor(req);
     const { id } = idParams.parse(req.params);
-    return setCartNumbers(db, course, id, z.object({ cartNumbers }).parse(req.body).cartNumbers);
+    const body = cartsBody.parse(req.body);
+    return setCartNumbers(db, course, id, body.cartNumbers, body.waivers);
   });
 
   for (const [action, status] of [

@@ -23,6 +23,8 @@ const date = tuesday.toISODate()!;
 
 const auth = (key: string) => ({ authorization: `Bearer ${key}` });
 const golfer = { name: "Pat Golfer", email: "pat@example.com" };
+const signature = "M10 100 L40 60 L80 120 L120 70";
+const signed = (...carts: string[]) => carts.map((cartNumber) => ({ cartNumber, driverName: "Pat Golfer", signature }));
 
 async function teeTimeAt(localTime: string): Promise<string> {
   const res = await app.inject({ url: `/v1/courses/river-bend/tee-sheet?date=${date}`, headers: auth(secretKey) });
@@ -121,7 +123,7 @@ describe("booking", () => {
       method: "POST",
       url: `/v1/courses/river-bend/bookings/${id}/check-in`,
       headers: auth(secretKey),
-      payload: { cartNumbers: ["12"], payment: { method: "card" } },
+      payload: { cartNumbers: ["12"], waivers: signed("12"), payment: { method: "card" } },
     });
     expect(checkIn.json()).toMatchObject({ status: "checked_in", cartNumbers: ["12"] });
 
@@ -129,12 +131,13 @@ describe("booking", () => {
       method: "PUT",
       url: `/v1/courses/river-bend/bookings/${id}/carts`,
       headers: auth(secretKey),
-      payload: { cartNumbers: ["14", "15"] },
+      payload: { cartNumbers: ["14", "15"], waivers: signed("14", "15") },
     });
     expect(swap.json().cartNumbers).toEqual(["14", "15"]);
     const sheet = await app.inject({ url: `/v1/courses/river-bend/tee-sheet?date=${date}`, headers: auth(secretKey) });
     const row = sheet.json().teeTimes.find((t: { id: string }) => t.id === teeTimeId);
     expect(row.bookings[0].cartNumbers).toEqual(["14", "15"]);
+    expect(row.bookings[0].signedCarts).toEqual(expect.arrayContaining(["12", "14", "15"]));
   });
 
   it("won't overbook a tee time, even with simultaneous requests", async () => {
@@ -173,6 +176,32 @@ describe("booking", () => {
     expect(patch.json()).toMatchObject({ status: "blocked", note: "Ladies league" });
     const res = await book(secretKey, { teeTimeId, holes: 9, customer: golfer, players: [{}] });
     expect(res.json().error.code).toBe("tee_time_blocked");
+  });
+
+  it("won't assign a cart until its driver signs the waiver", async () => {
+    const waiver = await app.inject({ url: "/v1/courses/river-bend/waiver", headers: auth(secretKey) });
+    expect(waiver.json()).toMatchObject({ version: 1, title: "Golf Cart Rules and Liability Waiver" });
+
+    const teeTimeId = await teeTimeAt("14:30");
+    const { id } = (await book(secretKey, { teeTimeId, holes: 9, customer: golfer, players: [{}, {}, {}] })).json();
+    const carts = (payload: object) =>
+      app.inject({ method: "PUT", url: `/v1/courses/river-bend/bookings/${id}/carts`, headers: auth(secretKey), payload });
+
+    const unsigned = await carts({ cartNumbers: ["3", "4"], waivers: signed("3") });
+    expect(unsigned.statusCode).toBe(409);
+    expect(unsigned.json().error).toMatchObject({ code: "waiver_required", message: expect.stringContaining("cart 4") });
+    // Nothing is saved when any cart is missing a waiver.
+    const booking = await app.inject({ url: `/v1/courses/river-bend/bookings/${id}`, headers: auth(secretKey) });
+    expect(booking.json()).toMatchObject({ cartNumbers: [], waivers: [] });
+
+    const ok = await carts({ cartNumbers: ["3", "4"], waivers: signed("3", "4") });
+    expect(ok.json().cartNumbers).toEqual(["3", "4"]);
+    expect(ok.json().waivers.map((w: { cartNumber: string }) => w.cartNumber)).toEqual(["3", "4"]);
+    // A cart already signed for on this booking doesn't need signing again.
+    expect((await carts({ cartNumbers: ["4"] })).json().cartNumbers).toEqual(["4"]);
+    // Signatures must be drawn path data, not arbitrary markup.
+    const bad = await carts({ cartNumbers: ["5"], waivers: [{ cartNumber: "5", driverName: "X", signature: "<script>alert(1)</script>" }] });
+    expect(bad.statusCode).toBe(400);
   });
 
   it("shows whether a group has paid", async () => {
@@ -217,7 +246,7 @@ describe("booking", () => {
     expect(checkedIn).toMatchObject({ status: "checked_in", payment: { status: "paid", methods: ["card"] } });
     expect(checkedIn.checkedInAt).toBeTruthy();
 
-    const off = (await post("tee-off", { cartNumbers: ["7"] })).json();
+    const off = (await post("tee-off", { cartNumbers: ["7"], waivers: signed("7") })).json();
     expect(off).toMatchObject({ status: "teed_off", cartNumbers: ["7"] });
     expect(off.teedOffAt).toBeTruthy();
     expect((await post("cancel")).statusCode).toBe(409);
