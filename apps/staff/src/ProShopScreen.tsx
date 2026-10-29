@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { PassSetup } from "./PassSetup";
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, useWindowDimensions, View } from "react-native";
-import type { Client, GolferAccount, Me, Product, ProductInput, Sale, SalePaymentMethod, SalesDay, StockMovement } from "./api";
+import type { Client, GolferAccount, Me, PrepStation, Product, ProductInput, Sale, SalePaymentMethod, SalesDay, StockMovement } from "./api";
 import { addDays, dayParts, todayIn } from "./dates";
 import { useSearch } from "./Golfers";
 import { CardChargeModal, useCardReader } from "./CardReader";
@@ -443,6 +443,8 @@ function ProductEditor(props: { client: Client; product?: Product; categories: s
   const [cost, setCost] = useState(dollars(product?.costCents));
   const [taxable, setTaxable] = useState(product?.taxable ?? true);
   const [trackStock, setTrackStock] = useState(product?.trackStock ?? true);
+  const [foodBev, setFoodBev] = useState(product?.foodBev ?? false);
+  const [station, setStation] = useState<PrepStation | null>(product?.station ?? null);
   const [stock, setStock] = useState(String(product?.stock ?? 0));
   const [reorder, setReorder] = useState(String(product?.reorderLevel ?? 0));
   const [busy, setBusy] = useState(false);
@@ -473,6 +475,8 @@ function ProductEditor(props: { client: Client; product?: Product; categories: s
       taxable,
       trackStock,
       reorderLevel: Number(reorder),
+      foodBev: foodBev || !!station,
+      station,
     };
     return run(async () => {
       if (!product) return client.addProduct({ ...input, stock: trackStock ? Number(stock) : 0 });
@@ -515,6 +519,23 @@ function ProductEditor(props: { client: Client; product?: Product; categories: s
         </View>
       )}
       {trackStock && <Text style={styles.muted}>Each sale at the register takes this down automatically, and a refund puts it back.</Text>}
+      <View style={[styles.rowBetween, { marginTop: 12 }]}>
+        <Text style={styles.text}>Food or drink</Text>
+        <Switch accessibilityLabel="Food or drink" value={foodBev || !!station} onValueChange={(on) => {
+            setFoodBev(on);
+            if (!on) setStation(null);
+          }} trackColor={{ true: colors.primary, false: colors.border }} />
+      </View>
+      {(foodBev || !!station) && (
+        <>
+          <View style={[styles.choices, { marginTop: 6 }]}>
+            <Chip label="Handed over (cooler, counter)" on={!station} onPress={() => setStation(null)} />
+            <Chip label="Made in the kitchen" on={station === "kitchen"} onPress={() => setStation("kitchen")} />
+            <Chip label="Made at the bar" on={station === "bar"} onPress={() => setStation("bar")} />
+          </View>
+          <Text style={styles.muted}>Shows on the Food & bar menu and is reported apart from the pro shop. Items made in the kitchen or at the bar go to that screen when ordered.</Text>
+        </>
+      )}
       {error && <Text role="alert" style={styles.error}>{error}</Text>}
       <View style={[styles.choices, { marginTop: 16 }]}>
         <Button label={busy ? "Saving…" : "Save"} primary disabled={busy || !valid} onPress={save} />

@@ -118,6 +118,7 @@ function ManagerReports({ client, today }: { client: Client; today: string }) {
                 ["Green fees", r.revenue.greenFeesCents],
                 ["Carts and extras", r.revenue.cartsAndExtrasCents],
                 ["Pro shop", r.revenue.proShopCents],
+                ...(r.revenue.foodBevCents ? ([["Food and drink", r.revenue.foodBevCents]] as [string, number][]) : []),
                 ...(r.revenue.eventsCents ? ([["Leagues and outings", r.revenue.eventsCents]] as [string, number][]) : []),
               ]}
               total={["Total", r.revenue.totalCents]}
@@ -130,6 +131,7 @@ function ManagerReports({ client, today }: { client: Client; today: string }) {
               note="Prepaid online was collected by the booking provider, not at the course."
             />
             <Breakdown title="Pro shop by category" rows={r.revenue.proShopByCategory.map((c) => [`${c.category} (${c.items})`, c.cents])} empty="No pro shop sales." />
+            {r.revenue.foodBevByCategory.length > 0 && <Breakdown title="Food and drink by category" rows={r.revenue.foodBevByCategory.map((c) => [`${c.category} (${c.items})`, c.cents])} />}
             <View style={[styles.card, styles.breakdown]}>
               <Text style={styles.label}>Players by booking source</Text>
               {Object.keys(r.rounds.bySource).length === 0 && <Text style={styles.muted}>No bookings.</Text>}
@@ -294,9 +296,21 @@ function DayCloseCard({ client, today, isManager }: { client: Client; today: str
 function downloadCsv(r: Report) {
   const cell = (c: number) => (c / 100).toFixed(2);
   const lines = [
-    ["Date", "Rounds", "Green fees", "Carts and extras", "Pro shop", "Sales tax", "Money taken"].join(","),
-    ...r.days.map((d) => [d.date, d.rounds, cell(d.greenFeesCents), cell(d.cartsAndExtrasCents), cell(d.proShopCents), cell(d.taxCents), cell(d.collectedCents)].join(",")),
-    ["Total", r.rounds.played, cell(r.revenue.greenFeesCents), cell(r.revenue.cartsAndExtrasCents), cell(r.revenue.proShopCents), cell(r.revenue.salesTaxCents), cell(r.collected.totalCents)].join(","),
+    ["Date", "Rounds", "Green fees", "Carts and extras", "Pro shop", "Food and drink", "Leagues and outings", "Sales tax", "Money taken"].join(","),
+    ...r.days.map((d) =>
+      [d.date, d.rounds, cell(d.greenFeesCents), cell(d.cartsAndExtrasCents), cell(d.proShopCents), cell(d.foodBevCents), cell(d.eventsCents), cell(d.taxCents), cell(d.collectedCents)].join(","),
+    ),
+    [
+      "Total",
+      r.rounds.played,
+      cell(r.revenue.greenFeesCents),
+      cell(r.revenue.cartsAndExtrasCents),
+      cell(r.revenue.proShopCents),
+      cell(r.revenue.foodBevCents),
+      cell(r.revenue.eventsCents),
+      cell(r.revenue.salesTaxCents),
+      cell(r.collected.totalCents),
+    ].join(","),
   ];
   const url = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv" }));
   const a = document.createElement("a");

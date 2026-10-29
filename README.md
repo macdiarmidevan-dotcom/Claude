@@ -143,6 +143,20 @@ On the day, the pro shop opens the date, pairs everyone into groups (by handicap
 
 ![Pairing a league night](docs/screenshots/league-pairings.png)
 
+## Food and bar
+
+**Food & bar** runs the grill, the bar, the turn stand and the beverage cart on open tabs. Staff open a tab for a table or a name, a golfer account (so it earns loyalty points), or a group on the course today, so food ordered at the turn goes on that golfer's tab. Tapping menu items builds the order, with a note for the kitchen ("no onions"), and **Send order** puts anything made in the kitchen or at the bar straight onto that screen. Prices are locked in when the order is placed.
+
+The **Kitchen screen** and **Bar screen** show one ticket per order, oldest first, with how long it's been waiting (amber after 8 minutes, red after 15). The cook taps each item as it's made and presses **Served** to clear the ticket. The screens refresh on their own, so they can stay up on a tablet in the kitchen.
+
+At the end, the tab is paid by card (on the reader), cash, gift card or comp. It becomes a normal register sale, so sales tax, stock counts, loyalty points and the cash drawer all work as they do at the pro shop. Anyone can take off an item the kitchen hasn't started. Once it's made, or to void a tab with items on it, a manager has to do it.
+
+Menu items are products with **Food or drink** turned on, and optionally **Made in the kitchen** or **Made at the bar** (set under **Pro shop**). Reports show food and drink as their own revenue line and category breakdown, apart from the pro shop.
+
+![A tab at the turn](docs/screenshots/food-tab.png)
+
+![The kitchen screen](docs/screenshots/kitchen-screen.png)
+
 ## AI assistant
 
 Managers can ask Claude, ChatGPT or another MCP client about the course: "how many rounds today?", "who still owes?", "is Mike Sullivan booked this week?", "what did we take last week?". Add a custom connector with the address `https://<your server>/v1/courses/<course>/mcp` and the manager key as a Bearer token.

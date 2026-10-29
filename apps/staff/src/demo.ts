@@ -38,6 +38,12 @@ import {
   type GolferPass,
   type LoyaltySettings,
   type PassType,
+  type PrepStation,
+  type PrepTicket,
+  type Tab,
+  type TabItem,
+  type TabItemInput,
+  type TabLocation,
   type NewEvent,
   type EventPaymentMethod,
   type StandingTime,
@@ -187,15 +193,25 @@ function seedProducts() {
     ["Wooden tees (bag of 50)", "TEE50", "Accessories", 399, 120, 40, 15],
     ["Divot tool with ball marker", "DIVOT", "Accessories", 899, 300, 16, 6],
     ["Rain umbrella", "UMB", "Accessories", 3499, 1600, 5, 3],
-    ["Bottled water", "H2O", "Food & drink", 250, 60, 48, 24],
-    ["Gatorade", "GATR", "Food & drink", 350, 110, 30, 18],
-    ["Hot dog", "HOTDOG", "Food & drink", 500, 140, 0, 0, true],
+    ["Bottled water", "H2O", "Drinks", 250, 60, 48, 24],
+    ["Gatorade", "GATR", "Drinks", 350, 110, 30, 18],
+    ["Domestic beer, can", "CAN", "Beer", 500, 140, 96, 48],
+    ["Draft beer", "DRAFT", "Beer", 600, 150, 0, 0],
+    ["Bloody Mary", "BMARY", "Cocktails", 900, 220, 0, 0],
+    ["Coffee", "COFFEE", "Drinks", 250, 40, 0, 0],
+    ["Hot dog", "HOTDOG", "Grill", 500, 140, 0, 0],
+    ["Turn burger", "BURGER", "Grill", 900, 310, 0, 0],
+    ["Chicken wrap", "WRAP", "Grill", 1000, 330, 0, 0],
+    ["Breakfast sandwich", "BKFST", "Grill", 650, 190, 0, 0],
     ["Range bucket, small", "RNGS", "Range", 800, 0, 0, 0, false],
     ["Range bucket, large", "RNGL", "Range", 1400, 0, 0, 0, false],
   ];
   for (const [name, sku, category, priceCents, costCents, stock, reorderLevel, taxable] of list) {
-    const tracked = !["Range"].includes(category) && sku !== "HOTDOG";
-    products.push({ id: `pr-${sku}`, name, sku, category, priceCents, costCents, taxable: taxable ?? true, trackStock: tracked, stock: tracked ? stock : 0, reorderLevel, low: false, active: true });
+    // Made-to-order food and poured drinks go to a prep screen and have no shelf count.
+    const station = category === "Grill" ? "kitchen" : ["DRAFT", "BMARY", "COFFEE"].includes(sku) ? "bar" : null;
+    const foodBev = !!station || ["Drinks", "Beer"].includes(category);
+    const tracked = !["Range"].includes(category) && !station;
+    products.push({ id: `pr-${sku}`, name, sku, category, priceCents, costCents, taxable: taxable ?? true, trackStock: tracked, stock: tracked ? stock : 0, reorderLevel, foodBev, station, low: false, active: true });
   }
   for (const p of products) refreshLow(p);
 }
@@ -292,14 +308,17 @@ export function createDemoClient(apiKey: string): Client {
     list.unshift({ id: id(), change, stockAfter: p.stock, reason, saleNumber, note, staff: account()?.name ?? null, at: new Date().toISOString() });
     movements.set(p.id, list);
   }
-  function ringUp(input: { lines: SaleLineInput[]; paymentMethod: SalePaymentMethod; golferId?: string | null }): Sale {
+  type RingLine = SaleLineInput | { productId: string; quantity: number; unitCents: number } | { description: string; unitCents: number; quantity: number; taxable: boolean; category: string; foodBev: boolean };
+  function ringUp(input: { lines: RingLine[]; paymentMethod: SalePaymentMethod; golferId?: string | null }): Sale {
     if (!input.lines.length) throw new ApiError(400, "empty_sale", "Add something to the sale first");
     const lines = input.lines.map((l) => {
       if ("productId" in l) {
         const p = products.find((x) => x.id === l.productId)!;
-        return { productId: p.id, description: p.name, category: p.category, quantity: l.quantity, unitCents: p.priceCents, totalCents: p.priceCents * l.quantity, taxable: p.taxable };
+        const unit = "unitCents" in l ? l.unitCents : p.priceCents;
+        return { productId: p.id, description: p.name, category: p.category, quantity: l.quantity, unitCents: unit, totalCents: unit * l.quantity, taxable: p.taxable, foodBev: p.foodBev };
       }
-      return { productId: null, description: l.description, category: "Other", quantity: l.quantity, unitCents: l.unitCents, totalCents: l.unitCents * l.quantity, taxable: l.taxable ?? true };
+      const extra = "foodBev" in l ? { category: l.category, foodBev: l.foodBev } : { category: "Other", foodBev: false };
+      return { productId: null, description: l.description, quantity: l.quantity, unitCents: l.unitCents, totalCents: l.unitCents * l.quantity, taxable: l.taxable ?? true, ...extra };
     });
     const subtotalCents = lines.reduce((t, l) => t + l.totalCents, 0);
     const taxCents = input.paymentMethod === "comp" ? 0 : Math.round((lines.filter((l) => l.taxable).reduce((t, l) => t + l.totalCents, 0) * pos.salesTaxBps) / 10_000);
@@ -768,6 +787,61 @@ export function createDemoClient(apiKey: string): Client {
     }
     return p;
   }
+  // Food and bar tabs.
+  const tabs: (Omit<Tab, "subtotalCents" | "taxCents" | "waiting">)[] = [];
+  function tabView(t: (typeof tabs)[number]): Tab {
+    const kept = t.items.filter((i) => i.status !== "void");
+    const subtotalCents = kept.reduce((s, i) => s + i.totalCents, 0);
+    const taxCents = Math.round((kept.filter((i) => i.taxable).reduce((s, i) => s + i.totalCents, 0) * pos.salesTaxBps) / 10_000);
+    return { ...t, items: t.items.map((i) => ({ ...i })), subtotalCents, taxCents, waiting: kept.filter((i) => i.status === "sent" || i.status === "ready").length };
+  }
+  function findTab(tabId: string, open = true) {
+    const t = tabs.find((x) => x.id === tabId);
+    if (!t) throw new ApiError(404, "not_found", "Tab not found");
+    if (open && t.status !== "open") throw conflict("tab_closed", t.status === "void" ? "This tab was voided" : "This tab has been paid");
+    return t;
+  }
+  function tabItem(l: TabItemInput, at = new Date()): TabItem {
+    const base = { id: id(), quantity: l.quantity, note: l.note?.trim() || null, addedBy: account()?.name ?? null, addedAt: at.toISOString() };
+    if ("productId" in l) {
+      const p = products.find((x) => x.id === l.productId);
+      if (!p) throw new ApiError(404, "not_found", "Product not found");
+      return { ...base, productId: p.id, description: p.name, category: p.category, unitCents: p.priceCents, totalCents: p.priceCents * l.quantity, taxable: p.taxable, station: p.station, status: p.station ? "sent" : "served" };
+    }
+    if (!l.description.trim()) throw new ApiError(400, "description_required", "Name the item");
+    const station = l.station ?? null;
+    return {
+      ...base, productId: null, description: l.description.trim(), category: station ? "Food & drink" : "Other", unitCents: l.unitCents, totalCents: l.unitCents * l.quantity,
+      taxable: l.taxable ?? true, station, status: station ? "sent" : "served",
+    };
+  }
+  let tabsSeeded = false;
+  function seedTabs() {
+    if (tabsSeeded) return;
+    tabsSeeded = true;
+    seedProducts();
+    const today = todayIn(riverBend.timeZone);
+    ensureDay(today);
+    // Mike's foursome made the turn and ordered; the burgers are on the grill and the beers are poured.
+    const mike = bookings.find((b) => b.customerName === "Mike Sullivan" && teeTimes.get(b.teeTimeId)?.date === today);
+    const ago = (min: number) => new Date(Date.now() - min * 60_000);
+    const open = (name: string, location: TabLocation, extra: Partial<Tab> = {}, min = 20) => {
+      const t = { id: id(), name, location, status: "open" as const, golfer: null, bookingId: null, teeTime: null, openedBy: "Casey Morgan", openedAt: ago(min).toISOString(), closedAt: null, saleId: null, voidReason: null, items: [] as TabItem[], ...extra };
+      tabs.push(t);
+      return t;
+    };
+    const mt = open("Mike Sullivan", "turn", mike ? { golfer: mike.golferId ? { id: mike.golferId, name: "Mike Sullivan" } : null, bookingId: mike.id, teeTime: teeTimes.get(mike.teeTimeId)!.startsAt } : {}, 9);
+    mt.items.push(tabItem({ productId: "pr-BURGER", quantity: 2, note: "One no cheese" }, ago(6)), tabItem({ productId: "pr-WRAP", quantity: 1 }, ago(6)), tabItem({ productId: "pr-DRAFT", quantity: 4 }, ago(6)));
+    mt.items.filter((i) => i.station === "bar").forEach((i) => (i.status = "ready"));
+    const t2 = open("Table 2", "grill", {}, 35);
+    t2.items.push(tabItem({ productId: "pr-BKFST", quantity: 2 }, ago(30)), tabItem({ productId: "pr-COFFEE", quantity: 2 }, ago(30)));
+    t2.items.forEach((i) => (i.status = "served"));
+    const cart = open("Beverage cart", "cart", {}, 60);
+    cart.items.push(tabItem({ productId: "pr-CAN", quantity: 6 }, ago(50)), tabItem({ productId: "pr-H2O", quantity: 4 }, ago(50)));
+    const bar = open("Bar: Dave and Kim", "bar", {}, 4);
+    bar.items.push(tabItem({ productId: "pr-BMARY", quantity: 2 }, ago(3)), tabItem({ productId: "pr-HOTDOG", quantity: 1, note: "Everything on it" }, ago(3)));
+  }
+
   // Standing tee times, leagues and outings.
   type DemoStanding = Omit<StandingTime, "golferName" | "upcoming"> & { runs: Map<string, { bookingId: string | null; problem: string | null }> };
   type DemoEventDate = { id: string; date: string; startTime: string; slots: number; status: "scheduled" | "cancelled"; held: string[]; pairs: Map<string, { groupNo: number; checkedIn: boolean }> };
@@ -1331,6 +1405,8 @@ export function createDemoClient(apiKey: string): Client {
           trackStock: input.trackStock ?? true,
           stock: input.trackStock === false ? 0 : (input.stock ?? 0),
           reorderLevel: input.reorderLevel ?? 0,
+          foodBev: (input.foodBev ?? false) || !!input.station,
+          station: input.station ?? null,
           low: false,
           active: true,
         };
@@ -1346,6 +1422,7 @@ export function createDemoClient(apiKey: string): Client {
         const p = products.find((x) => x.id === productId)!;
         if (patch.sku && products.some((x) => x.id !== p.id && x.sku?.toLowerCase() === patch.sku!.toLowerCase())) throw conflict("sku_taken", "Another product already uses that SKU");
         Object.assign(p, Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)));
+        if (p.station) p.foodBev = true;
         refreshLow(p);
         log("Changed a product");
         return { ...p };
@@ -1412,7 +1489,7 @@ export function createDemoClient(apiKey: string): Client {
         type Day = Report["days"][number];
         const days = new Map<string, Day>();
         const at = (date: string) => {
-          if (!days.has(date)) days.set(date, { date, greenFeesCents: 0, cartsAndExtrasCents: 0, proShopCents: 0, eventsCents: 0, taxCents: 0, collectedCents: 0, rounds: 0 });
+          if (!days.has(date)) days.set(date, { date, greenFeesCents: 0, cartsAndExtrasCents: 0, proShopCents: 0, foodBevCents: 0, eventsCents: 0, taxCents: 0, collectedCents: 0, rounds: 0 });
           return days.get(date)!;
         };
         const collected: Record<MoneyMethod, number> = { cash: 0, card: 0, gift_card: 0, punch_card: 0, season_pass: 0, loyalty: 0, rain_check: 0, check: 0, prepaid: 0, comp: 0 };
@@ -1446,6 +1523,7 @@ export function createDemoClient(apiKey: string): Client {
         }
         const kept = sales.filter((x) => inRange(dayOf(x.at)));
         const categories = new Map<string, { category: string; cents: number; items: number }>();
+        const fbCategories = new Map<string, { category: string; cents: number; items: number }>();
         for (const sale of kept.filter((x) => x.status === "completed")) {
           const d = at(dayOf(sale.at));
           d.proShopCents += sale.subtotalCents;
@@ -1453,10 +1531,15 @@ export function createDemoClient(apiKey: string): Client {
           d.collectedCents += sale.totalCents;
           collected[sale.paymentMethod] += sale.totalCents;
           for (const l of sale.lines) {
-            const c = categories.get(l.category) ?? { category: l.category, cents: 0, items: 0 };
+            const into = l.foodBev ? fbCategories : categories;
+            const c = into.get(l.category) ?? { category: l.category, cents: 0, items: 0 };
             c.cents += l.totalCents;
             c.items += l.quantity;
-            categories.set(l.category, c);
+            into.set(l.category, c);
+            if (l.foodBev) {
+              d.proShopCents -= l.totalCents;
+              d.foodBevCents += l.totalCents;
+            }
           }
         }
         // League and outing payments count on the day they were taken. Comps are money not collected.
@@ -1480,11 +1563,13 @@ export function createDemoClient(apiKey: string): Client {
             greenFeesCents: sum("greenFeesCents"),
             cartsAndExtrasCents: sum("cartsAndExtrasCents"),
             proShopCents: sum("proShopCents"),
+            foodBevCents: sum("foodBevCents"),
             eventsCents: sum("eventsCents"),
-            totalCents: sum("greenFeesCents") + sum("cartsAndExtrasCents") + sum("proShopCents") + sum("eventsCents"),
+            totalCents: sum("greenFeesCents") + sum("cartsAndExtrasCents") + sum("proShopCents") + sum("foodBevCents") + sum("eventsCents"),
             salesTaxCents: sum("taxCents"),
             proShopRefundsCents: kept.filter((x) => x.status === "refunded").reduce((t, x) => t + x.totalCents, 0),
             proShopByCategory: [...categories.values()].sort((a, b) => b.cents - a.cents),
+            foodBevByCategory: [...fbCategories.values()].sort((a, b) => b.cents - a.cents),
           },
           collected: { ...collected, totalCents: Object.values(collected).reduce((t, c) => t + c, 0) },
           rounds: { played, booked, noShows, openSpots: spots, occupancy: spots ? Math.round((booked / spots) * 1000) / 10 : null, bySource },
@@ -1855,6 +1940,109 @@ export function createDemoClient(apiKey: string): Client {
         const p = cardState(paymentId);
         if (p.status === "processing") Object.assign(p, { status: "cancelled", completedAt: new Date().toISOString() });
         return publicCard(p);
+      }),
+    tabs: (status: "open" | "closed" = "open") =>
+      reply(() => {
+        seedTabs();
+        return tabs.filter((t) => t.status === status).sort((a, b) => b.openedAt.localeCompare(a.openedAt)).map(tabView);
+      }),
+    tab: (tabId: string) => reply(() => tabView(findTab(tabId, false))),
+    openTab: (input: { name?: string | null; location?: TabLocation; golferId?: string | null; bookingId?: string | null }) =>
+      reply(() => {
+        seedTabs();
+        const b = input.bookingId ? find(input.bookingId) : undefined;
+        if (b && tabs.some((t) => t.bookingId === b.id && t.status === "open")) throw conflict("tab_open", "This group already has an open tab");
+        const g = input.golferId ? golfer(input.golferId) : b?.golferId ? golfers.find((x) => x.id === b.golferId) : undefined;
+        const name = input.name?.trim() || b?.customerName || g?.name;
+        if (!name) throw new ApiError(400, "name_required", "Name the tab, e.g. the golfer or the table");
+        const t = {
+          id: id(), name, location: input.location ?? "grill", status: "open" as const, golfer: g ? { id: g.id, name: g.name } : null, bookingId: b?.id ?? null,
+          teeTime: b ? teeTimes.get(b.teeTimeId)!.startsAt : null, openedBy: account()?.name ?? null, openedAt: new Date().toISOString(), closedAt: null, saleId: null, voidReason: null, items: [],
+        };
+        tabs.push(t);
+        log("Opened a tab", g?.name);
+        return tabView(t);
+      }),
+    renameTab: (tabId: string, name: string) =>
+      reply(() => {
+        if (!name.trim()) throw new ApiError(400, "name_required", "Name the tab");
+        const t = findTab(tabId);
+        t.name = name.trim();
+        return tabView(t);
+      }),
+    addTabItems: (tabId: string, lines: TabItemInput[]) =>
+      reply(() => {
+        const t = findTab(tabId);
+        if (!lines.length) throw new ApiError(400, "empty_order", "Add something first");
+        t.items.push(...lines.map((l) => tabItem(l)));
+        return tabView(t);
+      }),
+    voidTabItem: (tabId: string, itemId: string) =>
+      reply(() => {
+        const t = findTab(tabId);
+        const i = t.items.find((x) => x.id === itemId);
+        if (!i) throw new ApiError(404, "not_found", "Item not found");
+        if (i.station && i.status !== "sent" && i.status !== "void" && account()?.role !== "manager") throw conflict("already_made", "It's already been made. Ask a manager to take it off");
+        i.status = "void";
+        log("Took an item off a tab");
+        return tabView(t);
+      }),
+    closeTab: (tabId: string, paymentMethod: SalePaymentMethod, cardPaymentId?: string) =>
+      reply(() => {
+        const t = findTab(tabId);
+        const kept = t.items.filter((i) => i.status !== "void");
+        if (!kept.length) throw new ApiError(400, "empty_tab", "There's nothing on this tab. Void it instead");
+        const card = cardPaymentId ? useCard(cardPaymentId) : undefined;
+        const sale = ringUp({
+          lines: kept.map((i) =>
+            i.productId ? { productId: i.productId, quantity: i.quantity, unitCents: i.unitCents } : { description: i.description, unitCents: i.unitCents, quantity: i.quantity, taxable: i.taxable, category: i.category, foodBev: !!i.station },
+          ),
+          paymentMethod,
+          golferId: t.golfer?.id ?? null,
+        });
+        earnSale(sale);
+        if (card) card.saleId = sale.id;
+        kept.forEach((i) => (i.status = "served"));
+        Object.assign(t, { status: "closed", saleId: sale.id, closedAt: new Date().toISOString() });
+        log("Closed a tab", t.golfer?.name);
+        return { tab: tabView(t), sale };
+      }),
+    voidTab: (tabId: string, reason: string) =>
+      reply(() => {
+        const t = findTab(tabId);
+        if (t.items.some((i) => i.status !== "void") && account()?.role !== "manager") throw conflict("tab_has_items", "Only a manager can void a tab with items on it");
+        if (!reason.trim()) throw new ApiError(400, "reason_required", "Say why it's being voided");
+        t.items.forEach((i) => (i.status = "void"));
+        Object.assign(t, { status: "void", voidReason: reason.trim(), closedAt: new Date().toISOString() });
+        log("Voided a tab");
+        return tabView(t);
+      }),
+    prep: (station: PrepStation) =>
+      reply(() => {
+        seedTabs();
+        const tickets = new Map<string, PrepTicket>();
+        const rows = tabs
+          .filter((t) => t.status === "open")
+          .flatMap((t) => t.items.filter((i) => i.station === station && (i.status === "sent" || i.status === "ready")).map((i) => ({ t, i })))
+          .sort((a, b) => a.i.addedAt.localeCompare(b.i.addedAt));
+        for (const { t, i } of rows) {
+          const key = `${t.id}:${Math.floor(Date.parse(i.addedAt) / 60_000)}`;
+          if (!tickets.has(key)) tickets.set(key, { key, tabId: t.id, tabName: t.name, location: t.location, orderedAt: i.addedAt, by: i.addedBy, items: [] });
+          tickets.get(key)!.items.push({ ...i });
+        }
+        return [...tickets.values()];
+      }),
+    setPrepStatus: (itemIds: string[], status: "sent" | "ready" | "served") =>
+      reply(() => {
+        let updated = 0;
+        for (const t of tabs.filter((x) => x.status === "open"))
+          for (const i of t.items)
+            if (itemIds.includes(i.id) && i.station && i.status !== "void") {
+              i.status = status;
+              updated++;
+            }
+        if (!updated) throw new ApiError(404, "not_found", "Item not found");
+        return { updated };
       }),
     standingTimes: () =>
       reply(() => {

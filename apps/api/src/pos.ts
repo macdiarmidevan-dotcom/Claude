@@ -9,6 +9,7 @@ import { earnPoints, reverseSalePoints } from "./loyalty.ts";
 // product's stock is recorded with who made it and why, so a count that's off can be traced.
 
 export type SalePaymentMethod = "card" | "cash" | "gift_card" | "comp";
+export type Station = "kitchen" | "bar";
 
 export interface Product {
   id: string;
@@ -21,6 +22,10 @@ export interface Product {
   trackStock: boolean;
   stock: number;
   reorderLevel: number;
+  /** Food or drink, reported apart from the pro shop. */
+  foodBev: boolean;
+  /** Where it's made, so the order shows on that prep screen. */
+  station: Station | null;
   /** Stock is at or below the reorder level. */
   low: boolean;
   active: boolean;
@@ -35,6 +40,8 @@ export interface ProductInput {
   taxable?: boolean;
   trackStock?: boolean;
   reorderLevel?: number;
+  foodBev?: boolean;
+  station?: Station | null;
   /** Starting stock for a new product. */
   stock?: number;
 }
@@ -42,6 +49,11 @@ export interface ProductInput {
 export type SaleLineInput =
   | { productId: string; quantity: number }
   | { description: string; unitCents: number; quantity: number; taxable?: boolean; category?: string };
+
+/** A line closed off a tab: the product's price is the one it was ordered at. */
+export type TabLine =
+  | { productId: string; quantity: number; unitCents: number }
+  | { description: string; unitCents: number; quantity: number; taxable: boolean; category: string; foodBev: boolean; station: Station | null };
 
 const toProduct = (r: any): Product => ({
   id: r.id,
@@ -54,6 +66,8 @@ const toProduct = (r: any): Product => ({
   trackStock: r.track_stock,
   stock: r.stock,
   reorderLevel: r.reorder_level,
+  foodBev: r.food_bev,
+  station: r.station,
   low: r.track_stock && r.active && r.stock <= r.reorder_level,
   active: r.active,
 });
@@ -85,8 +99,8 @@ export async function createProduct(db: Db, course: Course, staffId: string | un
     const stock = input.trackStock === false ? 0 : (input.stock ?? 0);
     const { rows } = await client
       .query(
-        `INSERT INTO products (course_id, name, sku, category, price_cents, cost_cents, taxable, track_stock, stock, reorder_level)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
+        `INSERT INTO products (course_id, name, sku, category, price_cents, cost_cents, taxable, track_stock, stock, reorder_level, food_bev, station)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
         [
           course.id,
           input.name.trim(),
@@ -98,6 +112,8 @@ export async function createProduct(db: Db, course: Course, staffId: string | un
           input.trackStock ?? true,
           stock,
           input.reorderLevel ?? 0,
+          (input.foodBev ?? false) || !!input.station,
+          input.station ?? null,
         ],
       )
       .catch(skuTaken);
@@ -114,7 +130,9 @@ export async function updateProduct(db: DbClient, course: Course, id: string, pa
          name = COALESCE($2, name), sku = CASE WHEN $3 THEN $4 ELSE sku END, category = COALESCE($5, category),
          price_cents = COALESCE($6, price_cents), cost_cents = CASE WHEN $7 THEN $8 ELSE cost_cents END,
          taxable = COALESCE($9, taxable), track_stock = COALESCE($10, track_stock),
-         reorder_level = COALESCE($11, reorder_level), active = COALESCE($12, active)
+         reorder_level = COALESCE($11, reorder_level), active = COALESCE($12, active),
+         station = CASE WHEN $13 THEN $14 ELSE station END,
+         food_bev = COALESCE($15, food_bev) OR (CASE WHEN $13 THEN $14 ELSE station END) IS NOT NULL
        WHERE id = $1 RETURNING *`,
       [
         id,
@@ -129,6 +147,9 @@ export async function updateProduct(db: DbClient, course: Course, id: string, pa
         patch.trackStock ?? null,
         patch.reorderLevel ?? null,
         patch.active ?? null,
+        patch.station !== undefined,
+        patch.station ?? null,
+        patch.foodBev ?? null,
       ],
     )
     .catch(skuTaken);
@@ -228,7 +249,7 @@ export async function insertSale(
   client: DbClient,
   course: Course,
   staffId: string | undefined,
-  input: { lines: SaleLineInput[]; paymentMethod: SalePaymentMethod; golferId?: string | null },
+  input: { lines: (SaleLineInput | TabLine)[]; paymentMethod: SalePaymentMethod; golferId?: string | null },
 ): Promise<string> {
   if (!input.lines.length) throw badRequest("empty_sale", "Add something to the sale first");
   if (input.golferId) {
@@ -249,10 +270,12 @@ export async function insertSale(
   const lines = input.lines.map((l) => {
     if ("productId" in l) {
       const p = products.get(l.productId);
-      return { productId: p.id, description: p.name, category: p.category, quantity: l.quantity, unitCents: p.price_cents, taxable: p.taxable };
+      const unitCents = "unitCents" in l ? l.unitCents : p.price_cents;
+      return { productId: p.id, description: p.name, category: p.category, quantity: l.quantity, unitCents, taxable: p.taxable, foodBev: p.food_bev, station: p.station };
     }
     if (!l.description.trim()) throw badRequest("description_required", "Name the item");
-    return { productId: null, description: l.description.trim(), category: l.category ?? "Other", quantity: l.quantity, unitCents: l.unitCents, taxable: l.taxable ?? true };
+    const extra = "foodBev" in l ? { foodBev: l.foodBev, station: l.station } : { foodBev: false, station: null };
+    return { productId: null, description: l.description.trim(), category: l.category ?? "Other", quantity: l.quantity, unitCents: l.unitCents, taxable: l.taxable ?? true, ...extra };
   });
   const { rows: numbers } = await client.query(
     "UPDATE courses SET next_sale_number = next_sale_number + 1 WHERE id = $1 RETURNING next_sale_number - 1 AS number, sales_tax_bps",
@@ -271,9 +294,9 @@ export async function insertSale(
   const saleId = rows[0].id as string;
   for (const l of lines) {
     await client.query(
-      `INSERT INTO sale_lines (sale_id, product_id, description, category, quantity, unit_cents, total_cents, taxable)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [saleId, l.productId, l.description, l.category, l.quantity, l.unitCents, l.unitCents * l.quantity, l.taxable],
+      `INSERT INTO sale_lines (sale_id, product_id, description, category, quantity, unit_cents, total_cents, taxable, food_bev, station)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [saleId, l.productId, l.description, l.category, l.quantity, l.unitCents, l.unitCents * l.quantity, l.taxable, l.foodBev, l.station],
     );
     const p = l.productId ? products.get(l.productId) : undefined;
     if (p?.track_stock) {
@@ -319,6 +342,7 @@ function toSale(r: any, lines: any[]) {
       unitCents: l.unit_cents,
       totalCents: l.total_cents,
       taxable: l.taxable,
+      foodBev: l.food_bev,
     })),
   };
 }

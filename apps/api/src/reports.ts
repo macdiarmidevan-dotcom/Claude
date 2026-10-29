@@ -38,11 +38,19 @@ export async function report(db: DbClient, course: Course, from: string, to: str
     range,
   );
   const { rows: categories } = await db.query(
-    `SELECT l.category, SUM(l.total_cents)::int AS cents, SUM(l.quantity)::int AS items
+    `SELECT l.category, l.food_bev, SUM(l.total_cents)::int AS cents, SUM(l.quantity)::int AS items
        FROM sale_lines l JOIN sales s ON s.id = l.sale_id
       WHERE s.course_id = $1 AND s.created_at >= $2 AND s.created_at < $3 AND s.status = 'completed'
-      GROUP BY 1 ORDER BY 2 DESC`,
+      GROUP BY 1, 2 ORDER BY 3 DESC`,
     range.slice(0, 3),
+  );
+  // Food and drink are rung up on the same register, so their share of each day's sales is split out.
+  const { rows: foodBev } = await db.query(
+    `SELECT to_char(s.created_at AT TIME ZONE $4, 'YYYY-MM-DD') AS day, SUM(l.total_cents)::int AS cents
+       FROM sale_lines l JOIN sales s ON s.id = l.sale_id
+      WHERE s.course_id = $1 AND s.created_at >= $2 AND s.created_at < $3 AND s.status = 'completed' AND l.food_bev
+      GROUP BY 1`,
+    range,
   );
   const { rows: rounds } = await db.query(
     `SELECT to_char(t.starts_at AT TIME ZONE $4, 'YYYY-MM-DD') AS day, b.status, b.source, SUM(b.players)::int AS players, COUNT(*)::int AS groups
@@ -63,9 +71,9 @@ export async function report(db: DbClient, course: Course, from: string, to: str
     range.slice(0, 3),
   );
 
-  const days = new Map<string, { date: string; greenFeesCents: number; cartsAndExtrasCents: number; proShopCents: number; eventsCents: number; taxCents: number; collectedCents: number; rounds: number }>();
+  const days = new Map<string, { date: string; greenFeesCents: number; cartsAndExtrasCents: number; proShopCents: number; foodBevCents: number; eventsCents: number; taxCents: number; collectedCents: number; rounds: number }>();
   const at = (date: string) => {
-    if (!days.has(date)) days.set(date, { date, greenFeesCents: 0, cartsAndExtrasCents: 0, proShopCents: 0, eventsCents: 0, taxCents: 0, collectedCents: 0, rounds: 0 });
+    if (!days.has(date)) days.set(date, { date, greenFeesCents: 0, cartsAndExtrasCents: 0, proShopCents: 0, foodBevCents: 0, eventsCents: 0, taxCents: 0, collectedCents: 0, rounds: 0 });
     return days.get(date)!;
   };
   const collected = emptyMethods();
@@ -88,6 +96,13 @@ export async function report(db: DbClient, course: Course, from: string, to: str
     row.collectedCents += s.total;
     collected[s.payment_method as Method] += s.total;
     proShop = { ...proShop, subtotalCents: proShop.subtotalCents + s.subtotal, taxCents: proShop.taxCents + s.tax, totalCents: proShop.totalCents + s.total, sales: proShop.sales + s.n };
+  }
+  let foodBevCents = 0;
+  for (const f of foodBev) {
+    const row = at(f.day);
+    row.proShopCents -= f.cents;
+    row.foodBevCents += f.cents;
+    foodBevCents += f.cents;
   }
   let eventsCents = 0;
   for (const e of events) {
@@ -113,13 +128,15 @@ export async function report(db: DbClient, course: Course, from: string, to: str
     revenue: {
       greenFeesCents: greenFees,
       cartsAndExtrasCents: extras,
-      proShopCents: proShop.subtotalCents,
+      proShopCents: proShop.subtotalCents - foodBevCents,
+      foodBevCents,
       eventsCents,
       // Sales tax is owed to the state, so it's kept out of revenue.
       totalCents: greenFees + extras + proShop.subtotalCents + eventsCents,
       salesTaxCents: proShop.taxCents,
       proShopRefundsCents: proShop.refundedCents,
-      proShopByCategory: categories.map((c) => ({ category: c.category, cents: c.cents, items: c.items })),
+      proShopByCategory: categories.filter((c) => !c.food_bev).map((c) => ({ category: c.category, cents: c.cents, items: c.items })),
+      foodBevByCategory: categories.filter((c) => c.food_bev).map((c) => ({ category: c.category, cents: c.cents, items: c.items })),
     },
     // Money taken by type. Prepaid is what the booking provider collected online; comps are free.
     collected: { ...collected, totalCents: Object.values(collected).reduce((s, c) => s + c, 0) },
