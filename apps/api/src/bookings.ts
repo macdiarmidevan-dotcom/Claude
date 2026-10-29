@@ -4,6 +4,7 @@ import { withTransaction, type Db, type DbClient } from "./db.ts";
 import { badRequest, conflict, notFound } from "./errors.ts";
 import { getAddOns, getHolidays, getRates, toTeeTime, type Course, type TeeTime } from "./courses.ts";
 import { insertSale, type SaleLineInput, type SalePaymentMethod } from "./pos.ts";
+import { useCardPayment } from "./payments.ts";
 
 export type BookingSource = "staff" | "phone" | "teeitup" | "golfnow" | "import";
 
@@ -313,15 +314,16 @@ export async function setBookingStatus(
 }
 
 /** Records a payment against a booking. Overpaying is refused so the balance never goes negative. */
-async function addPayment(client: DbClient, course: Course, id: string, amountCents: number, method: PaymentMethod) {
+async function addPayment(client: DbClient, course: Course, id: string, amountCents: number, method: PaymentMethod, cardPaymentId?: string) {
   const booking = await getBooking(client, course, id);
   if (amountCents > booking.payment.balanceCents) {
     throw badRequest("overpayment", `The balance is only ${booking.payment.balanceCents} cents`);
   }
-  await client.query("INSERT INTO booking_payments (booking_id, amount_cents, method) VALUES ($1, $2, $3)", [
+  await client.query("INSERT INTO booking_payments (booking_id, amount_cents, method, card_payment_id) VALUES ($1, $2, $3, $4)", [
     id,
     amountCents,
     method,
+    cardPaymentId ?? null,
   ]);
 }
 
@@ -349,6 +351,11 @@ export async function checkIn(
     round?: { residency: PlayerProfile["residency"]; riding: boolean } | undefined;
     /** Pro shop items bought at check-in (water, snacks, balls), rung up as one sale. */
     items?: { lines: SaleLineInput[]; paymentMethod: SalePaymentMethod } | undefined;
+    /**
+     * A card payment taken on a connected reader. One tap pays everything going on the card:
+     * the round, the items, or both, so it must match that total exactly.
+     */
+    cardPaymentId?: string | undefined;
     staffId?: string | undefined;
   },
 ): Promise<Booking> {
@@ -359,12 +366,25 @@ export async function checkIn(
       [id, course.id],
     );
     if (opts.round) await repriceRound(client, course, id, opts.round);
+    let onCard = 0;
+    let saleId: string | undefined;
     if (opts.items?.lines.length) {
-      await insertSale(client, course, opts.staffId, { ...opts.items, golferId: locked[0]?.golfer_id ?? null });
+      saleId = await insertSale(client, course, opts.staffId, { ...opts.items, golferId: locked[0]?.golfer_id ?? null });
+      if (opts.items.paymentMethod === "card") {
+        const { rows } = await client.query("SELECT total_cents FROM sales WHERE id = $1", [saleId]);
+        onCard += rows[0].total_cents;
+      }
     }
     const booking = await getBooking(client, course, id);
+    const roundOnCard = opts.payment?.method === "card" ? booking.payment.balanceCents : 0;
+    onCard += roundOnCard;
+    if (opts.cardPaymentId) {
+      if (!onCard) throw badRequest("nothing_on_card", "Nothing here is being paid by card");
+      await useCardPayment(client, course, opts.cardPaymentId, onCard, { bookingId: roundOnCard ? id : undefined, saleId: saleId && opts.items?.paymentMethod === "card" ? saleId : undefined });
+      if (saleId && opts.items?.paymentMethod === "card") await client.query("UPDATE sales SET card_payment_id = $2 WHERE id = $1", [saleId, opts.cardPaymentId]);
+    }
     if (opts.payment && booking.payment.balanceCents > 0) {
-      await addPayment(client, course, id, booking.payment.balanceCents, opts.payment.method);
+      await addPayment(client, course, id, booking.payment.balanceCents, opts.payment.method, roundOnCard && opts.cardPaymentId ? opts.cardPaymentId : undefined);
     } else if (booking.payment.balanceCents > 0) {
       throw conflict("payment_required", `This group still owes ${booking.payment.balanceCents} cents`);
     }

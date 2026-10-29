@@ -38,6 +38,21 @@ import {
   updateProduct,
 } from "./pos.ts";
 import { closeDay, getDayClose, report } from "./reports.ts";
+import {
+  cancelCardPayment,
+  createTerminal,
+  discoverReaders,
+  getCardPayment,
+  getPaymentSettings,
+  handlePaymentWebhook,
+  listCardPayments,
+  listTerminals,
+  refundCardPayment,
+  savePaymentSettings,
+  startCardPayment,
+  updateTerminal,
+} from "./payments.ts";
+import { providers, type PaymentsFetch } from "./terminals.ts";
 import { deleteSync, getSync, runSync, saveSync, type FetchReport } from "./sync.ts";
 import { createGolfer, getGolfer, linkGolfer, searchGolfers, updateGolfer } from "./golfers.ts";
 import {
@@ -121,6 +136,10 @@ const ACTIONS: Record<string, string> = {
   "POST /v1/courses/:slug/sales/:id/refund": "Refunded a sale",
   "PUT /v1/courses/:slug/settings/pos": "Changed sales tax",
   "PUT /v1/courses/:slug/closes/:date": "Closed the day",
+  "PUT /v1/courses/:slug/settings/payments": "Changed card payment settings",
+  "POST /v1/courses/:slug/terminals": "Added a card reader",
+  "PATCH /v1/courses/:slug/terminals/:id": "Changed a card reader",
+  "POST /v1/courses/:slug/card-payments/:id/refund": "Refunded a card payment",
   "PATCH /v1/courses/:slug/employee-types/:id": "Changed an employee type",
 };
 
@@ -179,6 +198,7 @@ const checkInBody = z.object({
   payment: z.object({ method: paymentMethod }).optional(),
   items: z.object({ lines: z.array(saleLine).max(100), paymentMethod: salePaymentMethod }).optional(),
   round: z.object({ residency: z.enum(["resident", "nonresident"]), riding: z.boolean() }).optional(),
+  cardPaymentId: z.uuid().optional(),
 });
 const teeOffBody = z.object({ cartNumbers: cartNumbers.optional(), waivers });
 const cartsBody = z.object({ cartNumbers, waivers });
@@ -244,8 +264,9 @@ const paymentBody = z.object({ amountCents: z.number().int().positive(), method:
 const idParams = z.object({ slug: z.string(), id: z.uuid() });
 const slugParams = z.object({ slug: z.string() });
 
-export function buildApp(db: Db, opts: { fetchReport?: FetchReport } = {}): FastifyInstance {
+export function buildApp(db: Db, opts: { fetchReport?: FetchReport; paymentsFetch?: PaymentsFetch } = {}): FastifyInstance {
   const app = Fastify({ logger: process.env.NODE_ENV !== "test" });
+  const processors = providers(opts.paymentsFetch);
 
   // The staff web app calls the API from the browser. Auth is by API key, not cookies,
   // so allowing any origin doesn't expose anything.
@@ -272,7 +293,8 @@ export function buildApp(db: Db, opts: { fetchReport?: FetchReport } = {}): Fast
   // from signing in. Golfers don't book through this API: they book with the course's
   // existing provider and those bookings are imported.
   app.addHook("onRequest", async (req) => {
-    if (!req.url.startsWith("/v1/") || req.routeOptions.url === "/v1/courses/:slug/login") return;
+    // Processors' webhooks prove themselves with a signature instead.
+    if (!req.url.startsWith("/v1/") || req.routeOptions.url === "/v1/courses/:slug/login" || req.url.startsWith("/v1/webhooks/")) return;
     const header = req.headers.authorization;
     const token = header?.startsWith("Bearer ") ? header.slice(7) : undefined;
     if (token?.startsWith("st_")) {
@@ -534,7 +556,7 @@ export function buildApp(db: Db, opts: { fetchReport?: FetchReport } = {}): Fast
   app.post("/v1/courses/:slug/sales", async (req, reply) => {
     const course = await courseFor(req);
     const body = z
-      .object({ lines: z.array(saleLine).max(100), paymentMethod: salePaymentMethod, golferId: z.uuid().nullish() })
+      .object({ lines: z.array(saleLine).max(100), paymentMethod: salePaymentMethod, golferId: z.uuid().nullish(), cardPaymentId: z.uuid().nullish() })
       .parse(req.body);
     return reply.status(201).send(await createSale(db, course, req.staff?.user.id, body));
   });
@@ -545,7 +567,9 @@ export function buildApp(db: Db, opts: { fetchReport?: FetchReport } = {}): Fast
   app.get("/v1/courses/:slug/sales/:id", async (req) => getSale(db, await courseFor(req), idParams.parse(req.params).id));
   app.post("/v1/courses/:slug/sales/:id/refund", async (req) => {
     const course = await managedCourseFor(req);
-    return refundSale(db, course, req.staff?.user.id, idParams.parse(req.params).id);
+    return refundSale(db, course, req.staff?.user.id, idParams.parse(req.params).id, (client, cardPaymentId, cents) =>
+      refundCardPayment(client, course, processors, cardPaymentId, cents),
+    );
   });
   app.get("/v1/courses/:slug/settings/pos", async (req) => getPosSettings(db, await courseFor(req)));
   app.put("/v1/courses/:slug/settings/pos", async (req) => {
@@ -568,6 +592,64 @@ export function buildApp(db: Db, opts: { fetchReport?: FetchReport } = {}): Fast
   });
 
   app.get("/v1/courses/:slug/activity", async (req) => listActivity(db, (await managedCourseFor(req)).id));
+
+  // Card readers. Everyone can see how cards are taken and use the readers; managers connect
+  // the processor, add readers and refund.
+  app.get("/v1/courses/:slug/settings/payments", async (req) => getPaymentSettings(db, await courseFor(req), processors));
+  app.put("/v1/courses/:slug/settings/payments", async (req) => {
+    const course = await managedCourseFor(req);
+    const body = z
+      .object({
+        provider: z.string().max(40),
+        account: z.record(z.string().max(60), z.string().max(500)).optional(),
+        credentials: z.record(z.string().max(60), z.string().max(2000)).optional(),
+        tipping: z.boolean().optional(),
+      })
+      .parse(req.body);
+    return savePaymentSettings(db, course, processors, body);
+  });
+  app.get("/v1/courses/:slug/settings/payments/readers", async (req) => discoverReaders(db, await managedCourseFor(req), processors));
+  app.get("/v1/courses/:slug/terminals", async (req) => listTerminals(db, await courseFor(req), processors));
+  const terminalBody = z.object({ name: z.string().trim().min(1).max(80), readerId: z.string().trim().min(1).max(200), location: z.string().trim().max(80).nullish() });
+  app.post("/v1/courses/:slug/terminals", async (req, reply) => {
+    const course = await managedCourseFor(req);
+    return reply.status(201).send(await createTerminal(db, course, processors, terminalBody.parse(req.body)));
+  });
+  app.patch("/v1/courses/:slug/terminals/:id", async (req) => {
+    const course = await managedCourseFor(req);
+    const patch = z.object({ name: z.string().trim().min(1).max(80).optional(), location: z.string().trim().max(80).nullish(), active: z.boolean().optional() }).parse(req.body);
+    return updateTerminal(db, course, idParams.parse(req.params).id, patch);
+  });
+  app.post("/v1/courses/:slug/card-payments", async (req, reply) => {
+    const course = await courseFor(req);
+    const body = z.object({ terminalId: z.uuid(), amountCents: z.number().int().positive().max(10_000_000), description: z.string().trim().max(200).optional() }).parse(req.body);
+    return reply.status(201).send(await startCardPayment(db, course, processors, req.staff?.user.id, { ...body, description: body.description || course.name }));
+  });
+  app.get("/v1/courses/:slug/card-payments", async (req) => {
+    const course = await managedCourseFor(req);
+    const { date } = z.object({ date: z.iso.date() }).parse(req.query);
+    const { start, end } = dayRange(course, date);
+    return listCardPayments(db, course, start.toJSDate(), end.toJSDate());
+  });
+  app.get("/v1/courses/:slug/card-payments/:id", async (req) => getCardPayment(db, await courseFor(req), processors, idParams.parse(req.params).id));
+  app.post("/v1/courses/:slug/card-payments/:id/cancel", async (req) =>
+    cancelCardPayment(db, await courseFor(req), processors, idParams.parse(req.params).id),
+  );
+  app.post("/v1/courses/:slug/card-payments/:id/refund", async (req) => {
+    const course = await managedCourseFor(req);
+    const { amountCents } = z.object({ amountCents: z.number().int().positive().optional() }).parse(req.body ?? {});
+    return refundCardPayment(db, course, processors, idParams.parse(req.params).id, amountCents);
+  });
+
+  // Processors call these when a card goes through. The raw body is kept for the signature check.
+  app.register(async (hooks) => {
+    hooks.addContentTypeParser("application/json", { parseAs: "string" }, (_req, body, done) => done(null, body));
+    hooks.post("/v1/webhooks/payments/:slug/:provider", async (req) => {
+      const { slug, provider } = z.object({ slug: z.string(), provider: z.string() }).parse(req.params);
+      const url = `${req.protocol}://${req.hostname}${req.url}`;
+      return handlePaymentWebhook(db, processors, slug, provider, { headers: req.headers, body: String(req.body ?? ""), url: process.env.PUBLIC_URL ? process.env.PUBLIC_URL + req.url : url });
+    });
+  });
 
   // The AI assistant connector (MCP over streamable HTTP). Managers only, since it shows revenue.
   // Stateless: each request gets its own server, so nothing is held between calls.

@@ -93,6 +93,27 @@ Set `SYNC_SECRET` on the server to a long random string before saving provider A
 
 Live sync: TeeItUp's API is only open to approved partners. Once River Bend (or we) get access, a sync job will feed the same import every few minutes, and the file import stays as a backup.
 
+## Card payments
+
+Cards work with whatever setup a course already has. A manager picks one under **Settings → Card payments**:
+
+- **Standalone terminal (record only).** This is where every course starts. Staff run the card on the course's own terminal, and the register records that it was paid by card.
+- **Stripe Terminal.** Stripe readers (WisePOS E, S700, and similar) are driven from the server. Enter the secret key, and optionally a terminal location id and a webhook signing secret.
+- **Square Terminal.** Square Terminal devices paired to the location are used through the Terminal API. Enter the access token and the location id, and choose sandbox or production.
+- **Simulator.** For training and demos. It approves the card about 2½ seconds after the amount is sent, and declines amounts ending in 13 cents so staff can practise both outcomes.
+
+Once a processor is connected, the manager presses **Find readers** and adds each reader with a name staff will recognise ("Pro shop counter", "Bar", "Halfway house"). Each iPad or computer then picks the reader next to it in Settings; if the course has only one reader, it's picked automatically.
+
+When staff take a card payment at check-in or at the register, the amount goes to the reader and a **Waiting for the card…** window stays open until the golfer taps, inserts or swipes. If the card is declined, staff can try again or switch to another method. One tap covers everything paid by card, the round and any items together. The server finishes the check-in or sale only if the processor says the card went through for exactly that amount, and each card payment can pay for only one thing. Refunding a register sale puts the money back on the card it came from.
+
+The server learns that a card went through in one of two ways. The app checks every 1.5 seconds. A processor can also call `POST /v1/webhooks/payments/<course>/<stripe|square>`; the webhook's signature is checked, and then the payment is looked up fresh from the processor. Set `PUBLIC_URL` to the server's public address so Square's signature, which covers the URL, matches. Processor keys are encrypted with the same `SYNC_SECRET` as the tee sheet sync keys and are never sent back to the app.
+
+**Adding another processor** (Clover, Adyen, Global Payments, Moneris, and so on) means writing one adapter in `apps/api/src/terminals.ts` with the same six calls: list readers, start a payment, get its status, cancel, refund, and read a webhook. Nothing else in the app changes.
+
+API: `GET/PUT /settings/payments`, `GET /settings/payments/readers`, `GET/POST /terminals`, `PATCH /terminals/:id`, `POST /card-payments`, `GET /card-payments/:id`, `POST /card-payments/:id/cancel`, `POST /card-payments/:id/refund` (managers), and `GET /card-payments?date=` (managers, for matching against the processor's payout). Check-in and `POST /sales` take a `cardPaymentId`.
+
+![Waiting for the card on the reader](docs/screenshots/card-reader-waiting.png)
+
 ## AI assistant
 
 Managers can ask Claude, ChatGPT or another MCP client about the course: "how many rounds today?", "who still owes?", "is Mike Sullivan booked this week?", "what did we take last week?". Add a custom connector with the address `https://<your server>/v1/courses/<course>/mcp` and the manager key as a Bearer token.

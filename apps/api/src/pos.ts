@@ -2,6 +2,7 @@ import { DateTime } from "luxon";
 import type { Course } from "./courses.ts";
 import { withTransaction, type Db, type DbClient } from "./db.ts";
 import { badRequest, conflict, notFound } from "./errors.ts";
+import { useCardPayment } from "./payments.ts";
 
 // The pro shop: products and their stock, and the register that sells them. Every change to a
 // product's stock is recorded with who made it and why, so a count that's off can be traced.
@@ -203,9 +204,19 @@ export async function createSale(
   db: Db,
   course: Course,
   staffId: string | undefined,
-  input: { lines: SaleLineInput[]; paymentMethod: SalePaymentMethod; golferId?: string | null },
+  input: { lines: SaleLineInput[]; paymentMethod: SalePaymentMethod; golferId?: string | null; cardPaymentId?: string | null },
 ) {
-  const id = await withTransaction(db, (client) => insertSale(client, course, staffId, input));
+  const id = await withTransaction(db, async (client) => {
+    const saleId = await insertSale(client, course, staffId, input);
+    // Paid on a connected card reader: the card must match the sale's total, tax included.
+    if (input.cardPaymentId) {
+      if (input.paymentMethod !== "card") throw badRequest("not_card", "A card payment can only pay a sale rung up as card");
+      const { rows } = await client.query("SELECT total_cents FROM sales WHERE id = $1", [saleId]);
+      await useCardPayment(client, course, input.cardPaymentId, rows[0].total_cents, { saleId });
+      await client.query("UPDATE sales SET card_payment_id = $2 WHERE id = $1", [saleId, input.cardPaymentId]);
+    }
+    return saleId;
+  });
   return getSale(db, course, id);
 }
 
@@ -342,11 +353,19 @@ export async function listSales(db: DbClient, course: Course, date: string) {
 }
 
 /** Refunds a whole sale (managers only) and puts stocked items back on the shelf. */
-export async function refundSale(db: Db, course: Course, staffId: string | undefined, id: string) {
+export async function refundSale(
+  db: Db,
+  course: Course,
+  staffId: string | undefined,
+  id: string,
+  /** Puts the money back on the card, for sales paid on a connected reader. */
+  refundCard?: (client: DbClient, cardPaymentId: string, amountCents: number) => Promise<unknown>,
+) {
   await withTransaction(db, async (client) => {
-    const { rows } = await client.query("SELECT status FROM sales WHERE id = $1 AND course_id = $2 FOR UPDATE", [id, course.id]);
+    const { rows } = await client.query("SELECT status, total_cents, card_payment_id FROM sales WHERE id = $1 AND course_id = $2 FOR UPDATE", [id, course.id]);
     if (!rows[0]) throw notFound("Sale");
     if (rows[0].status === "refunded") throw conflict("already_refunded", "This sale was already refunded");
+    if (rows[0].card_payment_id && refundCard) await refundCard(client, rows[0].card_payment_id, rows[0].total_cents);
     await client.query("UPDATE sales SET status = 'refunded', refunded_at = now(), refunded_by = $2 WHERE id = $1", [id, staffId ?? null]);
     const { rows: lines } = await client.query(
       `SELECT l.product_id, l.quantity FROM sale_lines l JOIN products p ON p.id = l.product_id

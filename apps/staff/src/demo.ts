@@ -10,6 +10,10 @@ import {
   type Role,
   type EmployeeType,
   type DayClose,
+  type CardPayment,
+  type CardTerminal,
+  type PaymentSettings,
+  type ProcessorId,
   type MoneyMethod,
   type Product,
   type Report,
@@ -121,6 +125,37 @@ const products: Product[] = [];
 const movements = new Map<string, StockMovement[]>();
 const sales: Sale[] = [];
 const pos = { salesTaxBps: 725 };
+
+// Card readers: the demo runs on the training simulator with one reader, so the "waiting for
+// card" step can be tried. Real courses start on a standalone terminal.
+const PROCESSORS: PaymentSettings["providers"] = [
+  { id: "standalone", name: "Standalone terminal (record only)", connected: false, fields: [] },
+  { id: "simulator", name: "Simulator (training, no real charges)", connected: true, fields: [{ key: "delayMs", label: "Seconds before the card goes through", secret: false, required: false, help: "In milliseconds; 2500 if left empty" }] },
+  {
+    id: "stripe",
+    name: "Stripe Terminal",
+    connected: true,
+    fields: [
+      { key: "secretKey", label: "Secret key", secret: true, required: true, help: "Starts with sk_live_ (or sk_test_ to try it out)" },
+      { key: "locationId", label: "Terminal location id", secret: false, required: false, help: "tml_..., to only list this course's readers" },
+      { key: "webhookSecret", label: "Webhook signing secret", secret: true, required: false },
+    ],
+  },
+  {
+    id: "square",
+    name: "Square Terminal",
+    connected: true,
+    fields: [
+      { key: "accessToken", label: "Access token", secret: true, required: true },
+      { key: "locationId", label: "Location id", secret: false, required: true },
+      { key: "environment", label: "Environment", secret: false, required: false, help: "production, or sandbox to try it out" },
+      { key: "webhookSignatureKey", label: "Webhook signature key", secret: true, required: false },
+    ],
+  },
+];
+const cardSettings = { provider: "simulator" as ProcessorId, account: {} as Record<string, string>, hasCredentials: false, tipping: false };
+const cardTerminals: CardTerminal[] = [{ id: "term-proshop", name: "Pro shop counter", readerId: "sim_proshop", location: "Pro shop", provider: "simulator", active: true }];
+const cardPayments = new Map<string, CardPayment & { startedAt: number }>();
 
 function seedProducts() {
   if (products.length) return;
@@ -586,6 +621,36 @@ export function createDemoClient(apiKey: string): Client {
   }
 
   // Answers arrive a moment later, like a real server, so loading states still show.
+  // The simulator: a card goes through a couple of seconds after it's sent, unless the amount
+  // ends in 13 cents, which is declined.
+  function cardState(id: string) {
+    const p = cardPayments.get(id);
+    if (!p) throw new ApiError(404, "not_found", "Card payment not found");
+    if (p.status === "processing" && Date.now() - p.startedAt >= Number(cardSettings.account.delayMs || 2500)) {
+      Object.assign(
+        p,
+        p.amountCents % 100 === 13
+          ? { status: "failed", failureMessage: "Card declined (simulated)" }
+          : { status: "succeeded", cardBrand: "visa", cardLast4: "4242" },
+        { completedAt: new Date().toISOString() },
+      );
+    }
+    return p;
+  }
+  function useCard(id: string) {
+    const p = cardState(id);
+    if (p.status !== "succeeded") throw conflict("card_not_paid", "The card hasn't gone through on the reader yet");
+    if (p.bookingId || p.saleId) throw conflict("card_payment_used", "That card payment has already paid for something else");
+    return p;
+  }
+  const publicCard = ({ startedAt: _s, ...p }: CardPayment & { startedAt: number }): CardPayment => ({ ...p });
+  const demoPaymentSettings = (): PaymentSettings => ({
+    ...cardSettings,
+    connected: PROCESSORS.find((p) => p.id === cardSettings.provider)!.connected,
+    currency: "usd",
+    providers: PROCESSORS,
+  });
+
   const reply = <T>(fn: () => T) => new Promise<T>((resolve, reject) => setTimeout(() => {
     try { resolve(fn()); } catch (e) { reject(e); }
   }, 120));
@@ -616,9 +681,10 @@ export function createDemoClient(apiKey: string): Client {
         log("Added a booking", walkIn.customer.name);
         return b;
       }),
-    checkIn: (bookingId: string, method?: PaymentMethod, items?: { lines: SaleLineInput[]; paymentMethod: SalePaymentMethod }, round?: RoundChoice) =>
+    checkIn: (bookingId: string, method?: PaymentMethod, items?: { lines: SaleLineInput[]; paymentMethod: SalePaymentMethod }, round?: RoundChoice, cardPaymentId?: string) =>
       reply(() => {
         const b = find(bookingId);
+        const card = cardPaymentId ? useCard(cardPaymentId) : undefined;
         if (b.status !== "confirmed" && b.status !== "no_show") throw conflict("invalid_status", "This group is already checked in");
         if (round) {
           if (payment(b).paidCents > 0) throw conflict("already_paid", "This group has already paid, so its price can't change here");
@@ -635,6 +701,7 @@ export function createDemoClient(apiKey: string): Client {
         if (items?.lines.length) ringUp({ ...items, golferId: b.golferId });
         if (balance > 0 && method) b.paid.push({ amountCents: balance, method });
         b.status = "checked_in";
+        if (card) card.bookingId = b.id;
         log("Checked in at the pro shop", b.customerName);
         return b;
       }),
@@ -968,7 +1035,13 @@ export function createDemoClient(apiKey: string): Client {
         log("Changed stock");
         return { ...p };
       }),
-    sell: (input: { lines: SaleLineInput[]; paymentMethod: SalePaymentMethod; golferId?: string | null }) => reply(() => ringUp(input)),
+    sell: (input: { lines: SaleLineInput[]; paymentMethod: SalePaymentMethod; golferId?: string | null; cardPaymentId?: string }) =>
+      reply(() => {
+        const card = input.cardPaymentId ? useCard(input.cardPaymentId) : undefined;
+        const sale = ringUp(input);
+        if (card) card.saleId = sale.id;
+        return sale;
+      }),
     sales: (date: string) =>
       reply(() => {
         const list = sales.filter((x) => new Intl.DateTimeFormat("en-CA", { timeZone: riverBend.timeZone }).format(new Date(x.at)) === date);
@@ -1224,6 +1297,71 @@ export function createDemoClient(apiKey: string): Client {
         b.payment = payment(b);
         log(`Added ${g.count} guest${g.count === 1 ? "" : "s"}`, b.customerName);
         return b;
+      }),
+    paymentSettings: () => reply(demoPaymentSettings),
+    savePaymentSettings: (input: { provider: ProcessorId; account?: Record<string, string>; credentials?: Record<string, string>; tipping?: boolean }) =>
+      reply(() => {
+        managerOnly();
+        const p = PROCESSORS.find((x) => x.id === input.provider)!;
+        const switching = p.id !== cardSettings.provider;
+        for (const f of p.fields.filter((x) => x.required)) {
+          const have = f.secret ? input.credentials?.[f.key] || (!switching && cardSettings.hasCredentials) : input.account?.[f.key];
+          if (!have) throw new ApiError(400, "missing_field", `Enter the ${f.label.toLowerCase()} for ${p.name}`);
+        }
+        Object.assign(cardSettings, {
+          provider: p.id,
+          account: { ...(input.account ?? {}) },
+          hasCredentials: !!Object.keys(input.credentials ?? {}).length || (!switching && cardSettings.hasCredentials),
+          tipping: input.tipping ?? cardSettings.tipping,
+        });
+        log("Changed card payment settings");
+        return demoPaymentSettings();
+      }),
+    discoverReaders: () =>
+      reply(() => {
+        managerOnly();
+        if (cardSettings.provider !== "simulator") throw new ApiError(502, "processor_auth", "The demo can't reach a real processor. Use the simulator");
+        return [
+          { readerId: "sim_proshop", label: "Simulated reader 1", online: true },
+          { readerId: "sim_bar", label: "Simulated reader 2", online: true },
+        ];
+      }),
+    terminals: () => reply(() => cardTerminals.filter((t) => t.provider === cardSettings.provider).map((t) => ({ ...t }))),
+    addTerminal: (input: { name: string; readerId: string; location?: string | null }) =>
+      reply(() => {
+        managerOnly();
+        if (!input.name.trim() || !input.readerId.trim()) throw new ApiError(400, "invalid_request", "Enter the reader's id and a name");
+        if (cardTerminals.some((t) => t.provider === cardSettings.provider && t.readerId === input.readerId.trim())) throw conflict("reader_taken", "That reader is already added");
+        const t: CardTerminal = { id: id(), name: input.name.trim(), readerId: input.readerId.trim(), location: input.location?.trim() || null, provider: cardSettings.provider, active: true };
+        cardTerminals.push(t);
+        log("Added a card reader", t.name);
+        return t;
+      }),
+    updateTerminal: (terminalId: string, patch: { name?: string; location?: string | null; active?: boolean }) =>
+      reply(() => {
+        managerOnly();
+        const t = cardTerminals.find((x) => x.id === terminalId);
+        if (!t) throw new ApiError(404, "not_found", "Card reader not found");
+        Object.assign(t, patch);
+        return { ...t };
+      }),
+    startCardPayment: (input: { terminalId: string; amountCents: number; description?: string }) =>
+      reply(() => {
+        const t = cardTerminals.find((x) => x.id === input.terminalId && x.active);
+        if (!t) throw new ApiError(400, "reader_unavailable", "That card reader isn't set up any more. Pick another in Settings");
+        const p = {
+          id: id(), terminalId: t.id, terminal: t.name, amountCents: input.amountCents, tipCents: 0, status: "processing" as const, failureMessage: null,
+          cardBrand: null, cardLast4: null, refundedCents: 0, bookingId: null, saleId: null, createdAt: new Date().toISOString(), completedAt: null, startedAt: Date.now(),
+        };
+        cardPayments.set(p.id, p);
+        return publicCard(p);
+      }),
+    cardPayment: (paymentId: string) => reply(() => publicCard(cardState(paymentId))),
+    cancelCardPayment: (paymentId: string) =>
+      reply(() => {
+        const p = cardState(paymentId);
+        if (p.status === "processing") Object.assign(p, { status: "cancelled", completedAt: new Date().toISOString() });
+        return publicCard(p);
       }),
     move: (bookingId: string, teeTimeId: string) =>
       reply(() => {

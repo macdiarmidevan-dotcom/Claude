@@ -42,14 +42,15 @@ const toConnection = (r: any): SyncConnection => ({
   lastMessage: r.last_message,
 });
 
-// Provider passwords and API keys are encrypted with a key only the server has.
+// Provider passwords and API keys (tee sheet providers and card processors) are encrypted with
+// a key only the server has.
 function secretKey() {
   const secret = process.env.SYNC_SECRET;
   if (!secret) throw new AppError(503, "sync_not_configured", "The server needs SYNC_SECRET set before it can store provider sign-in details");
   return createHash("sha256").update(secret).digest();
 }
 
-function encrypt(value: object) {
+export function encryptCredentials(value: object) {
   const iv = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", secretKey(), iv);
   const data = Buffer.concat([cipher.update(JSON.stringify(value), "utf8"), cipher.final()]);
@@ -123,7 +124,7 @@ export async function saveSync(
     checkReportUrl(input.reportUrl);
   }
   // Leaving credentials out keeps the saved ones; null removes them.
-  const creds = input.credentials === undefined ? undefined : input.credentials === null ? null : encrypt(input.credentials);
+  const creds = input.credentials === undefined ? undefined : input.credentials === null ? null : encryptCredentials(input.credentials);
   const { rows } = await db.query(
     `INSERT INTO sync_connections (course_id, source, method, report_url, credentials_enc, enabled, interval_minutes)
      VALUES ($1, $2, $3, $4, $5, $6, $7)

@@ -12,6 +12,8 @@ export interface Settings {
   apiKey: string;
   /** Which job this device does: the pro shop takes payment and checks in, the starter sends groups off. */
   station: Station;
+  /** The card reader next to this device, when the course has connected a processor. */
+  terminalId?: string;
 }
 
 export interface Course {
@@ -53,6 +55,45 @@ export interface SheetBooking {
   /** Paying resident rates. */
   resident: boolean;
   payment: PaymentSummary;
+}
+
+export type ProcessorId = "standalone" | "simulator" | "stripe" | "square";
+
+export interface PaymentSettings {
+  provider: ProcessorId;
+  /** False on a standalone terminal: the register only records card payments. */
+  connected: boolean;
+  account: Record<string, string>;
+  hasCredentials: boolean;
+  tipping: boolean;
+  currency: string;
+  providers: { id: ProcessorId; name: string; connected: boolean; fields: { key: string; label: string; secret: boolean; required: boolean; help?: string }[] }[];
+}
+
+export interface CardTerminal {
+  id: string;
+  name: string;
+  readerId: string;
+  location: string | null;
+  provider: ProcessorId;
+  active: boolean;
+}
+
+export interface CardPayment {
+  id: string;
+  terminalId: string;
+  terminal: string;
+  amountCents: number;
+  tipCents: number;
+  status: "processing" | "succeeded" | "failed" | "cancelled";
+  failureMessage: string | null;
+  cardBrand: string | null;
+  cardLast4: string | null;
+  refundedCents: number;
+  bookingId: string | null;
+  saleId: string | null;
+  createdAt: string;
+  completedAt: string | null;
 }
 
 export interface RoundChoice {
@@ -404,8 +445,12 @@ function createHttpClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "ap
     book: (walkIn: WalkIn) => request(`/bookings`, { method: "POST", body: { ...walkIn, source: "staff" } }),
     /** Checks a group in, taking what's owed for the round and ringing up any items bought with it. */
     /** round: the pro shop's rate and walking/riding for the group, re-priced before payment. */
-    checkIn: (id: string, method?: PaymentMethod, items?: { lines: SaleLineInput[]; paymentMethod: SalePaymentMethod }, round?: RoundChoice) =>
-      request(`/bookings/${id}/check-in`, { method: "POST", body: { ...(method ? { payment: { method } } : {}), ...(items ? { items } : {}), ...(round ? { round } : {}) } }),
+    /** cardPaymentId: a card that went through on a connected reader, covering everything paid by card. */
+    checkIn: (id: string, method?: PaymentMethod, items?: { lines: SaleLineInput[]; paymentMethod: SalePaymentMethod }, round?: RoundChoice, cardPaymentId?: string) =>
+      request(`/bookings/${id}/check-in`, {
+        method: "POST",
+        body: { ...(method ? { payment: { method } } : {}), ...(items ? { items } : {}), ...(round ? { round } : {}), ...(cardPaymentId ? { cardPaymentId } : {}) },
+      }),
     waiver: () => request<Waiver>("/waiver"),
     /** Who is signed in. Managers can change course settings; other staff can't. */
     me: () => request<Me>("/me"),
@@ -446,8 +491,21 @@ function createHttpClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "ap
     productHistory: (id: string) => request<StockMovement[]>(`/products/${id}/history`),
     changeStock: (id: string, change: { kind: "receive" | "count" | "adjust"; quantity: number; note?: string | null }) =>
       request<Product>(`/products/${id}/stock`, { method: "POST", body: change }),
-    sell: (sale: { lines: SaleLineInput[]; paymentMethod: SalePaymentMethod; golferId?: string | null }) =>
+    sell: (sale: { lines: SaleLineInput[]; paymentMethod: SalePaymentMethod; golferId?: string | null; cardPaymentId?: string }) =>
       request<Sale>("/sales", { method: "POST", body: sale }),
+    paymentSettings: () => request<PaymentSettings>("/settings/payments"),
+    savePaymentSettings: (input: { provider: ProcessorId; account?: Record<string, string>; credentials?: Record<string, string>; tipping?: boolean }) =>
+      request<PaymentSettings>("/settings/payments", { method: "PUT", body: input }),
+    discoverReaders: () => request<{ readerId: string; label: string; online: boolean | null }[]>("/settings/payments/readers"),
+    terminals: () => request<CardTerminal[]>("/terminals"),
+    addTerminal: (input: { name: string; readerId: string; location?: string | null }) => request<CardTerminal>("/terminals", { method: "POST", body: input }),
+    updateTerminal: (id: string, patch: { name?: string; location?: string | null; active?: boolean }) =>
+      request<CardTerminal>(`/terminals/${id}`, { method: "PATCH", body: patch }),
+    /** Sends an amount to a card reader; then check cardPayment until it's no longer processing. */
+    startCardPayment: (input: { terminalId: string; amountCents: number; description?: string }) =>
+      request<CardPayment>("/card-payments", { method: "POST", body: input }),
+    cardPayment: (id: string) => request<CardPayment>(`/card-payments/${id}`),
+    cancelCardPayment: (id: string) => request<CardPayment>(`/card-payments/${id}/cancel`, { method: "POST" }),
     sales: (date: string) => request<SalesDay>(`/sales?date=${date}`),
     refundSale: (id: string) => request<Sale>(`/sales/${id}/refund`, { method: "POST" }),
     posSettings: () => request<{ salesTaxBps: number }>("/settings/pos"),
