@@ -11,7 +11,10 @@ import { deleteSync, getSync, runSync, saveSync, type FetchReport } from "./sync
 import { createGolfer, getGolfer, linkGolfer, searchGolfers, updateGolfer } from "./golfers.ts";
 import {
   changeOwnPassword,
+  createEmployeeType,
   createStaff,
+  listEmployeeTypes,
+  updateEmployeeType,
   listActivity,
   listStaff,
   logActivity,
@@ -67,6 +70,8 @@ const ACTIONS: Record<string, string> = {
   "PATCH /v1/courses/:slug/golfers/:id": "Changed a golfer account",
   "PUT /v1/courses/:slug/bookings/:id/golfer": "Linked a golfer account",
   "PATCH /v1/courses/:slug/staff/:id": "Changed a staff account",
+  "POST /v1/courses/:slug/employee-types": "Added an employee type",
+  "PATCH /v1/courses/:slug/employee-types/:id": "Changed an employee type",
 };
 
 const player = z.object({
@@ -132,13 +137,17 @@ const newStaffBody = z.object({
   email: z.email(),
   role,
   password: z.string().max(200),
+  employeeTypeId: z.uuid().nullish(),
 });
 const staffPatch = z.object({
   name: z.string().trim().min(1).max(200).optional(),
   role: role.optional(),
   active: z.boolean().optional(),
   password: z.string().max(200).optional(),
+  employeeTypeId: z.uuid().nullable().optional(),
 });
+const typeBody = z.object({ name: z.string().trim().min(1).max(60) });
+const typePatch = z.object({ name: z.string().trim().min(1).max(60).optional(), active: z.boolean().optional() });
 const golferBody = z.object({
   name: z.string().trim().min(1).max(200),
   email: z.string().trim().max(200),
@@ -320,6 +329,17 @@ export function buildApp(db: Db, opts: { fetchReport?: FetchReport } = {}): Fast
     return { ok: true };
   });
   app.post("/v1/courses/:slug/sync/run", async (req) => runSync(db, await managedCourseFor(req), opts.fetchReport));
+
+  // Employee types (Pro Shop, Cart Attendant, ...). Managers add their own, rename and remove them.
+  app.get("/v1/courses/:slug/employee-types", async (req) => listEmployeeTypes(db, (await managedCourseFor(req)).id));
+  app.post("/v1/courses/:slug/employee-types", async (req, reply) => {
+    const course = await managedCourseFor(req);
+    return reply.status(201).send(await createEmployeeType(db, course.id, typeBody.parse(req.body).name));
+  });
+  app.patch("/v1/courses/:slug/employee-types/:id", async (req) => {
+    const course = await managedCourseFor(req);
+    return updateEmployeeType(db, course.id, idParams.parse(req.params).id, typePatch.parse(req.body));
+  });
 
   app.get("/v1/courses/:slug/activity", async (req) => listActivity(db, (await managedCourseFor(req)).id));
 

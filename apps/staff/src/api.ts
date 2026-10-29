@@ -136,8 +136,18 @@ export interface StaffUser {
   name: string;
   email: string;
   role: Role;
+  /** The job they do, such as Pro Shop or Cart Attendant. */
+  employeeType: { id: string; name: string } | null;
   active: boolean;
   lastLoginAt: string | null;
+}
+
+export interface EmployeeType {
+  id: string;
+  name: string;
+  /** Removed types aren't offered for new picks but stay on the people who had them. */
+  active: boolean;
+  staffCount: number;
 }
 
 export interface Me {
@@ -232,10 +242,14 @@ function createHttpClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "ap
     logout: () => request("/logout", { method: "POST" }),
     changePassword: (current: string, next: string) => request("/me/password", { method: "PUT", body: { current, next } }),
     staff: () => request<StaffUser[]>("/staff"),
-    addStaff: (input: { name: string; email: string; role: Role; password: string }) =>
+    addStaff: (input: { name: string; email: string; role: Role; password: string; employeeTypeId?: string | null }) =>
       request<StaffUser>("/staff", { method: "POST", body: input }),
-    updateStaff: (id: string, patch: { name?: string; role?: Role; active?: boolean; password?: string }) =>
+    updateStaff: (id: string, patch: { name?: string; role?: Role; active?: boolean; password?: string; employeeTypeId?: string | null }) =>
       request<StaffUser>(`/staff/${id}`, { method: "PATCH", body: patch }),
+    employeeTypes: () => request<EmployeeType[]>("/employee-types"),
+    addEmployeeType: (name: string) => request<EmployeeType>("/employee-types", { method: "POST", body: { name } }),
+    updateEmployeeType: (id: string, patch: { name?: string; active?: boolean }) =>
+      request<EmployeeType>(`/employee-types/${id}`, { method: "PATCH", body: patch }),
     activity: () => request<ActivityEntry[]>("/activity"),
     searchGolfers: (q: string) => request<GolferAccount[]>(`/golfers?q=${encodeURIComponent(q)}`),
     golfer: (id: string) => request<GolferProfile>(`/golfers/${id}`),

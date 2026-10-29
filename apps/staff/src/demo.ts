@@ -8,6 +8,7 @@ import {
   type GolferAccount,
   type GolferProfile,
   type Role,
+  type EmployeeType,
   type StaffUser,
   type ImportResult,
   type ImportRun,
@@ -38,10 +39,19 @@ const conflict = (code: string, message: string) => new ApiError(409, code, mess
 
 // Pretend staff accounts. They live outside the client so signing in and the signed-in app share them.
 export const DEMO_PASSWORD = "riverbend";
+const employeeTypes: Omit<EmployeeType, "staffCount">[] = ["Pro Shop", "Ranger/Starter", "Cart Attendant", "Bartender", "Food & Beverage", "Grounds Crew"].map(
+  (name, i) => ({ id: `et-${i + 1}`, name, active: true }),
+);
+const typeRef = (id: string) => {
+  const t = employeeTypes.find((x) => x.id === id)!;
+  return { id: t.id, name: t.name };
+};
 const accounts: (StaffUser & { password: string })[] = [
-  { id: "u-1", name: "Morgan Ellis", email: "manager@riverbend.example", role: "manager", active: true, lastLoginAt: null, password: DEMO_PASSWORD },
-  { id: "u-2", name: "Jordan Price", email: "proshop@riverbend.example", role: "staff", active: true, lastLoginAt: null, password: DEMO_PASSWORD },
-  { id: "u-3", name: "Sam Torres", email: "starter@riverbend.example", role: "staff", active: true, lastLoginAt: null, password: DEMO_PASSWORD },
+  { id: "u-1", name: "Morgan Ellis", email: "manager@riverbend.example", role: "manager", employeeType: null, active: true, lastLoginAt: null, password: DEMO_PASSWORD },
+  { id: "u-2", name: "Jordan Price", email: "proshop@riverbend.example", role: "staff", employeeType: typeRef("et-1"), active: true, lastLoginAt: null, password: DEMO_PASSWORD },
+  { id: "u-3", name: "Sam Torres", email: "starter@riverbend.example", role: "staff", employeeType: typeRef("et-2"), active: true, lastLoginAt: null, password: DEMO_PASSWORD },
+  { id: "u-4", name: "Riley Chen", email: "carts@riverbend.example", role: "staff", employeeType: typeRef("et-3"), active: true, lastLoginAt: null, password: DEMO_PASSWORD },
+  { id: "u-5", name: "Alex Moreno", email: "bar@riverbend.example", role: "staff", employeeType: typeRef("et-4"), active: true, lastLoginAt: null, password: DEMO_PASSWORD },
 ];
 const activity: ActivityEntry[] = [];
 const publicUser = ({ password: _, ...u }: StaffUser & { password: string }): StaffUser => u;
@@ -421,18 +431,50 @@ export function createDemoClient(apiKey: string): Client {
         managerOnly();
         return accounts.map(publicUser).sort((a, b) => Number(b.active) - Number(a.active) || a.name.localeCompare(b.name));
       }),
-    addStaff: (input: { name: string; email: string; role: Role; password: string }) =>
+    employeeTypes: () =>
+      reply(() => {
+        managerOnly();
+        return [...employeeTypes]
+          .sort((a, b) => Number(b.active) - Number(a.active))
+          .map((t) => ({ ...t, staffCount: accounts.filter((a) => a.active && a.employeeType?.id === t.id).length }));
+      }),
+    addEmployeeType: (name: string) =>
+      reply(() => {
+        managerOnly();
+        if (employeeTypes.some((t) => t.active && t.name.toLowerCase() === name.trim().toLowerCase())) throw conflict("type_exists", `There's already a type called ${name.trim()}`);
+        const t = { id: id(), name: name.trim(), active: true };
+        employeeTypes.push(t);
+        log("Added an employee type");
+        return { ...t, staffCount: 0 };
+      }),
+    updateEmployeeType: (typeId: string, patch: { name?: string; active?: boolean }) =>
+      reply(() => {
+        managerOnly();
+        const t = employeeTypes.find((x) => x.id === typeId)!;
+        if (patch.name && employeeTypes.some((x) => x.id !== typeId && x.active && x.name.toLowerCase() === patch.name!.trim().toLowerCase())) {
+          throw conflict("type_exists", `There's already a type called ${patch.name.trim()}`);
+        }
+        if (patch.name) t.name = patch.name.trim();
+        if (patch.active !== undefined) t.active = patch.active;
+        for (const a of accounts) if (a.employeeType?.id === t.id) a.employeeType = { id: t.id, name: t.name };
+        log("Changed an employee type");
+        return { ...t, staffCount: accounts.filter((a) => a.active && a.employeeType?.id === t.id).length };
+      }),
+    addStaff: (input: { name: string; email: string; role: Role; password: string; employeeTypeId?: string | null }) =>
       reply(() => {
         managerOnly();
         const email = input.email.trim().toLowerCase();
         if (accounts.some((a) => a.email === email)) throw conflict("email_taken", "Someone here already uses that email");
         if (input.password.length < 8) throw new ApiError(400, "weak_password", "Passwords need at least 8 characters");
-        const a = { id: id(), name: input.name.trim(), email, role: input.role, active: true, lastLoginAt: null, password: input.password };
+        const a = {
+          id: id(), name: input.name.trim(), email, role: input.role, active: true, lastLoginAt: null, password: input.password,
+          employeeType: input.employeeTypeId ? typeRef(input.employeeTypeId) : null,
+        };
         accounts.push(a);
         log("Added a staff account");
         return publicUser(a);
       }),
-    updateStaff: (userId: string, patch: { name?: string; role?: Role; active?: boolean; password?: string }) =>
+    updateStaff: (userId: string, patch: { name?: string; role?: Role; active?: boolean; password?: string; employeeTypeId?: string | null }) =>
       reply(() => {
         managerOnly();
         const a = accounts.find((x) => x.id === userId)!;
@@ -441,7 +483,12 @@ export function createDemoClient(apiKey: string): Client {
           if (!accounts.some((x) => x.id !== a.id && x.role === "manager" && x.active)) throw conflict("last_manager", "The course needs at least one active manager");
         }
         if (patch.password !== undefined && patch.password.length < 8) throw new ApiError(400, "weak_password", "Passwords need at least 8 characters");
-        Object.assign(a, Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)));
+        const { employeeTypeId, ...rest } = patch;
+        if (employeeTypeId !== undefined) {
+          if (employeeTypeId && !employeeTypes.find((t) => t.id === employeeTypeId)?.active) throw new ApiError(400, "invalid_employee_type", "Choose one of the course's employee types");
+          a.employeeType = employeeTypeId ? typeRef(employeeTypeId) : null;
+        }
+        Object.assign(a, Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined)));
         log("Changed a staff account");
         return publicUser(a);
       }),
