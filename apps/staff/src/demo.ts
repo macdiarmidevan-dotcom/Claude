@@ -1,9 +1,12 @@
 // A pretend course that runs entirely in the browser, for showing the app without a server.
 // Only built in when EXPO_PUBLIC_DEMO=1. Nothing is saved: reloading the page starts over.
-import { generateTeeTimes, quotePlayer, riverBend, riverBendAddOns, riverBendRates, riverBendTeeSheet } from "@golf/core";
+import { generateTeeTimes, parseTeeSheetCsv, quotePlayer, riverBend, riverBendAddOns, riverBendRates, riverBendTeeSheet } from "@golf/core";
 import {
   ApiError,
   type Client,
+  type ImportResult,
+  type ImportRun,
+  type ImportSource,
   type PaymentMethod,
   type SheetBooking,
   type SheetTeeTime,
@@ -18,6 +21,7 @@ export const DEMO_URL = "demo";
 
 interface DemoBooking extends SheetBooking {
   paid: { amountCents: number; method: PaymentMethod }[];
+  externalId?: string;
 }
 interface DemoTeeTime extends Omit<SheetTeeTime, "bookings" | "bookedPlayers"> {
   date: string;
@@ -40,6 +44,7 @@ export function createDemoClient(apiKey: string): Client {
       "3. I accept responsibility for damage to the cart caused by misuse, and for my passengers' safety.\n" +
       "4. I release River Bend Golf Club and the Lisle Park District from claims arising from my use of the cart, except where caused by their negligence.",
   };
+  const runs: ImportRun[] = [];
   let nextId = 1;
   const id = () => `demo-${nextId++}`;
 
@@ -148,6 +153,94 @@ export function createDemoClient(apiKey: string): Client {
     b.cartNumbers = carts;
   }
 
+  // The same rules as the server's import, on the pretend tee sheet.
+  function importFile(input: { source: ImportSource; csv: string; fileName?: string; dryRun?: boolean }): ImportResult {
+    const parsed = parseTeeSheetCsv(input.csv);
+    const dates = [...new Set(parsed.bookings.map((b) => b.date))].sort();
+    const result: ImportResult = {
+      dryRun: input.dryRun ?? false,
+      dates,
+      counts: { created: 0, updated: 0, cancelled: 0, unchanged: 0, problems: parsed.problems.length },
+      changes: [],
+      problems: parsed.problems,
+      overbooked: [],
+    };
+    const before = JSON.stringify([...bookings]);
+    const snapshot = bookings.map((b) => ({ ...b }));
+    const teeSnapshot = new Map([...teeTimes].map(([k, v]) => [k, { ...v }]));
+    dates.forEach(ensureDay);
+    for (const row of parsed.bookings) {
+      const base = { externalId: row.externalId, date: row.date, time: row.time, name: row.name, players: row.players };
+      const existing = bookings.find((b) => b.source === input.source && b.externalId === row.externalId);
+      if (row.status === "cancelled") {
+        if (existing?.status === "confirmed") {
+          existing.status = "cancelled";
+          result.changes.push({ ...base, action: "cancel", detail: "Cancelled in the provider's tee sheet" });
+          result.counts.cancelled++;
+        } else result.changes.push({ ...base, action: existing ? "unchanged" : "skip" });
+        continue;
+      }
+      if (existing && existing.status !== "confirmed" && existing.status !== "cancelled") {
+        result.changes.push({ ...base, action: "unchanged", detail: "Already checked in, left as it is" });
+        result.counts.unchanged++;
+        continue;
+      }
+      let t = [...teeTimes.values()].find((x) => x.date === row.date && x.localTime === row.time);
+      if (!t) {
+        const tid = id();
+        t = { id: tid, date: row.date, localTime: row.time, startsAt: `${row.date}T${row.time}:00`, maxPlayers: Math.max(4, row.players), status: "open", note: null };
+        teeTimes.set(tid, t);
+      }
+      const holes = row.holes ?? riverBend.holes;
+      const loops = Math.max(1, Math.round(holes / riverBend.holes));
+      const total =
+        row.totalCents ??
+        row.players * quotePlayer(riverBendRates, { residency: "nonresident", ageGroup: "adult" }, { startsAt: t.startsAt, timeZone: riverBend.timeZone }, loops).totalCents;
+      if (!existing) {
+        bookings.push({
+          id: id(), teeTimeId: t.id, customerName: row.name, customerPhone: row.phone ?? null, players: row.players, holes,
+          status: row.status === "no_show" ? "no_show" : "confirmed", source: input.source, totalCents: total, cartNumbers: [], signedCarts: [],
+          payment: { status: "unpaid", paidCents: 0, balanceCents: total, methods: [] },
+          paid: row.paidCents ? [{ amountCents: Math.min(row.paidCents, total), method: "prepaid" }] : [], externalId: row.externalId,
+        });
+        result.changes.push({ ...base, action: "create" });
+        result.counts.created++;
+        continue;
+      }
+      const diffs = [
+        existing.status === "cancelled" && "rebooked",
+        existing.teeTimeId !== t.id && "moved",
+        existing.players !== row.players && `players ${existing.players} → ${row.players}`,
+        existing.totalCents !== total && "price",
+      ].filter(Boolean);
+      if (diffs.length === 0) {
+        result.changes.push({ ...base, action: "unchanged" });
+        result.counts.unchanged++;
+        continue;
+      }
+      Object.assign(existing, { teeTimeId: t.id, players: row.players, holes, totalCents: total, status: "confirmed", customerName: row.name });
+      result.changes.push({ ...base, action: "update", detail: diffs.join(", ") });
+      result.counts.updated++;
+    }
+    const inFile = new Set(parsed.bookings.map((b) => b.externalId));
+    for (const b of bookings) {
+      const t = teeTimes.get(b.teeTimeId);
+      if (b.source === input.source && b.externalId && b.status === "confirmed" && t && dates.includes(t.date) && !inFile.has(b.externalId)) {
+        b.status = "cancelled";
+        result.changes.push({ action: "cancel", externalId: b.externalId, date: t.date, time: t.localTime, name: b.customerName, players: b.players, detail: "No longer in the provider's tee sheet" });
+        result.counts.cancelled++;
+      }
+    }
+    if (result.dryRun) {
+      bookings.splice(0, bookings.length, ...snapshot);
+      teeTimes.clear();
+      teeSnapshot.forEach((v, k) => teeTimes.set(k, v));
+    } else if (before !== JSON.stringify(bookings) || parsed.bookings.length) {
+      runs.unshift({ id: id(), source: input.source, fileName: input.fileName ?? null, dates, counts: result.counts, createdAt: new Date().toISOString() });
+    }
+    return result;
+  }
+
   // Answers arrive a moment later, like a real server, so loading states still show.
   const reply = <T>(fn: () => T) => new Promise<T>((resolve, reject) => setTimeout(() => {
     try { resolve(fn()); } catch (e) { reject(e); }
@@ -192,6 +285,12 @@ export function createDemoClient(apiKey: string): Client {
         waiver = { id: `waiver-${waiver.version + 1}`, version: waiver.version + 1, ...w };
         return waiver;
       }),
+    importTeeSheet: (input: { source: ImportSource; csv: string; fileName?: string; dryRun?: boolean }) =>
+      reply(() => {
+        if (!apiKey.includes("manager")) throw new ApiError(403, "manager_only", "Only a manager can change this");
+        return importFile(input);
+      }),
+    imports: () => reply(() => runs),
     teeOff: (bookingId: string, carts: string[], signatures: WaiverSignature[]) =>
       reply(() => {
         const b = find(bookingId);

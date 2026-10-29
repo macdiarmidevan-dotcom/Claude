@@ -79,6 +79,26 @@ export interface WalkIn {
   addOns: { code: string; quantity: number }[];
 }
 
+export type ImportSource = "teeitup" | "golfnow" | "import";
+
+export interface ImportResult {
+  dryRun: boolean;
+  dates: string[];
+  counts: { created: number; updated: number; cancelled: number; unchanged: number; problems: number };
+  changes: { action: "create" | "update" | "cancel" | "no_show" | "unchanged" | "skip"; externalId: string; date: string; time: string; name: string; players: number; detail?: string }[];
+  problems: { line: number; message: string }[];
+  overbooked: { date: string; time: string; players: number; maxPlayers: number }[];
+}
+
+export interface ImportRun {
+  id: string;
+  source: ImportSource;
+  fileName: string | null;
+  dates: string[];
+  counts: { created: number; updated: number; cancelled: number; unchanged: number; problems: number };
+  createdAt: string;
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -125,6 +145,9 @@ function createHttpClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "ap
     /** Managers can change course settings; other staff keys can't. */
     me: () => request<{ role: "staff" | "manager" }>("/me"),
     saveWaiver: (waiver: { title: string; body: string }) => request<Waiver>("/waiver", { method: "PUT", body: waiver }),
+    importTeeSheet: (body: { source: ImportSource; csv: string; fileName?: string; dryRun?: boolean }) =>
+      request<ImportResult>("/imports", { method: "POST", body }),
+    imports: () => request<ImportRun[]>("/imports"),
     teeOff: (id: string, cartNumbers: string[], waivers: WaiverSignature[]) =>
       request(`/bookings/${id}/tee-off`, { method: "POST", body: { cartNumbers, waivers } }),
     setCarts: (id: string, cartNumbers: string[], waivers: WaiverSignature[]) =>

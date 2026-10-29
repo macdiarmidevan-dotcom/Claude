@@ -4,7 +4,7 @@ import { withTransaction, type Db, type DbClient } from "./db.ts";
 import { badRequest, conflict, notFound } from "./errors.ts";
 import { getAddOns, getHolidays, getRates, toTeeTime, type Course, type TeeTime } from "./courses.ts";
 
-export type BookingSource = "staff" | "phone" | "teeitup" | "golfnow";
+export type BookingSource = "staff" | "phone" | "teeitup" | "golfnow" | "import";
 
 export interface QuoteRequest {
   teeTimeId: string;
@@ -101,7 +101,7 @@ async function lockTeeTime(client: DbClient, course: Course, teeTimeId: string, 
   return toTeeTime(rows[0], course.timeZone);
 }
 
-async function buildQuote(client: DbClient, course: Course, req: QuoteRequest, teeTime: TeeTime): Promise<Quote> {
+export async function buildQuote(client: DbClient, course: Course, req: QuoteRequest, teeTime: TeeTime): Promise<Quote> {
   if (req.holes % course.holes !== 0) {
     throw badRequest("invalid_holes", `${course.name} has ${course.holes} holes; book a multiple of ${course.holes}`);
   }

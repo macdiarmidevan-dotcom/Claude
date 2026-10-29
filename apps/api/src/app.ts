@@ -6,6 +6,7 @@ import { AppError, notFound } from "./errors.ts";
 import { lookupApiKey, type ApiKeyContext } from "./keys.ts";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { buildMcpServer } from "./mcp.ts";
+import { importTeeSheet, listImports } from "./imports.ts";
 import { dayRange, getAddOns, getCourseBySlug, getRates, getTeeSheet, type Course } from "./courses.ts";
 import {
   createBooking,
@@ -78,6 +79,12 @@ const cartsBody = z.object({ cartNumbers, waivers });
 const waiverBody = z.object({
   title: z.string().trim().min(1).max(200),
   body: z.string().trim().min(20).max(50_000),
+});
+const importBody = z.object({
+  source: z.enum(["teeitup", "golfnow", "import"]),
+  csv: z.string().min(1).max(5_000_000),
+  fileName: z.string().max(200).optional(),
+  dryRun: z.boolean().optional(),
 });
 const paymentBody = z.object({ amountCents: z.number().int().positive(), method: paymentMethod });
 const idParams = z.object({ slug: z.string(), id: z.uuid() });
@@ -158,6 +165,13 @@ export function buildApp(db: Db): FastifyInstance {
   app.get("/v1/courses/:slug/mcp", async (_req, reply) =>
     reply.status(405).send({ error: { code: "method_not_allowed", message: "Use POST" } }),
   );
+
+  // A manager uploads the booking provider's tee sheet export. dryRun previews the changes.
+  app.post("/v1/courses/:slug/imports", { bodyLimit: 6 * 1024 * 1024 }, async (req) => {
+    const course = await managedCourseFor(req);
+    return importTeeSheet(db, course, importBody.parse(req.body));
+  });
+  app.get("/v1/courses/:slug/imports", async (req) => listImports(db, await managedCourseFor(req)));
 
   // The liability waiver each cart driver signs.
   app.get("/v1/courses/:slug/waiver", async (req) => {

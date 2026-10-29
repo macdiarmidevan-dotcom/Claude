@@ -66,6 +66,23 @@ POST /v1/courses/river-bend/bookings
 - **No double-booking.** A booking locks its tee time row for the transaction, so simultaneous requests for the last spots can't overbook.
 - **Rates.** The most specific matching rule wins (residency, age group, time window), and ties go to the lower price. Holidays use weekend rates. 18 holes on a 9-hole course is the 9-hole rate plus the replay rate.
 
+## Tee sheet import
+
+Golfers keep booking on the course's booking provider (TeeItUp or GolfNow). A manager exports that tee sheet as a CSV file and imports it from **Import tee sheet** in the app. The app first shows what would change, and then applies it.
+
+- **Columns:** headers are matched loosely ("Tee Time", "Time", "Start Time" all work). The file needs a date, a tee time and a golfer name. It also uses players, holes, price, amount paid online, status and confirmation number when they're there.
+- **Re-importing** matches bookings on the provider's confirmation number, so nothing is duplicated:
+  - New bookings are added.
+  - Changed ones are updated (a moved time, more players, a new price).
+  - Bookings cancelled on the provider, or missing from a day the file covers, are cancelled here.
+  - Groups already checked in or on the course are never touched.
+- **Money paid online** is recorded as a prepaid payment, so the pro shop sees "Paid".
+- **Pricing:** with no price in the file, our own rates price the booking.
+- **Times we don't have:** a tee time the provider has and our sheet doesn't (a shotgun start) is added. Overbooked times are flagged.
+- **API:** `POST /v1/courses/:slug/imports` with `{ "source": "teeitup" | "golfnow" | "import", "csv": "…", "dryRun": true }`. Manager keys only. `GET …/imports` lists recent runs.
+
+Live sync: TeeItUp's API is only open to approved partners. Once River Bend (or we) get access, a sync job will feed the same import every few minutes, and the file import stays as a backup.
+
 ## AI assistant
 
 Managers can ask Claude, ChatGPT or another MCP client about the course: "how many rounds today?", "who still owes?", "is Mike Sullivan booked this week?", "what did we take last week?". Add a custom connector with the address `https://<your server>/v1/courses/<course>/mcp` and the manager key as a Bearer token.

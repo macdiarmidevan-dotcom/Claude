@@ -5,12 +5,14 @@ import { StationPicker } from "./SetupScreen";
 import { TeeSheetScreen } from "./TeeSheetScreen";
 import { WaiverEditor } from "./WaiverEditor";
 import { Header } from "./Header";
+import { ImportScreen } from "./ImportScreen";
 import { colors, type WebPress } from "./theme";
 
-type Section = "tee-sheet" | "customers" | "reports" | "schedule" | "inventory" | "settings";
+type Section = "tee-sheet" | "import" | "customers" | "reports" | "schedule" | "inventory" | "settings";
 
-const SECTIONS: { id: Section; label: string; icon: string; soon?: string }[] = [
+const SECTIONS: { id: Section; label: string; icon: string; soon?: string; managers?: boolean }[] = [
   { id: "tee-sheet", label: "Tee sheet", icon: "▦" },
+  { id: "import", label: "Import tee sheet", icon: "⇩", managers: true },
   { id: "customers", label: "Customers", icon: "◉", soon: "Golfer profiles, punch cards, memberships and loyalty points." },
   { id: "reports", label: "Reports", icon: "▤", soon: "Daily sales, rounds played, occupancy and payment types. Managers can already ask the AI assistant for these." },
   { id: "schedule", label: "Staff schedule", icon: "◷", soon: "Shifts, time clock and shift swaps that the other employee accepts." },
@@ -73,6 +75,11 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
           ) : (
             <Header title="Tee sheet" onOpenMenu={openMenu} subtitle={error ?? "Loading…"} />
           )
+        ) : section === "import" ? (
+          <>
+            <Header title="Import tee sheet" onOpenMenu={openMenu} />
+            <ImportScreen client={client} />
+          </>
         ) : section === "settings" ? (
           <>
             <Header title="Settings" onOpenMenu={openMenu} />
@@ -151,7 +158,7 @@ function SideMenu(props: {
         <StationPicker dark value={settings.station} onChange={(station) => onChangeSettings({ ...settings, station })} />
       </View>
       <ScrollView style={{ flex: 1 }}>
-        {SECTIONS.map((s) => {
+        {SECTIONS.filter((s) => !s.managers || isManager).map((s) => {
           const on = s.id === section;
           return (
             <Pressable
