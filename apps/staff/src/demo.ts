@@ -211,7 +211,7 @@ export function createDemoClient(apiKey: string): Client {
     Array.from({ length: n }, (_, i) => {
       const d = new Date(Date.now() - (i + 1) * 6 * 86_400_000);
       d.setHours(7 + (i % 4), 10, 0, 0);
-      return { bookingId: `past-${nextId++}`, startsAt: d.toISOString(), course: riverBend.name, players: 2 + (i % 3), holes, status: "teed_off" as const, source: "teeitup", totalCents: 4200, paidCents: 4200 };
+      return { bookingId: `past-${nextId++}`, startsAt: d.toISOString(), course: riverBend.name, players: 2 + (i % 3), guests: 1 + (i % 3), holes, status: "teed_off" as const, source: "teeitup", paidCents: holes === 18 ? 4200 : 2300 };
     });
   let nextId = 1;
   const id = () => `demo-${nextId++}`;
@@ -296,7 +296,7 @@ export function createDemoClient(apiKey: string): Client {
       .filter((b) => b.golferId === g.id)
       .map((b) => {
         const t = teeTimes.get(b.teeTimeId)!;
-        return { bookingId: b.id, startsAt: t.startsAt, course: riverBend.name, players: b.players, holes: b.holes, status: b.status, source: b.source, totalCents: b.totalCents, paidCents: payment(b).paidCents };
+        return { bookingId: b.id, startsAt: t.startsAt, course: riverBend.name, players: b.players, guests: b.players - 1, holes: b.holes, status: b.status, source: b.source, paidCents: Math.round(payment(b).paidCents / b.players) };
       });
     const history = [...today, ...g.past].sort((a, b) => b.startsAt.localeCompare(a.startsAt));
     const rounds = history.filter((h) => played(h.status));
@@ -311,6 +311,7 @@ export function createDemoClient(apiKey: string): Client {
         noShows: history.filter((h) => h.status === "no_show").length,
         cancelled: history.filter((h) => h.status === "cancelled").length,
         upcoming: history.filter((h) => h.status === "confirmed" && h.startsAt > new Date().toISOString()).length,
+        guestsBrought: rounds.reduce((s, h) => s + h.guests, 0),
         paidCents: history.reduce((s, h) => s + h.paidCents, 0),
       },
       history,
@@ -369,6 +370,7 @@ export function createDemoClient(apiKey: string): Client {
       totalCents: total,
       cartNumbers: [],
       signedCarts: [],
+      riding: walkIn.addOns.some((a) => a.code === "gas_cart" && a.quantity > 0),
       payment: { status: "unpaid", paidCents: 0, balanceCents: total, methods: [] },
       paid: [],
     };
@@ -445,7 +447,7 @@ export function createDemoClient(apiKey: string): Client {
       if (!existing) {
         bookings.push({
           id: id(), teeTimeId: t.id, customerName: row.name, customerPhone: row.phone ?? null, golferId: null, players: row.players, holes,
-          status: row.status === "no_show" ? "no_show" : "confirmed", source: input.source, totalCents: total, cartNumbers: [], signedCarts: [],
+          status: row.status === "no_show" ? "no_show" : "confirmed", source: input.source, totalCents: total, cartNumbers: [], signedCarts: [], riding: false,
           payment: { status: "unpaid", paidCents: 0, balanceCents: total, methods: [] },
           paid: row.paidCents ? [{ amountCents: Math.min(row.paidCents, total), method: "prepaid" }] : [], externalId: row.externalId,
         });
@@ -902,6 +904,22 @@ export function createDemoClient(apiKey: string): Client {
       reply(() => {
         log("Cancelled a booking", find(bookingId).customerName);
         return Object.assign(find(bookingId), { status: "cancelled" as const });
+      }),
+    addGuests: (bookingId: string, g: { count: number; riding: boolean; residency?: "resident" | "nonresident" }) =>
+      reply(() => {
+        const b = find(bookingId);
+        const t = teeTimes.get(b.teeTimeId)!;
+        const left = t.maxPlayers - live(t.id).reduce((s, x) => s + x.players, 0);
+        if (g.count > left) throw conflict("not_enough_spots", `Only ${left} spot${left === 1 ? "" : "s"} left`);
+        const loops = Math.max(1, Math.round(b.holes / riverBend.holes));
+        const player = { residency: g.residency ?? "nonresident", ageGroup: "adult" } as const;
+        const each = quotePlayer(riverBendRates, player, { startsAt: t.startsAt, timeZone: riverBend.timeZone }, loops).totalCents + (g.riding ? riverBendAddOns.find((x) => x.code === "gas_cart")!.priceCents : 0);
+        b.players += g.count;
+        b.totalCents += each * g.count;
+        if (g.riding) b.riding = true;
+        b.payment = payment(b);
+        log(`Added ${g.count} guest${g.count === 1 ? "" : "s"}`, b.customerName);
+        return b;
       }),
     move: (bookingId: string, teeTimeId: string) =>
       reply(() => {

@@ -48,6 +48,8 @@ export interface SheetBooking {
   cartNumbers: string[];
   /** Carts whose driver has signed the waiver for this booking. */
   signedCarts: string[];
+  /** Riding in carts, or walking. */
+  riding: boolean;
   payment: PaymentSummary;
 }
 
@@ -177,8 +179,10 @@ export interface GolferAccount {
 
 export interface GolferProfile extends GolferAccount {
   createdBy: string | null;
-  stats: { roundsPlayed: number; holesPlayed: number; noShows: number; cancelled: number; upcoming: number; paidCents: number };
-  history: { bookingId: string; startsAt: string; course: string; players: number; holes: number; status: BookingStatus; source: string; totalCents: number; paidCents: number }[];
+  /** paidCents is what the golfer paid for their own rounds; their guests' fees aren't in it. */
+  stats: { roundsPlayed: number; holesPlayed: number; noShows: number; cancelled: number; upcoming: number; guestsBrought: number; paidCents: number };
+  /** Everyone else in the group is the golfer's guest. paidCents is the golfer's own share. */
+  history: { bookingId: string; startsAt: string; course: string; players: number; guests: number; holes: number; status: BookingStatus; source: string; paidCents: number }[];
 }
 
 export interface Shift {
@@ -352,6 +356,8 @@ function createHttpClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "ap
     noShow: (id: string) => request(`/bookings/${id}/no-show`, { method: "POST" }),
     cancel: (id: string) => request(`/bookings/${id}/cancel`, { method: "POST" }),
     move: (id: string, teeTimeId: string) => request(`/bookings/${id}/move`, { method: "POST", body: { teeTimeId } }),
+    addGuests: (id: string, guests: { count: number; riding: boolean; residency?: "resident" | "nonresident" }) =>
+      request(`/bookings/${id}/guests`, { method: "POST", body: guests }),
   };
 }
 

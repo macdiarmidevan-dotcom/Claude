@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import type { Client, PaymentMethod, SheetBooking, SheetTeeTime, Station, Waiver } from "./api";
 import { WaiverModal } from "./WaiverModal";
@@ -14,9 +14,11 @@ interface Props {
   onOpenGolfer?: (golferId: string) => void;
   onChanged: () => void;
   onClose: () => void;
+  /** Guests dragged onto a group on the tee sheet, waiting for staff to confirm. */
+  guestRequest?: { bookingId: string; count: number; key: number };
 }
 
-export function TeeTimePanel({ client, teeTime, sheet, courseHoles, station, onOpenGolfer, onChanged, onClose }: Props) {
+export function TeeTimePanel({ client, teeTime, sheet, courseHoles, station, onOpenGolfer, onChanged, onClose, guestRequest }: Props) {
   const [error, setError] = useState<string>();
   const [moving, setMoving] = useState<SheetBooking>();
   // sendOff: the starter is sending the group off the tee; otherwise just editing carts.
@@ -29,6 +31,10 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, station, onO
   // Carts waiting on their drivers' waiver signatures before they're saved.
   const [signing, setSigning] = useState<{ booking: SheetBooking; carts: string[]; unsigned: string[]; sendOff: boolean; waiver: Waiver }>();
   const [note, setNote] = useState(teeTime.note ?? "");
+  const [guestsFor, setGuestsFor] = useState<{ id: string; count: number }>();
+  useEffect(() => {
+    if (guestRequest) setGuestsFor({ id: guestRequest.bookingId, count: guestRequest.count });
+  }, [guestRequest?.key]);
   const spotsLeft = teeTime.maxPlayers - teeTime.bookedPlayers;
   const active = teeTime.bookings.filter((b) => b.status !== "cancelled");
 
@@ -84,6 +90,7 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, station, onO
               {b.golferId ? "✓ On golfer account (tap the name to open it)" : "No golfer account linked yet"}
             </Text>
           )}
+          <Text style={styles.muted}>{b.riding ? "Riding" : "Walking"}</Text>
           {b.cartNumbers.length > 0 && (
             <Text style={styles.carts}>
               {b.cartNumbers.length === 1 ? "Cart" : "Carts"} {b.cartNumbers.join(", ")}
@@ -92,7 +99,7 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, station, onO
           {station === "starter" && b.status === "confirmed" && (
             <Text style={styles.warning}>Not checked in at the pro shop yet</Text>
           )}
-          {cartsFor?.booking.id !== b.id && moving?.id !== b.id && payingFor?.id !== b.id && cancelling !== b.id && accountFor?.id !== b.id && (
+          {cartsFor?.booking.id !== b.id && moving?.id !== b.id && payingFor?.id !== b.id && cancelling !== b.id && accountFor?.id !== b.id && guestsFor?.id !== b.id && (
             <View style={styles.actions}>
               {station === "proshop" && (b.status === "confirmed" || b.status === "no_show") && (
                 <Action
@@ -113,12 +120,26 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, station, onO
               {(b.status === "checked_in" || b.status === "teed_off") && (
                 <Action label={b.cartNumbers.length ? "Change carts" : "Add carts"} onPress={() => setCartsFor({ booking: b, sendOff: false })} />
               )}
+              {spotsLeft > 0 && b.status !== "no_show" && <Action label="Add guests" onPress={() => setGuestsFor({ id: b.id, count: 1 })} />}
               {b.status === "confirmed" && <Action label="No-show" onPress={() => run(() => client.noShow(b.id))} />}
               {(b.status === "confirmed" || b.status === "checked_in") && <Action label="Move" onPress={() => setMoving(b)} />}
               {b.status === "confirmed" && (
                 <Action label="Cancel" danger onPress={() => setCancelling(b.id)} />
               )}
             </View>
+          )}
+          {guestsFor?.id === b.id && (
+            <GuestForm
+              booking={b}
+              initialCount={guestsFor.count}
+              maxGuests={spotsLeft}
+              showRate={station === "proshop"}
+              onCancel={() => setGuestsFor(undefined)}
+              onSave={(count, riding, resident) => {
+                setGuestsFor(undefined);
+                run(() => client.addGuests(b.id, { count, riding, ...(station === "proshop" && resident ? { residency: "resident" as const } : {}) }));
+              }}
+            />
           )}
           {cancelling === b.id && (
             <View style={{ marginTop: 10 }} accessibilityLiveRegion="polite">
@@ -385,9 +406,9 @@ function WalkInForm({ maxPlayers, courseHoles, showRate, onSubmit }: { maxPlayer
           <Toggle key={h} label={String(h)} on={holes === h} onPress={() => setHoles(h)} />
         ))}
       </Row>
-      <Row label="Carts">
+      <Row label="Walk/ride">
         <Toggle label="Walking" on={!cart} onPress={() => setCart(false)} />
-        <Toggle label="Gas carts" on={cart} onPress={() => setCart(true)} />
+        <Toggle label="Riding" on={cart} onPress={() => setCart(true)} />
       </Row>
       {showRate && (
         <Row label="Rate">
@@ -404,6 +425,49 @@ function WalkInForm({ maxPlayers, courseHoles, showRate, onSubmit }: { maxPlayer
           setName("");
         }}
       />
+    </View>
+  );
+}
+
+/** Adds guests to a golfer's group. They're priced into the group's booking, not the golfer's own account. */
+function GuestForm(props: { booking: SheetBooking; initialCount: number; maxGuests: number; showRate: boolean; onSave: (count: number, riding: boolean, resident: boolean) => void; onCancel: () => void }) {
+  const { booking, initialCount, maxGuests, showRate, onSave, onCancel } = props;
+  const [count, setCount] = useState(Math.max(1, Math.min(initialCount, maxGuests)));
+  const [riding, setRiding] = useState(booking.riding);
+  const [resident, setResident] = useState(false);
+  if (maxGuests < 1) {
+    return (
+      <View style={{ marginTop: 10 }}>
+        <Text style={styles.muted}>This tee time is full.</Text>
+        <View style={styles.actions}>
+          <Action label="OK" onPress={onCancel} />
+        </View>
+      </View>
+    );
+  }
+  return (
+    <View style={{ marginTop: 10 }} accessibilityLiveRegion="polite">
+      <Text style={[styles.name, { marginBottom: 8 }]}>Add guests with {booking.customerName}</Text>
+      <Row label="Guests">
+        {Array.from({ length: maxGuests }, (_, i) => i + 1).map((n) => (
+          <Toggle key={n} label={String(n)} on={count === n} onPress={() => setCount(n)} />
+        ))}
+      </Row>
+      <Row label="Walk/ride">
+        <Toggle label="Walking" on={!riding} onPress={() => setRiding(false)} />
+        <Toggle label="Riding" on={riding} onPress={() => setRiding(true)} />
+      </Row>
+      {showRate && (
+        <Row label="Rate">
+          <Toggle label="Nonresident" on={!resident} onPress={() => setResident(false)} />
+          <Toggle label="Resident" on={resident} onPress={() => setResident(true)} />
+        </Row>
+      )}
+      <Text style={styles.muted}>Guests are added to this group's bill and listed on {booking.customerName}'s account, but their fees don't count as {booking.customerName}'s own spending.</Text>
+      <View style={styles.actions}>
+        <Action label={`Add ${count} ${count === 1 ? "guest" : "guests"}`} primary onPress={() => onSave(count, riding, resident)} />
+        <Action label="Cancel" onPress={onCancel} />
+      </View>
     </View>
   );
 }
