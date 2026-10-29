@@ -38,6 +38,11 @@ export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu,
   const [selectedId, setSelectedId] = useState<string>();
   // Guests dragged onto a group, for the panel to confirm.
   const [guestRequest, setGuestRequest] = useState<{ bookingId: string; count: number; key: number }>();
+  // The group whose name was tapped, so the panel can bring it to the top of the eye line.
+  const [focusId, setFocusId] = useState<string>();
+  // A group being dragged up or down to another tee time, and the time it's over right now.
+  const [moveDrag, setMoveDrag] = useState<{ booking: SheetBooking; targetId?: string; ok: boolean }>();
+  const [notice, setNotice] = useState<{ text: string; undo?: () => void; key: number }>();
   const [error, setError] = useState<string>();
   const listRef = useRef<FlatList<Line>>(null);
   const scrolledFor = useRef<string | undefined>(undefined);
@@ -127,6 +132,51 @@ export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu,
     return { players, open: Math.max(0, capacity - players), owed };
   }, [sheet]);
 
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => setNotice(undefined), 10_000);
+    return () => clearTimeout(timer);
+  }, [notice]);
+
+  // The tee time under a name dragged dy pixels up or down from the row at lineIndex.
+  const teeTimeAt = (lineIndex: number, dy: number) => {
+    const y = (offsets[lineIndex] ?? 0) + ROW_HEIGHT / 2 + dy;
+    let i = offsets.findIndex((at, k) => y >= at && y < at + (lines[k]!.kind === "hour" ? HOUR_HEIGHT : ROW_HEIGHT));
+    if (i === -1) i = y < 0 ? 0 : lines.length - 1;
+    if (lines[i]?.kind === "hour") i++;
+    const line = lines[i];
+    return line?.kind === "time" ? line.teeTime : undefined;
+  };
+  const hasRoom = (t: SheetTeeTime, b: SheetBooking) => t.status === "open" && t.maxPlayers - t.bookedPlayers >= b.players;
+
+  async function moveGroup(b: SheetBooking, to: SheetTeeTime) {
+    const from = sheet?.find((t) => t.id === b.teeTimeId);
+    try {
+      await client.move(b.id, to.id);
+      setSelectedId(to.id);
+      setFocusId(b.id);
+      setNotice({
+        text: `Moved ${b.customerName} to ${formatTime(to.localTime)}`,
+        undo: from
+          ? async () => {
+              setNotice(undefined);
+              try {
+                await client.move(b.id, from.id);
+                setSelectedId(from.id);
+              } catch (e) {
+                setNotice({ text: e instanceof Error ? e.message : "Couldn't move them back", key: Date.now() });
+              }
+              load();
+            }
+          : undefined,
+        key: Date.now(),
+      });
+    } catch (e) {
+      setNotice({ text: e instanceof Error ? e.message : "Couldn't move the group", key: Date.now() });
+    }
+    load();
+  }
+
   const selected = sheet?.find((t) => t.id === selectedId);
   const panel = selected && sheet && (
     <TeeTimePanel
@@ -140,6 +190,7 @@ export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu,
       onOpenGolfer={onOpenGolfer}
       onChanged={load}
       onClose={() => setSelectedId(undefined)}
+      focusBookingId={focusId}
       guestRequest={guestRequest && selected.bookings.some((b) => b.id === guestRequest.bookingId) ? guestRequest : undefined}
     />
   );
@@ -151,6 +202,19 @@ export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu,
       <Header title="Tee sheet" subtitle={`${station === "proshop" ? "Pro shop" : "Starter"} · ${summary}`} onOpenMenu={onOpenMenu} />
       <WeekStrip date={date} today={today} compact={compact} onPick={setDate} />
       {!compact && <Legend />}
+      {notice && (
+        <View key={notice.key} style={styles.notice} accessibilityLiveRegion="polite" role="status">
+          <Text style={styles.noticeText}>{notice.text}</Text>
+          {notice.undo && (
+            <Pressable accessibilityRole="button" onPress={notice.undo} hitSlop={8} style={({ focused }: WebPress) => [styles.noticeButton, focused && styles.focusRing]}>
+              <Text style={styles.noticeAction}>Undo</Text>
+            </Pressable>
+          )}
+          <Pressable accessibilityRole="button" accessibilityLabel="Dismiss" onPress={() => setNotice(undefined)} hitSlop={8} style={styles.noticeButton}>
+            <Text style={styles.noticeClose}>✕</Text>
+          </Pressable>
+        </View>
+      )}
 
       <View style={{ flex: 1, flexDirection: "row" }}>
         <View style={{ flex: 1, minWidth: 0 }}>
@@ -162,6 +226,7 @@ export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu,
             <FlatList
               ref={listRef}
               data={lines}
+              extraData={[selectedId, moveDrag]}
               keyExtractor={(l) => l.key}
               getItemLayout={(_, index) => ({
                 length: lines[index]?.kind === "hour" ? HOUR_HEIGHT : ROW_HEIGHT,
@@ -169,7 +234,7 @@ export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu,
                 index,
               })}
               accessibilityLabel={`Tee times for ${dayParts(date).long}`}
-              renderItem={({ item }) =>
+              renderItem={({ item, index: lineIndex }) =>
                 item.kind === "hour" ? (
                   <View style={styles.hour} role="heading" aria-level={2}>
                     <Text style={styles.hourText}>{item.label}</Text>
@@ -182,11 +247,38 @@ export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu,
                     selected={item.teeTime.id === selectedId}
                     isNext={item.index === nextIndex}
                     past={isToday && nextIndex !== -1 && item.index < nextIndex}
-                    onPress={() => setSelectedId(item.teeTime.id)}
+                    onPress={(bookingId) => {
+                      setSelectedId(item.teeTime.id);
+                      setFocusId(bookingId);
+                    }}
                     onAddGuests={(bookingId, count) => {
                       setSelectedId(item.teeTime.id);
                       setGuestRequest({ bookingId, count, key: Date.now() });
                     }}
+                    movingId={moveDrag?.booking.id}
+                    moveTarget={moveDrag?.targetId === item.teeTime.id ? (moveDrag.ok ? "ok" : "full") : undefined}
+                    onMoveDrag={(b, dy) => {
+                      const t = teeTimeAt(lineIndex, dy);
+                      const target = t && t.id !== b.teeTimeId ? t : undefined;
+                      setMoveDrag({ booking: b, targetId: target?.id, ok: !!target && hasRoom(target, b) });
+                    }}
+                    onMoveDrop={(b, dy) => {
+                      setMoveDrag(undefined);
+                      const t = teeTimeAt(lineIndex, dy);
+                      if (!t || t.id === b.teeTimeId) return;
+                      if (!hasRoom(t, b)) {
+                        setNotice({
+                          text:
+                            t.status === "blocked"
+                              ? `${formatTime(t.localTime)} is blocked`
+                              : `${formatTime(t.localTime)} doesn't have room for ${b.players} ${b.players === 1 ? "player" : "players"}`,
+                          key: Date.now(),
+                        });
+                        return;
+                      }
+                      moveGroup(b, t);
+                    }}
+                    onMoveCancel={() => setMoveDrag(undefined)}
                   />
                 )
               }
@@ -294,12 +386,21 @@ interface RowProps {
   selected: boolean;
   isNext: boolean;
   past: boolean;
-  onPress: () => void;
+  /** With the booking whose name was tapped, if it was a name rather than the row. */
+  onPress: (bookingId?: string) => void;
+  /** The group being dragged to another time, if it's from this row. */
+  movingId?: string;
+  /** This row is under a group being dragged: "ok" if it has room for them. */
+  moveTarget?: "ok" | "full";
+  /** A golfer's name is being dragged dy pixels up or down, to move their group. */
+  onMoveDrag: (booking: SheetBooking, dy: number) => void;
+  onMoveDrop: (booking: SheetBooking, dy: number) => void;
+  onMoveCancel: () => void;
   /** A golfer's name was dragged right across open spots: add that many guests to their group. */
   onAddGuests: (bookingId: string, count: number) => void;
 }
 
-function TeeTimeRow({ teeTime, priceCents, compact, selected, isNext, past, onPress, onAddGuests }: RowProps) {
+function TeeTimeRow({ teeTime, priceCents, compact, selected, isNext, past, onPress, onAddGuests, movingId, moveTarget, onMoveDrag, onMoveDrop, onMoveCancel }: RowProps) {
   const [slotsWidth, setSlotsWidth] = useState(0);
   // While a name is being dragged: whose group, and how many open spots it covers so far.
   const [drag, setDrag] = useState<{ bookingId: string; count: number }>();
@@ -317,17 +418,28 @@ function TeeTimeRow({ teeTime, priceCents, compact, selected, isNext, past, onPr
   const firstOpen = slots.findIndex((x) => !x.booking);
   const slotWidth = slotsWidth / teeTime.maxPlayers;
   // Only groups still playing can take guests, and only into open spots.
-  const canDrag = (b: SheetBooking) => !blocked && open > 0 && slotWidth > 0 && b.status !== "no_show" && b.status !== "cancelled";
+  const canGuest = (b: SheetBooking) => !blocked && open > 0 && slotWidth > 0 && b.status !== "no_show" && b.status !== "cancelled";
+  // Groups that haven't teed off yet can be dragged up or down to another time.
+  const canMove = (b: SheetBooking) => b.status === "confirmed" || b.status === "checked_in";
   const dragProps = (b: SheetBooking) => ({
+    canGuest: canGuest(b),
+    canMove: canMove(b),
     maxGuests: open,
     slotWidth,
-    onTap: onPress,
-    onDrag: (count: number) => setDrag(count ? { bookingId: b.id, count } : undefined),
-    onDrop: (count: number) => {
+    onTap: () => onPress(b.id),
+    onGuestDrag: (count: number) => setDrag(count ? { bookingId: b.id, count } : undefined),
+    onGuestDrop: (count: number) => {
       setDrag(undefined);
       if (count > 0) onAddGuests(b.id, count);
     },
+    onMoveDrag: (dy: number) => onMoveDrag(b, dy),
+    onMoveDrop: (dy: number) => onMoveDrop(b, dy),
+    onCancel: () => {
+      setDrag(undefined);
+      onMoveCancel();
+    },
   });
+  const lifted = (b: SheetBooking) => b.id === movingId && { opacity: 0.45 };
   const ghost = (i: number) => drag !== undefined && firstOpen !== -1 && i >= firstOpen && i < firstOpen + drag.count;
 
   const spoken = blocked
@@ -343,12 +455,14 @@ function TeeTimeRow({ teeTime, priceCents, compact, selected, isNext, past, onPr
       accessibilityRole="button"
       accessibilityLabel={`${formatTime(teeTime.localTime)}${isNext ? ", next tee time" : ""}: ${spoken}`}
       accessibilityState={{ selected }}
-      onPress={onPress}
+      onPress={() => onPress()}
       style={({ hovered, focused }: WebPress) => [
         styles.row,
         hovered && { backgroundColor: "#f7f8f4" },
         selected && styles.rowSelected,
         past && { opacity: 0.6 },
+        moveTarget === "ok" && styles.rowDropOk,
+        moveTarget === "full" && styles.rowDropFull,
         focused && styles.focusRing,
       ]}
     >
@@ -367,7 +481,7 @@ function TeeTimeRow({ teeTime, priceCents, compact, selected, isNext, past, onPr
             ? // Phones: one bar per group across its players, so the whole name fits.
               [
                 ...groups.map((b) => (
-                  <DragName key={b.id} enabled={canDrag(b)} {...dragProps(b)} style={[styles.slot, { flex: b.players, backgroundColor: slotColor[stateOf(b)] }]}>
+                  <DragName key={b.id} {...dragProps(b)} style={[styles.slot, { flex: b.players, backgroundColor: slotColor[stateOf(b)] }, lifted(b)]}>
                     <Text style={styles.slotText} numberOfLines={1}>
                       {slotMark[stateOf(b)]}
                       {b.customerName}
@@ -383,9 +497,11 @@ function TeeTimeRow({ teeTime, priceCents, compact, selected, isNext, past, onPr
             s.booking ? (
               <DragName
                 key={i}
-                enabled={s.first && canDrag(s.booking)}
                 {...dragProps(s.booking)}
-                style={[styles.slot, { backgroundColor: slotColor[stateOf(s.booking)] }]}
+                // Only the group's name slides; the guest spots behind it just open the group.
+                canGuest={s.first && canGuest(s.booking)}
+                canMove={s.first && canMove(s.booking)}
+                style={[styles.slot, { backgroundColor: slotColor[stateOf(s.booking)] }, lifted(s.booking)]}
               >
                 <Text style={styles.slotText} numberOfLines={1}>
                   {slotMark[stateOf(s.booking)]}
@@ -406,6 +522,12 @@ function TeeTimeRow({ teeTime, priceCents, compact, selected, isNext, past, onPr
       )}
       {/* Money and carts sit in their own column so they stay visible when names are cut off. */}
       <View style={[styles.endCol, compact && { width: 64 }]}>
+        {moveTarget ? (
+          <Text style={[styles.pay, { color: moveTarget === "ok" ? colors.primaryText : colors.noShow }]} numberOfLines={1}>
+            {moveTarget === "ok" ? "Move here" : blocked ? "Blocked" : "No room"}
+          </Text>
+        ) : (
+          <>
         {groups.some((b) => b.status !== "no_show") && (
           <Text style={[styles.pay, { color: owed > 0 ? colors.noShow : colors.checkedIn }]} numberOfLines={1}>
             {owed > 0 ? (compact ? money(owed) : `Owes ${money(owed)}`) : "Paid"}
@@ -417,6 +539,8 @@ function TeeTimeRow({ teeTime, priceCents, compact, selected, isNext, past, onPr
             {carts.join(", ")}
           </Text>
         )}
+          </>
+        )}
       </View>
     </Pressable>
   );
@@ -424,51 +548,61 @@ function TeeTimeRow({ teeTime, priceCents, compact, selected, isNext, past, onPr
 
 /**
  * A golfer's name on the tee sheet. Sliding it to the right across open spots adds that many
- * guests to their group (the panel then asks walking or riding before charging anything). A
- * plain tap still opens the tee time.
+ * guests to their group (the panel then asks walking or riding before charging anything).
+ * Dragging it up or down moves the group to another tee time. A plain tap opens the group.
  */
 function DragName(props: {
-  enabled: boolean;
+  canGuest: boolean;
+  canMove: boolean;
   maxGuests: number;
   slotWidth: number;
   onTap: () => void;
-  onDrag: (count: number) => void;
-  onDrop: (count: number) => void;
+  onGuestDrag: (count: number) => void;
+  onGuestDrop: (count: number) => void;
+  onMoveDrag: (dy: number) => void;
+  onMoveDrop: (dy: number) => void;
+  onCancel: () => void;
   style: StyleProp<ViewStyle>;
   children: React.ReactNode;
 }) {
   const latest = useRef(props);
   latest.current = props;
-  const dragging = useRef(false);
+  // Which way the name is going, once it has moved far enough to tell.
+  const mode = useRef<"none" | "guest" | "move">("none");
+  const guests = (dx: number) => Math.max(0, Math.min(latest.current.maxGuests, Math.round(dx / latest.current.slotWidth)));
   const pan = useRef(
     PanResponder.create({
-      onStartShouldSetPanResponder: () => latest.current.enabled,
+      onStartShouldSetPanResponder: () => true,
       onPanResponderGrant: () => {
-        dragging.current = false;
+        mode.current = "none";
       },
       onPanResponderMove: (_, g) => {
-        if (!dragging.current && g.dx > 8 && Math.abs(g.dx) > Math.abs(g.dy) * 1.5) dragging.current = true;
-        if (!dragging.current) return;
-        const { slotWidth, maxGuests, onDrag } = latest.current;
-        onDrag(Math.max(0, Math.min(maxGuests, Math.round(g.dx / slotWidth))));
+        const { canGuest, canMove, onGuestDrag, onMoveDrag } = latest.current;
+        if (mode.current === "none") {
+          if (canGuest && g.dx > 8 && Math.abs(g.dx) > Math.abs(g.dy) * 1.5) mode.current = "guest";
+          else if (canMove && Math.abs(g.dy) > 8 && Math.abs(g.dy) > Math.abs(g.dx) * 1.5) mode.current = "move";
+        }
+        if (mode.current === "guest") onGuestDrag(guests(g.dx));
+        if (mode.current === "move") onMoveDrag(g.dy);
       },
-      // Let the list scroll up and down unless the name is already being slid sideways.
-      onPanResponderTerminationRequest: () => !dragging.current,
+      // Let the list scroll unless the name is already being dragged.
+      onPanResponderTerminationRequest: () => mode.current === "none",
       onPanResponderRelease: (_, g) => {
-        const { slotWidth, maxGuests, onDrop, onTap } = latest.current;
-        if (dragging.current) onDrop(Math.max(0, Math.min(maxGuests, Math.round(g.dx / slotWidth))));
+        const { onGuestDrop, onMoveDrop, onTap } = latest.current;
+        if (mode.current === "guest") onGuestDrop(guests(g.dx));
+        else if (mode.current === "move") onMoveDrop(g.dy);
         else if (Math.abs(g.dx) < 8 && Math.abs(g.dy) < 8) onTap();
-        dragging.current = false;
+        mode.current = "none";
       },
       onPanResponderTerminate: () => {
-        dragging.current = false;
-        latest.current.onDrag(0);
+        mode.current = "none";
+        latest.current.onCancel();
       },
     }),
   ).current;
-  if (!props.enabled) return <View style={props.style}>{props.children}</View>;
+  const draggable = props.canGuest || props.canMove;
   return (
-    <View {...pan.panHandlers} style={[props.style, styles.draggable]}>
+    <View {...pan.panHandlers} style={[props.style, draggable ? styles.draggable : styles.tappable]}>
       {props.children}
     </View>
   );
@@ -476,6 +610,14 @@ function DragName(props: {
 
 const styles = StyleSheet.create({
   draggable: { cursor: "grab", userSelect: "none" } as object,
+  tappable: { cursor: "pointer", userSelect: "none" } as object,
+  rowDropOk: { backgroundColor: colors.primaryLight, outlineColor: colors.primary, outlineWidth: 2, outlineStyle: "dashed", outlineOffset: -2 } as object,
+  rowDropFull: { backgroundColor: "#fbeceb", outlineColor: colors.noShow, outlineWidth: 2, outlineStyle: "dashed", outlineOffset: -2 } as object,
+  notice: { flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: colors.text },
+  noticeText: { flex: 1, color: "#fff", fontSize: 13 },
+  noticeButton: { paddingHorizontal: 6, minHeight: 28, justifyContent: "center", borderRadius: 3 },
+  noticeAction: { color: "#9cc3f5", fontWeight: "700", fontSize: 13 },
+  noticeClose: { color: "#c9ccd1", fontSize: 13 },
   slotGhost: { borderColor: colors.primary, borderStyle: "solid", backgroundColor: colors.primaryLight },
   ghostText: { color: colors.primaryText, fontSize: 12, fontWeight: "700" },
   empty: { color: colors.muted, textAlign: "center", marginTop: 40, paddingHorizontal: 24, fontSize: 14, lineHeight: 22 },
