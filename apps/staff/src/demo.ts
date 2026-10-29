@@ -11,6 +11,24 @@ import {
   type EmployeeType,
   type DayClose,
   type AccountingFormat,
+  type AudiencePreview,
+  type Campaign,
+  type CampaignDetail,
+  type MessageAudience,
+  type MessageChannel,
+  type MessageKind,
+  type MessageSettings,
+  type SentMessage,
+  type Asset,
+  type AssetDetail,
+  type AssetInput,
+  type AssetKind,
+  type AssetPower,
+  type WorkOrder,
+  type WorkOrderArea,
+  type WorkOrderDetail,
+  type WorkOrderInput,
+  type WorkOrderStatus,
   type AccountingSettings,
   type AccountKey,
   type Journal,
@@ -682,7 +700,223 @@ export function createDemoClient(apiKey: string): Client {
     return b;
   }
 
+  // The cart fleet, equipment and work orders, the same rules as the server's.
+  type DemoAsset = Omit<Asset, "sinceService" | "serviceDue" | "openWorkOrders" | "out"> & {
+    baseRounds: number;
+    lastServiceHours: number | null;
+    createdAt: string;
+    service: AssetDetail["service"];
+  };
+  type DemoOrder = Omit<WorkOrderDetail, "overdue" | "asset" | "assignedTo"> & { assetId: string | null; assignedId: string | null };
+  const fleet: DemoAsset[] = [];
+  const workOrders: DemoOrder[] = [];
+  const teedOffAt = new Map<string, string>();
+  const cartsInAt = new Map<string, string>();
+  let fleetSeeded = false;
+  const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
+  function seedFleet() {
+    if (fleetSeeded) return;
+    fleetSeeded = true;
+    const base = (n: number) => ({ model: null, power: null, serial: null, status: "in_service" as const, statusNote: null, statusChangedAt: hoursAgo(24 * 200), hours: null, notes: null, lastServiceHours: null, createdAt: hoursAgo(24 * 400), service: [], number: String(n) });
+    for (let n = 1; n <= 40; n++) {
+      // Spread the carts out across their service schedule; a few are due.
+      const baseRounds = n === 5 || n === 31 ? 151 : (n * 37) % 140;
+      fleet.push({ ...base(n), id: `cart-${n}`, kind: "cart", model: "Club Car Tempo", power: "gas", serviceEvery: 150, lastServiceAt: hoursAgo(24 * (20 + (n % 30))), baseRounds });
+    }
+    const down = (n: number, note: string, h: number) => Object.assign(fleet.find((a) => a.number === String(n))!, { status: "out_of_service", statusNote: note, statusChangedAt: hoursAgo(h) });
+    down(17, "Won't start", 20);
+    down(23, "Cracked windshield", 50);
+    const machine = (number: string, model: string, power: AssetPower, hours: number, every: number, lastAt: number, serial: string) =>
+      fleet.push({ ...base(0), id: `eq-${fleet.length}`, kind: "equipment", number, model, power, hours, serviceEvery: every, lastServiceHours: lastAt, lastServiceAt: hoursAgo(24 * 18), serial, baseRounds: 0 });
+    machine("Greens mower 1", "Toro Greensmaster 3150", "diesel", 812, 50, 770, "315-40118");
+    machine("Greens mower 2", "Toro Greensmaster 3150", "diesel", 798, 50, 760, "315-40122");
+    machine("Fairway mower", "Toro Reelmaster 5510", "diesel", 1432, 100, 1310, "551-20931");
+    machine("Utility vehicle", "John Deere Gator TX", "gas", 620, 100, 580, "GTX-77812");
+    machine("Range picker", "Club Car Carryall 100", "electric", 288, 200, 160, "CA1-55021");
+    machine("Bunker rake", "Toro Sand Pro 3040", "gas", 410, 100, 395, "SP3-11873");
+    const mower = fleet.find((a) => a.number === "Greens mower 1")!;
+    mower.service.push({ id: id(), kind: "service", note: "Oil, filters, reel backlap", costCents: 18500, hours: 770, workOrderNumber: null, staff: "Riley Chen", at: hoursAgo(24 * 18) });
+    const order = (o: Partial<DemoOrder> & { title: string; area: WorkOrderArea; h: number }) => {
+      const { h, ...rest } = o;
+      const w: DemoOrder = {
+        id: id(), number: workOrders.length + 1, details: null, location: null, priority: "normal", status: "open", assetId: null, assignedId: null, reportedBy: "Sam Torres",
+        dueDate: null, costCents: 0, completedAt: null, createdAt: hoursAgo(h), updatedAt: hoursAgo(h / 2), notes: [], ...rest,
+      };
+      workOrders.push(w);
+      return w;
+    };
+    order({ title: "Won't start", area: "carts", assetId: "cart-17", priority: "high", assignedId: "u-4", h: 20, details: "Clicks but doesn't turn over. Battery terminals look corroded." });
+    order({ title: "Cracked windshield", area: "carts", assetId: "cart-23", priority: "low", h: 50, notes: [{ id: id(), note: "Windshield ordered, about a week", status: "on_hold", staff: "Riley Chen", at: hoursAgo(30) }], status: "on_hold" });
+    order({ title: "Bunker washed out after the storm", area: "course", location: "Hole 7, greenside left", priority: "normal", assignedId: null, h: 6, status: "in_progress", dueDate: todayIn(riverBend.timeZone) });
+    order({ title: "Ice machine leaking", area: "clubhouse", location: "Grill kitchen", priority: "urgent", h: 2, reportedBy: "Jordan Price" });
+    const done = order({ title: "Reel cutting uneven", area: "equipment", assetId: mower.id, h: 24 * 5, status: "done", costCents: 4200, completedAt: hoursAgo(24 * 4), reportedBy: "Morgan Ellis", assignedId: "u-4" });
+    done.notes.push({ id: id(), note: "Adjusted bedknife, new bearing", status: "done", staff: "Riley Chen", at: hoursAgo(24 * 4) });
+    mower.service.unshift({ id: id(), kind: "repair", note: "Adjusted bedknife, new bearing", costCents: 4200, hours: 790, workOrderNumber: done.number, staff: "Riley Chen", at: hoursAgo(24 * 4) });
+    // Today's groups already out took carts 10 and up when the tee sheet was made.
+    for (const b of bookings) if (b.status === "teed_off") teedOffAt.set(b.id, teeTimes.get(b.teeTimeId)!.startsAt);
+  }
+  const OPEN_ORDERS: WorkOrderStatus[] = ["open", "in_progress", "on_hold"];
+  function assetView(a: DemoAsset): Asset {
+    const { baseRounds, lastServiceHours, createdAt, service: _, ...rest } = a;
+    const since = a.lastServiceAt ?? createdAt;
+    const rounds =
+      baseRounds +
+      bookings.filter((b) => played(b.status) && b.cartNumbers.includes(a.number) && (teedOffAt.get(b.id) ?? teeTimes.get(b.teeTimeId)!.startsAt) >= since && (teedOffAt.get(b.id) ?? teeTimes.get(b.teeTimeId)!.startsAt) <= new Date().toISOString()).length;
+    const sinceService = a.kind === "cart" ? rounds : Math.max(0, Math.round(((a.hours ?? 0) - (lastServiceHours ?? 0)) * 10) / 10);
+    const outOn =
+      a.kind === "cart"
+        ? bookings.find((b) => b.status === "teed_off" && b.cartNumbers.includes(a.number) && !cartsInAt.has(b.id) && Date.parse(teedOffAt.get(b.id) ?? "0") > Date.now() - 6 * 3_600_000)
+        : undefined;
+    return {
+      ...rest,
+      sinceService,
+      serviceDue: a.status !== "retired" && !!a.serviceEvery && sinceService >= a.serviceEvery,
+      openWorkOrders: workOrders.filter((w) => w.assetId === a.id && OPEN_ORDERS.includes(w.status)).length,
+      out: outOn ? { bookingId: outOn.id, name: outOn.customerName, teedOffAt: teedOffAt.get(outOn.id)! } : null,
+    };
+  }
+  const assetById = (assetId: string) => {
+    seedFleet();
+    const a = fleet.find((x) => x.id === assetId);
+    if (!a) throw new ApiError(404, "not_found", "Cart or equipment not found");
+    return a;
+  };
+  const byNumber = (a: Asset, b: Asset) => a.kind.localeCompare(b.kind) || a.number.localeCompare(b.number, undefined, { numeric: true });
+  function orderView(w: DemoOrder): WorkOrderDetail {
+    const { assetId, assignedId, ...rest } = w;
+    const a = assetId ? fleet.find((x) => x.id === assetId) : undefined;
+    const person = assignedId ? accounts.find((x) => x.id === assignedId) : undefined;
+    return {
+      ...rest,
+      notes: [...w.notes],
+      asset: a ? { id: a.id, kind: a.kind, number: a.number } : null,
+      assignedTo: person ? { id: person.id, name: person.name } : null,
+      overdue: !!w.dueDate && w.dueDate < todayIn(riverBend.timeZone) && OPEN_ORDERS.includes(w.status),
+    };
+  }
+  const orderById = (orderId: string) => {
+    seedFleet();
+    const w = workOrders.find((x) => x.id === orderId);
+    if (!w) throw new ApiError(404, "not_found", "Work order not found");
+    return w;
+  };
+  const PRIORITY_RANK = { urgent: 0, high: 1, normal: 2, low: 3 } as const;
+  function assetDetail(a: DemoAsset): AssetDetail {
+    return {
+      ...assetView(a),
+      service: [...a.service],
+      workOrders: workOrders.filter((w) => w.assetId === a.id).map(orderView).sort((x, y) => y.updatedAt.localeCompare(x.updatedAt)).slice(0, 20),
+    };
+  }
+  function checkCarts(b: DemoBooking, carts: string[]) {
+    seedFleet();
+    const fresh = carts.filter((c) => !b.cartNumbers.includes(c));
+    const fleetCarts = fleet.filter((a) => a.kind === "cart");
+    if (!fresh.length || !fleetCarts.length) return;
+    const unknown = fresh.filter((n) => !fleetCarts.some((a) => a.number === n));
+    if (unknown.length) throw conflict("unknown_cart", `Cart ${unknown.join(", ")} isn't in the fleet. Check the number, or add it under Carts & maintenance`);
+    const down = fresh.map((n) => fleetCarts.find((a) => a.number === n)!).filter((a) => a.status !== "in_service");
+    if (down.length)
+      throw conflict("cart_out_of_service", down.map((c) => `Cart ${c.number} is ${c.status === "retired" ? "retired" : `out of service${c.statusNote ? ` (${c.statusNote})` : ""}`}`).join(". "));
+  }
+
+  // Golfer messaging through the simulator, the same rules as the server's.
+  type DemoRecipient = { golferId: string | null; name: string; email: string | null; phone: string | null; emailOptOut: boolean; smsOptOut: boolean; teeTime?: string; date?: string };
+  const campaigns: (CampaignDetail & { sentById: string | null })[] = [];
+  const messageSettings: MessageSettings = { fromName: riverBend.name, replyTo: null, signature: "See you on the course,\nRiver Bend Golf Club pro shop", provider: "simulator" };
+  const usableEmail = (e: string | null) => (e && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) && !e.endsWith(".invalid") ? e : null);
+  const usablePhone = (p: string | null) => {
+    const d = (p ?? "").replace(/\D/g, "");
+    return d.length === 10 ? `+1${d}` : d.length === 11 && d.startsWith("1") ? `+${d}` : null;
+  };
+  const fromGolfer = (g: DemoGolfer | undefined, name: string, phone: string | null): DemoRecipient => ({
+    golferId: g?.id ?? null, name: g?.name ?? name, email: g?.email ?? null, phone: g?.phone ?? phone, emailOptOut: !!g?.emailOptOut, smsOptOut: !!g?.smsOptOut,
+  });
+  function resolveAudience(audience: MessageAudience): { label: string; kind: MessageKind; recipients: DemoRecipient[] } {
+    const longDay = (iso: string) => new Date(iso).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: riverBend.timeZone });
+    if (audience.type === "date" || audience.type === "bookings") {
+      seedEvents();
+      const picked = bookings
+        .filter((b) => {
+          const t = teeTimes.get(b.teeTimeId)!;
+          if (audience.type === "bookings") return audience.bookingIds.includes(b.id);
+          return t.date === audience.date && (b.status === "confirmed" || b.status === "checked_in") && (!audience.from || t.localTime >= audience.from) && (!audience.to || t.localTime <= audience.to);
+        })
+        .sort((x, y) => teeTimes.get(x.teeTimeId)!.startsAt.localeCompare(teeTimes.get(y.teeTimeId)!.startsAt));
+      const seen = new Set<string>();
+      const recipients = picked
+        .filter((b) => !seen.has(b.golferId ?? b.customerName) && seen.add(b.golferId ?? b.customerName))
+        .map((b) => {
+          const t = teeTimes.get(b.teeTimeId)!;
+          return { ...fromGolfer(golfers.find((g) => g.id === b.golferId), b.customerName, b.customerPhone ?? null), teeTime: formatTime(t.localTime), date: longDay(t.startsAt) };
+        });
+      if (audience.type === "bookings") return { label: `${picked.length} ${picked.length === 1 ? "group" : "groups"} on the tee sheet`, kind: "operational", recipients };
+      const day = longDay(`${audience.date}T12:00:00Z`);
+      return { label: audience.from || audience.to ? `Booked ${day}, ${audience.from ?? "first tee time"} to ${audience.to ?? "last"}` : `Everyone booked ${day}`, kind: "operational", recipients };
+    }
+    if (audience.type === "event") {
+      seedEvents();
+      const ev = events.find((e) => e.id === audience.eventId);
+      if (!ev) throw new ApiError(404, "not_found", "League or outing not found");
+      return {
+        label: `Players in ${ev.name}`,
+        kind: "operational",
+        recipients: ev.players.map((p) => {
+          const g = golfers.find((x) => x.id === p.golferId);
+          return { ...fromGolfer(g, p.name, p.phone), email: p.email ?? g?.email ?? null };
+        }),
+      };
+    }
+    if (audience.type === "golfers") return { label: "All golfers with an account", kind: "marketing", recipients: golfers.map((g) => fromGolfer(g, g.name, null)) };
+    if (audience.type === "house_accounts")
+      return {
+        label: "House account holders",
+        kind: "marketing",
+        recipients: houseAccounts.filter((a) => a.status === "active").map((a) => ({ ...fromGolfer(golfers.find((g) => g.id === a.golferId), "Golfer", null), ...(a.billingEmail ? { email: a.billingEmail } : {}) })),
+      };
+    const list = golfers.filter((g) => audience.golferIds.includes(g.id));
+    if (!list.length) throw new ApiError(404, "not_found", "Golfer account not found");
+    return { label: list.length === 1 ? list[0].name : `${list.length} golfers`, kind: "operational", recipients: list.map((g) => fromGolfer(g, g.name, null)) };
+  }
+  function addressFor(r: DemoRecipient, channel: MessageChannel, kind: MessageKind): { to: string } | { skip: string } {
+    const to = channel === "email" ? usableEmail(r.email) : usablePhone(r.phone);
+    if (!to) return { skip: channel === "email" ? "No email address" : "No mobile number" };
+    if (kind === "marketing" && (channel === "email" ? r.emailOptOut : r.smsOptOut)) return { skip: channel === "email" ? "Opted out of email" : "Opted out of texts" };
+    return { to };
+  }
+  const fill = (template: string, r: DemoRecipient) =>
+    template
+      .replace(/\{first_name\}/g, r.name.split(/\s+/)[0] ?? r.name)
+      .replace(/\{name\}/g, r.name)
+      .replace(/\{tee_time\}/g, r.teeTime ?? "your tee time")
+      .replace(/\{date\}/g, r.date ?? "")
+      .replace(/\{course\}/g, riverBend.name);
+  function deliver(kind: MessageKind, label: string, channels: MessageChannel[], subject: string | null, body: string, recipients: DemoRecipient[]): CampaignDetail {
+    const at = new Date().toISOString();
+    const messages: SentMessage[] = [];
+    for (const r of recipients)
+      for (const channel of channels) {
+        const address = addressFor(r, channel, kind);
+        let text = fill(body, r);
+        if (channel === "email" && messageSettings.signature) text += `\n\n${messageSettings.signature}`;
+        messages.push({
+          id: id(), golferId: r.golferId, name: r.name, channel, to: "to" in address ? address.to : null, subject: channel === "email" ? fill(subject ?? riverBend.name, r) : null,
+          body: text, status: "to" in address ? "sent" : "skipped", reason: "skip" in address ? address.skip : null, provider: "simulator", at,
+        });
+      }
+    messages.sort((a, b) => a.name.localeCompare(b.name) || a.channel.localeCompare(b.channel));
+    const c = {
+      id: id(), kind, audienceLabel: label, channels, subject, body, sentBy: account()?.name ?? null, sentById: account()?.id ?? null, sentAt: at,
+      golfers: new Set(messages.map((m) => m.golferId ?? m.name)).size, sent: messages.filter((m) => m.status === "sent").length,
+      skipped: messages.filter((m) => m.status === "skipped").length, failed: 0, messages,
+    };
+    campaigns.unshift(c);
+    return c;
+  }
+  const managerAudience = (a: MessageAudience) => (a.type === "golfers" || a.type === "house_accounts") && managerOnly();
+
   function assignCarts(b: DemoBooking, carts: string[], signatures: WaiverSignature[]) {
+    checkCarts(b, carts);
     const signed = new Set([...b.signedCarts, ...signatures.map((s) => s.cartNumber)]);
     const missing = carts.filter((c) => !signed.has(c));
     if (missing.length) throw conflict("waiver_required", `The driver of cart ${missing.join(", ")} needs to sign the waiver`);
@@ -1506,13 +1740,15 @@ export function createDemoClient(apiKey: string): Client {
         log("Created a golfer account", g.name);
         return profile(g);
       }),
-    updateGolfer: (golferId: string, patch: { name?: string; email?: string; phone?: string }) =>
+    updateGolfer: (golferId: string, patch: { name?: string; email?: string; phone?: string; emailOptOut?: boolean; smsOptOut?: boolean }) =>
       reply(() => {
         const g = golfer(golferId);
         checkGolfer(patch, g.id);
         if (patch.name) g.name = patch.name.trim();
         if (patch.email) g.email = patch.email.trim().toLowerCase();
         if (patch.phone) g.phone = patch.phone.trim();
+        if (patch.emailOptOut !== undefined) g.emailOptOut = patch.emailOptOut;
+        if (patch.smsOptOut !== undefined) g.smsOptOut = patch.smsOptOut;
         log("Changed a golfer account", g.name);
         return profile(g);
       }),
@@ -1783,6 +2019,204 @@ export function createDemoClient(apiKey: string): Client {
       }),
     report: (from: string, to: string) => reply(() => demoReport(from, to)),
     dayClose: (date: string) => reply(() => demoClose(date)),
+    previewMessage: (audience: MessageAudience, channels: MessageChannel[]) =>
+      reply((): AudiencePreview => {
+        managerAudience(audience);
+        const { label, kind, recipients } = resolveAudience(audience);
+        const count = (c: MessageChannel) => (channels.includes(c) ? recipients.filter((r) => "to" in addressFor(r, c, kind)).length : 0);
+        const reached = recipients.filter((r) => channels.some((c) => "to" in addressFor(r, c, kind))).length;
+        return { label, kind, golfers: recipients.length, email: count("email"), sms: count("sms"), unreachable: recipients.length - reached, sample: recipients.slice(0, 8).map((r) => r.name) };
+      }),
+    sendMessage: (input: { audience: MessageAudience; channels: MessageChannel[]; subject?: string | null; body: string }) =>
+      reply(() => {
+        managerAudience(input.audience);
+        if (!input.channels.length) throw new ApiError(400, "no_channel", "Pick email, text or both");
+        if (input.channels.includes("email") && !input.subject?.trim()) throw new ApiError(400, "subject_required", "Add a subject for the email");
+        const { label, kind, recipients } = resolveAudience(input.audience);
+        if (!recipients.length) throw new ApiError(400, "no_recipients", "Nobody matches. Pick another day or group");
+        log("Sent a message to golfers");
+        return deliver(kind, label, input.channels, input.subject?.trim() || null, input.body.trim(), recipients);
+      }),
+    campaigns: () => reply((): Campaign[] => campaigns.map(({ messages: _, sentById: __, ...c }) => c)),
+    campaign: (campaignId: string) =>
+      reply((): CampaignDetail => {
+        const c = campaigns.find((x) => x.id === campaignId);
+        if (!c) throw new ApiError(404, "not_found", "Message not found");
+        return c;
+      }),
+    golferMessages: (golferId: string) => reply(() => campaigns.flatMap((c) => c.messages.filter((m) => m.golferId === golferId))),
+    messageSettings: () => reply(() => ({ ...messageSettings })),
+    saveMessageSettings: (input: { fromName?: string | null; replyTo?: string | null; signature?: string | null }) =>
+      reply(() => {
+        managerOnly();
+        if (input.replyTo && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.replyTo)) throw new ApiError(400, "invalid_email", "Enter a real reply-to email address");
+        if (input.fromName !== undefined) messageSettings.fromName = input.fromName?.trim() || riverBend.name;
+        if (input.replyTo !== undefined) messageSettings.replyTo = input.replyTo?.trim() || null;
+        if (input.signature !== undefined) messageSettings.signature = input.signature?.trim() || null;
+        log("Changed messaging settings");
+        return { ...messageSettings };
+      }),
+    emailStatement: (statementId: string) =>
+      reply(() => {
+        managerOnly();
+        const a = houseAccounts.find((x) => x.statements.some((st) => st.id === statementId));
+        if (!a) throw new ApiError(404, "not_found", "Statement not found");
+        const st = a.statements.find((x) => x.id === statementId)!;
+        const g = golfers.find((x) => x.id === a.golferId);
+        const month = new Date(`${st.periodStart}T12:00:00Z`).toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+        const body = [`Hi {first_name},`, ``, `Here is your ${riverBend.name} house account statement for ${month}.`, ``, `Amount due: ${money(st.closingCents)} by ${st.dueOn}`, ``, `You can pay at the pro shop by check, cash or card.`].join("\n");
+        const r = { ...fromGolfer(g, "Golfer", null), email: a.billingEmail ?? g?.email ?? null };
+        log("Emailed a statement", r.name);
+        return deliver("statement", `Statement for ${r.name}`, ["email"], `${riverBend.name} statement for ${month}`, body, [r]);
+      }),
+    fleet: (kind?: AssetKind, retired = false) =>
+      reply(() => {
+        seedFleet();
+        return fleet.filter((a) => (!kind || a.kind === kind) && (retired || a.status !== "retired")).map(assetView).sort(byNumber);
+      }),
+    asset: (assetId: string) => reply(() => assetDetail(assetById(assetId))),
+    addAsset: (input: AssetInput & { kind: AssetKind; number: string }) =>
+      reply(() => {
+        managerOnly();
+        seedFleet();
+        if (fleet.some((a) => a.kind === input.kind && a.number === input.number)) throw conflict("asset_exists", input.kind === "cart" ? `There's already a cart ${input.number}` : `There's already equipment called ${input.number}`);
+        const a: DemoAsset = {
+          id: id(), kind: input.kind, number: input.number, model: input.model ?? null, power: input.power ?? null, serial: input.serial ?? null, status: "in_service", statusNote: null,
+          statusChangedAt: new Date().toISOString(), serviceEvery: input.serviceEvery ?? null, hours: input.hours ?? null, lastServiceAt: null, notes: input.notes ?? null,
+          baseRounds: 0, lastServiceHours: input.hours ?? null, createdAt: new Date().toISOString(), service: [],
+        };
+        fleet.push(a);
+        log("Added a cart or machine");
+        return assetView(a);
+      }),
+    addCarts: (input: { from: number; to: number; model?: string | null; power?: AssetPower | null; serviceEvery?: number | null }) =>
+      reply(() => {
+        managerOnly();
+        seedFleet();
+        if (input.to < input.from) throw new ApiError(400, "invalid_range", "The last number has to be at or after the first");
+        if (input.to - input.from >= 200) throw new ApiError(400, "too_many", "Add up to 200 carts at a time");
+        let added = 0;
+        for (let n = input.from; n <= input.to; n++) {
+          if (fleet.some((a) => a.kind === "cart" && a.number === String(n))) continue;
+          added++;
+          fleet.push({
+            id: id(), kind: "cart", number: String(n), model: input.model ?? null, power: input.power ?? null, serial: null, status: "in_service", statusNote: null, statusChangedAt: new Date().toISOString(),
+            serviceEvery: input.serviceEvery ?? null, hours: null, lastServiceAt: null, notes: null, baseRounds: 0, lastServiceHours: null, createdAt: new Date().toISOString(), service: [],
+          });
+        }
+        log("Added carts to the fleet");
+        return { added, carts: fleet.filter((a) => a.kind === "cart" && a.status !== "retired").map(assetView).sort(byNumber) };
+      }),
+    updateAsset: (assetId: string, input: AssetInput & { retired?: boolean }) =>
+      reply(() => {
+        managerOnly();
+        const a = assetById(assetId);
+        if (input.number && input.number !== a.number && fleet.some((x) => x.kind === a.kind && x.number === input.number)) throw conflict("asset_exists", `There's already ${a.kind === "cart" ? "a cart" : "equipment called"} ${input.number}`);
+        const { retired, ...fields } = input;
+        Object.assign(a, Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined)));
+        if (retired !== undefined && retired !== (a.status === "retired")) Object.assign(a, { status: retired ? "retired" : "in_service", statusNote: null, statusChangedAt: new Date().toISOString() });
+        log("Changed a cart or machine");
+        return assetView(a);
+      }),
+    setAssetStatus: (assetId: string, status: "in_service" | "out_of_service", note?: string | null) =>
+      reply(() => {
+        const a = assetById(assetId);
+        if (a.status === "retired") throw conflict("retired", "This one is retired. A manager can bring it back in the fleet settings");
+        if (status === "out_of_service" && !note?.trim()) throw new ApiError(400, "note_required", "Say what's wrong so whoever fixes it knows");
+        Object.assign(a, { status, statusNote: status === "out_of_service" ? note!.trim() : null, statusChangedAt: new Date().toISOString() });
+        log("Changed whether a cart or machine is in service");
+        return assetView(a);
+      }),
+    logService: (assetId: string, input: { kind: "service" | "repair" | "inspection"; note?: string | null; costCents?: number; hours?: number | null }) =>
+      reply(() => {
+        const a = assetById(assetId);
+        if (input.hours != null && a.hours != null && input.hours < a.hours) throw new ApiError(400, "hours_back", `The meter was at ${a.hours} hours. It can't go back`);
+        if (input.hours != null) a.hours = input.hours;
+        a.service.unshift({ id: id(), kind: input.kind, note: input.note?.trim() || null, costCents: input.costCents ?? 0, hours: a.hours, workOrderNumber: null, staff: account()?.name ?? null, at: new Date().toISOString() });
+        if (input.kind === "service") Object.assign(a, { lastServiceAt: new Date().toISOString(), lastServiceHours: a.hours, baseRounds: 0 });
+        log("Logged a service or repair");
+        return assetDetail(a);
+      }),
+    setHours: (assetId: string, hours: number) =>
+      reply(() => {
+        const a = assetById(assetId);
+        if (a.kind !== "equipment") throw new ApiError(400, "not_equipment", "Carts are counted in rounds, not hours");
+        if (a.hours != null && hours < a.hours) throw new ApiError(400, "hours_back", `The meter was at ${a.hours} hours. It can't go back`);
+        a.hours = hours;
+        return assetView(a);
+      }),
+    cartsIn: (bookingId: string) =>
+      reply(() => {
+        seedFleet();
+        const b = find(bookingId);
+        if (b.status !== "teed_off" || !b.cartNumbers.length) throw conflict("no_carts_out", "This group has no carts out");
+        cartsInAt.set(b.id, new Date().toISOString());
+        b.cartsIn = true;
+        log("Marked carts back in", b.customerName);
+        return fleet.filter((a) => a.kind === "cart" && a.status !== "retired").map(assetView).sort(byNumber);
+      }),
+    workOrders: (filter: { status?: "open" | "closed" | "all"; assetId?: string; assignedTo?: string; area?: WorkOrderArea } = {}) =>
+      reply((): WorkOrder[] => {
+        seedFleet();
+        const statuses: WorkOrderStatus[] | null = filter.status === "closed" ? ["done", "cancelled"] : filter.status === "all" ? null : OPEN_ORDERS;
+        const list = workOrders
+          .filter((w) => (!statuses || statuses.includes(w.status)) && (!filter.assetId || w.assetId === filter.assetId) && (!filter.assignedTo || w.assignedId === filter.assignedTo) && (!filter.area || w.area === filter.area))
+          .map(orderView)
+          .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+        if (filter.status !== "closed" && filter.status !== "all")
+          list.sort((a, b) => PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] || Number(b.overdue) - Number(a.overdue) || a.createdAt.localeCompare(b.createdAt));
+        return list.map(({ notes: _, ...w }) => w);
+      }),
+    workOrder: (orderId: string) => reply(() => orderView(orderById(orderId))),
+    createWorkOrder: (input: WorkOrderInput) =>
+      reply(() => {
+        seedFleet();
+        const a = input.assetId ? assetById(input.assetId) : undefined;
+        if (input.outOfService && !a) throw new ApiError(400, "no_asset", "Pick the cart or machine to take out of service");
+        const now = new Date().toISOString();
+        const w: DemoOrder = {
+          id: id(), number: workOrders.length + 1, title: input.title, details: input.details?.trim() || null, area: a ? (a.kind === "cart" ? "carts" : "equipment") : input.area,
+          location: input.location?.trim() || null, priority: input.priority ?? "normal", status: "open", assetId: a?.id ?? null, assignedId: input.assignedTo ?? null,
+          reportedBy: account()?.name ?? null, dueDate: input.dueDate ?? null, costCents: 0, completedAt: null, createdAt: now, updatedAt: now, notes: [],
+        };
+        workOrders.push(w);
+        if (input.outOfService && a!.status === "in_service") Object.assign(a!, { status: "out_of_service", statusNote: input.title, statusChangedAt: now });
+        log("Reported a problem");
+        return orderView(w);
+      }),
+    updateWorkOrder: (orderId: string, input: Partial<Omit<WorkOrderInput, "area" | "assetId" | "outOfService">> & { costCents?: number }) =>
+      reply(() => {
+        const w = orderById(orderId);
+        const { assignedTo, ...rest } = input;
+        Object.assign(w, Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined)), { updatedAt: new Date().toISOString() });
+        if (assignedTo !== undefined) w.assignedId = assignedTo;
+        log("Changed a work order");
+        return orderView(w);
+      }),
+    setWorkOrderStatus: (orderId: string, input: { status: WorkOrderStatus; note?: string | null; backInService?: boolean; costCents?: number }) =>
+      reply(() => {
+        const w = orderById(orderId);
+        if (input.status === "cancelled" && role() !== "manager") throw conflict("manager_only", "Only a manager can cancel a work order");
+        if (input.status === w.status) throw conflict("same_status", "The work order is already at that step");
+        const now = new Date().toISOString();
+        const done = input.status === "done";
+        Object.assign(w, { status: input.status, updatedAt: now, completedAt: done ? now : null, costCents: input.costCents ?? w.costCents });
+        w.notes.push({ id: id(), note: input.note?.trim() || null, status: input.status, staff: account()?.name ?? null, at: now });
+        const a = w.assetId ? fleet.find((x) => x.id === w.assetId) : undefined;
+        if (done && a) {
+          a.service.unshift({ id: id(), kind: "repair", note: input.note?.trim() || w.title, costCents: w.costCents, hours: a.hours, workOrderNumber: w.number, staff: account()?.name ?? null, at: now });
+          if (input.backInService && a.status === "out_of_service") Object.assign(a, { status: "in_service", statusNote: null, statusChangedAt: now });
+        }
+        log("Moved a work order along");
+        return orderView(w);
+      }),
+    addWorkOrderNote: (orderId: string, note: string) =>
+      reply(() => {
+        const w = orderById(orderId);
+        w.notes.push({ id: id(), note: note.trim(), status: null, staff: account()?.name ?? null, at: new Date().toISOString() });
+        w.updatedAt = new Date().toISOString();
+        return orderView(w);
+      }),
     accountingSettings: () => reply(() => (managerOnly(), accountingView())),
     saveAccountingSettings: (input: { format?: AccountingFormat; accounts?: Partial<Record<AccountKey, string>> }) =>
       reply(() => {
@@ -2067,6 +2501,7 @@ export function createDemoClient(apiKey: string): Client {
         if (b.status !== "checked_in") throw conflict("not_checked_in", "Check this group in at the pro shop first");
         assignCarts(b, carts, signatures);
         b.status = "teed_off";
+        teedOffAt.set(b.id, new Date().toISOString());
         log("Sent off the first tee", b.customerName);
         return b;
       }),

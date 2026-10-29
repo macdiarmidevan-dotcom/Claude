@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import type { Client, GolferAccount, GolferProfile, SheetBooking } from "./api";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from "react-native";
+import type { Client, GolferAccount, GolferProfile, SentMessage, SheetBooking } from "./api";
 import { colors, money, statusLabel, type WebPress } from "./theme";
 import { WalletSection } from "./Wallet";
 
@@ -281,6 +281,8 @@ export function GolferDetail({ client, id, onBack, onOpenBooking, isManager = fa
 
       <WalletSection client={client} golferId={g.id} isManager={isManager} />
 
+      <GolferMessages client={client} golfer={g} onChange={setG} />
+
       <Text role="heading" style={styles.h2}>Rounds and bookings</Text>
       {g.history.length === 0 ? (
         <Text style={styles.help}>No bookings yet.</Text>
@@ -310,6 +312,50 @@ export function GolferDetail({ client, id, onBack, onOpenBooking, isManager = fa
         </View>
       )}
     </ScrollView>
+  );
+}
+
+/** Whether the golfer gets marketing email and texts, and what's been sent to them. */
+function GolferMessages({ client, golfer, onChange }: { client: Client; golfer: GolferProfile; onChange: (g: GolferProfile) => void }) {
+  const [list, setList] = useState<SentMessage[]>();
+  const [error, setError] = useState<string>();
+  useEffect(() => {
+    client
+      .golferMessages(golfer.id)
+      .then(setList)
+      .catch(() => setList([]));
+  }, [client, golfer.id]);
+  const set = (patch: { emailOptOut?: boolean; smsOptOut?: boolean }) =>
+    client
+      .updateGolfer(golfer.id, patch)
+      .then(onChange)
+      .catch((e) => setError(e.message));
+  const sent = list?.filter((m) => m.status === "sent").slice(0, 5) ?? [];
+  return (
+    <View style={{ maxWidth: 820, marginTop: 8 }}>
+      <Text role="heading" style={styles.h2}>Messages</Text>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 16, alignItems: "center" }}>
+        <View style={{ flexDirection: "row", gap: 6, alignItems: "center" }}>
+          <Switch value={!golfer.emailOptOut} onValueChange={(v) => set({ emailOptOut: !v })} accessibilityLabel="Gets marketing email" />
+          <Text style={styles.meta}>Marketing email</Text>
+        </View>
+        <View style={{ flexDirection: "row", gap: 6, alignItems: "center" }}>
+          <Switch value={!golfer.smsOptOut} onValueChange={(v) => set({ smsOptOut: !v })} accessibilityLabel="Gets marketing texts" />
+          <Text style={styles.meta}>Marketing texts</Text>
+        </View>
+      </View>
+      <Text style={styles.help}>Messages about their own tee times and statements go either way.</Text>
+      {error && <Text style={styles.error}>{error}</Text>}
+      {sent.map((m) => (
+        <View key={m.id} style={styles.historyRow}>
+          <Text style={[styles.historyCell, { width: 150 }]}>{new Date(m.at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</Text>
+          <Text style={[styles.historyCell, { width: 50 }]}>{m.channel === "email" ? "Email" : "Text"}</Text>
+          <Text numberOfLines={1} style={[styles.historyCell, { flex: 1, minWidth: 160 }]}>
+            {m.subject ?? m.body}
+          </Text>
+        </View>
+      ))}
+    </View>
   );
 }
 
