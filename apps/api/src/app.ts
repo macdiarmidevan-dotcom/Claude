@@ -85,6 +85,7 @@ import {
   updateEvent,
 } from "./events.ts";
 import { ACCOUNT_KEYS, exportJournal, getAccountingSettings, journal, saveAccountingSettings } from "./accounting.ts";
+import { emailStatement, getCampaign, getMessageSettings, golferMessages, listCampaigns, previewAudience, saveMessageSettings, sendMessage } from "./messages.ts";
 import {
   addCarts,
   addWorkOrderNote,
@@ -255,6 +256,9 @@ const ACTIONS: Record<string, string> = {
   "POST /v1/courses/:slug/work-orders": "Reported a problem",
   "PATCH /v1/courses/:slug/work-orders/:id": "Changed a work order",
   "POST /v1/courses/:slug/work-orders/:id/status": "Moved a work order along",
+  "POST /v1/courses/:slug/messages": "Sent a message to golfers",
+  "POST /v1/courses/:slug/statements/:id/email": "Emailed a statement",
+  "PUT /v1/courses/:slug/settings/messaging": "Changed messaging settings",
 };
 
 const player = z.object({
@@ -372,6 +376,8 @@ const golferPatch = z.object({
   name: z.string().trim().min(1).max(200).optional(),
   email: z.string().trim().max(200).optional(),
   phone: z.string().trim().max(40).optional(),
+  emailOptOut: z.boolean().optional(),
+  smsOptOut: z.boolean().optional(),
 });
 const syncBody = z.object({
   source: z.enum(["teeitup", "golfnow", "import"]),
@@ -1347,6 +1353,38 @@ export function buildApp(db: Db, opts: { fetchReport?: FetchReport; paymentsFetc
   app.post("/v1/courses/:slug/work-orders/:id/notes", async (req) => {
     const { note } = z.object({ note: z.string().trim().min(1).max(2000) }).parse(req.body);
     return addWorkOrderNote(db, await courseFor(req), req.staff?.user.id, idParams.parse(req.params).id, note);
+  });
+
+  // Golfer messaging. Anyone can message golfers booked on a day, a league or one golfer;
+  // messages to all golfers or all house account holders, and statements, are for managers.
+  const channelsBody = z.array(z.enum(["email", "sms"])).min(1).max(2);
+  const audience = z.discriminatedUnion("type", [
+    z.object({ type: z.literal("date"), date: dateString, from: hhmm.optional(), to: hhmm.optional() }),
+    z.object({ type: z.literal("event"), eventId: z.uuid() }),
+    z.object({ type: z.literal("golfers") }),
+    z.object({ type: z.literal("house_accounts") }),
+    z.object({ type: z.literal("golfer_list"), golferIds: z.array(z.uuid()).min(1).max(500) }),
+    z.object({ type: z.literal("bookings"), bookingIds: z.array(z.uuid()).min(1).max(500) }),
+  ]);
+  const audienceCourse = (req: FastifyRequest, a: z.infer<typeof audience>) => (a.type === "golfers" || a.type === "house_accounts" ? managedCourseFor(req) : courseFor(req));
+  app.post("/v1/courses/:slug/messages/preview", async (req) => {
+    const body = z.object({ audience, channels: channelsBody }).parse(req.body);
+    return previewAudience(db, await audienceCourse(req, body.audience), body.audience, body.channels);
+  });
+  app.post("/v1/courses/:slug/messages", async (req, reply) => {
+    const body = z.object({ audience, channels: channelsBody, subject: z.string().max(200).nullish(), body: z.string().trim().min(1).max(5000) }).parse(req.body);
+    return reply.status(201).send(await sendMessage(db, await audienceCourse(req, body.audience), req.staff?.user.id, body));
+  });
+  app.get("/v1/courses/:slug/messages", async (req) => listCampaigns(db, await courseFor(req)));
+  app.get("/v1/courses/:slug/messages/:id", async (req) => getCampaign(db, await courseFor(req), idParams.parse(req.params).id));
+  app.get("/v1/courses/:slug/golfers/:id/messages", async (req) => golferMessages(db, await courseFor(req), idParams.parse(req.params).id));
+  app.post("/v1/courses/:slug/statements/:id/email", async (req, reply) =>
+    reply.status(201).send(await emailStatement(db, await managedCourseFor(req), req.staff?.user.id, idParams.parse(req.params).id)),
+  );
+  app.get("/v1/courses/:slug/settings/messaging", async (req) => getMessageSettings(db, await courseFor(req)));
+  app.put("/v1/courses/:slug/settings/messaging", async (req) => {
+    const body = z.object({ fromName: z.string().max(100).nullish(), replyTo: z.string().max(200).nullish(), signature: z.string().max(1000).nullish() }).parse(req.body);
+    return saveMessageSettings(db, await managedCourseFor(req), body);
   });
 
   app.put("/v1/courses/:slug/bookings/:id/carts", async (req) => {

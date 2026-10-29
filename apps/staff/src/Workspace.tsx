@@ -15,10 +15,11 @@ import { AccountsScreen } from "./AccountsScreen";
 import { EventsScreen } from "./EventsScreen";
 import { FoodBarScreen } from "./FoodBarScreen";
 import { FleetScreen } from "./FleetScreen";
+import { MessagesScreen } from "./MessagesScreen";
 import { ReportsScreen } from "./ReportsScreen";
 import { colors, type WebPress } from "./theme";
 
-type Section = "tee-sheet" | "import" | "staff" | "customers" | "events" | "food" | "accounts" | "fleet" | "reports" | "schedule" | "inventory" | "settings";
+type Section = "tee-sheet" | "import" | "staff" | "customers" | "events" | "food" | "accounts" | "fleet" | "messages" | "reports" | "schedule" | "inventory" | "settings";
 
 const SECTIONS: { id: Section; label: string; soon?: string; managers?: boolean }[] = [
   { id: "tee-sheet", label: "Tee sheet" },
@@ -29,6 +30,7 @@ const SECTIONS: { id: Section; label: string; soon?: string; managers?: boolean 
   { id: "food", label: "Food & bar" },
   { id: "accounts", label: "Gift cards & accounts" },
   { id: "fleet", label: "Carts & maintenance" },
+  { id: "messages", label: "Messages" },
   { id: "reports", label: "Reports" },
   { id: "schedule", label: "Staff schedule" },
   { id: "inventory", label: "Pro shop" },
@@ -163,6 +165,11 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
           <>
             <Header title="Carts & maintenance" onOpenMenu={openMenu} />
             <FleetScreen client={client} isManager={isManager} meId={me?.user?.id} />
+          </>
+        ) : section === "messages" ? (
+          <>
+            <Header title="Messages" onOpenMenu={openMenu} />
+            {course && <MessagesScreen client={client} isManager={isManager} timeZone={course.timeZone} />}
           </>
         ) : section === "reports" ? (
           <>

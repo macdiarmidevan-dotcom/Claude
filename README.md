@@ -183,6 +183,18 @@ API: `GET/POST /fleet`, `POST /fleet/carts`, `GET/PATCH /fleet/:id`, `POST /flee
 
 ![The cart board](docs/screenshots/cart-fleet.png)
 
+## Golfer messages
+
+**Messages** sends an email, a text, or both to a group of golfers: everyone booked on a day (optionally between two times), the players in a league or outing, or one golfer. Managers can also message all golfers or all house account holders. `{first_name}`, `{tee_time}`, `{date}` and `{course}` are filled in for each golfer, and emails end with the course signature (**Messages › Settings**, which also sets the from name and reply-to address). Before sending, the screen says how many golfers it reaches by email and by text and how many can't be reached. After sending, **Sent** shows every golfer, the address used, and why anyone was skipped (no email, no mobile number, opted out).
+
+Messages to all golfers or all house account holders count as marketing and leave off golfers who opted out; the switches are on each golfer's page, along with the messages they've been sent. Messages about a golfer's own tee time, and statements, go either way. Managers can email a house account statement from the statement page.
+
+No email or text provider is connected yet, so the app runs in practice mode: every message is recorded exactly as the golfer would get it, but nothing is delivered. Connecting a provider (for example SendGrid or Postmark for email and Twilio for texts) means adding a `MessageSender` in `apps/api/src/messages.ts`.
+
+API: `POST /messages/preview`, `POST /messages`, `GET /messages`, `GET /messages/:id`, `GET /golfers/:id/messages`, `POST /statements/:id/email`, `GET/PUT /settings/messaging`, plus `emailOptOut` and `smsOptOut` on `PATCH /golfers/:id`.
+
+![A sent message](docs/screenshots/messages.png)
+
 ## AI assistant
 
 Managers can ask Claude, ChatGPT or another MCP client about the course: "how many rounds today?", "who still owes?", "is Mike Sullivan booked this week?", "what did we take last week?". Add a custom connector with the address `https://<your server>/v1/courses/<course>/mcp` and the manager key as a Bearer token.
