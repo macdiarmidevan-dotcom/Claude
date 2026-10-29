@@ -110,7 +110,7 @@ Every tool only reads. Changes still go through the staff app.
 
 ![Tee sheet on a laptop](docs/screenshots/tee-sheet-grid.png)
 
-The app has a menu on the left (Tee sheet, Customers, Reports, Staff schedule, Pro shop, Settings). On phones and iPads held upright, the menu folds behind a ☰ button. The tee sheet has one slot per player. Each group is colored by where it is (booked, paid, checked in at the shop, on the course, no-show), and a color key sits above the grid. Each row also shows the time's standard price and what the group owes, with hour dividers and a week strip to move between days.
+The app has a menu on the left (Tee sheet, Golfers, Reports, Staff schedule, Pro shop, Settings). On phones and iPads held upright, the menu folds behind a ☰ button. The tee sheet has one slot per player. Each group is colored by where it is (booked, paid, checked in at the shop, on the course, no-show), and a color key sits above the grid. Each row also shows the time's standard price and what the group owes, with hour dividers and a week strip to move between days.
 
 Accessibility: every row and button has a spoken label for screen readers (for example "7:26am: Tom Reyes, 3 players, booked, not paid, owes $108.00; 1 open"). Keyboard focus is visible. Group colors have at least 4.5:1 contrast with their text, and each state also has its own mark (✓ ⛳ ✕ $), so color is never the only cue. Confirmations happen on the page instead of in pop-up dialogs.
 
@@ -129,6 +129,12 @@ Each row shows the time, filled spots, the groups (✓ checked in at the shop, �
 **Golfer accounts.** The first time a golfer is checked in, the pro shop creates their account with their own phone and email (each can only belong to one golfer). After that, **Check in** asks which golfer it is and staff find them by name, phone or email, so every round lands on the same account. If the golfer booked online before with the same email, that record becomes the account and the earlier bookings count too. **Golfers** in the menu shows each account's rounds played, holes, upcoming bookings, no-shows, payments and full history. A golfer who won't give details can still be checked in without an account. On the tee sheet, tapping a linked golfer's name opens their account. On an account, tapping a round opens the tee sheet at that day with the tee time selected.
 
 ![Golfer account at check-in](docs/screenshots/golfer-check-in.png)
+
+**Staff schedule.** Everyone sees the week's shifts, one row per person, with open shifts nobody has yet at the bottom. Managers add, change and remove shifts (each can have a job and a note), and **Copy last week** fills a new week from the one before, skipping anything that would clash. A person can't be given two shifts that overlap. Anyone signed in with their own account can **clock in and out**; the punch is tied to the shift they're working. Managers see **Timesheets**: scheduled hours against worked hours for each person, with every punch, and can correct a punch (it's marked as edited).
+
+**Shift swaps.** Tap one of your upcoming shifts to ask a coworker to take it, or to trade it for one of theirs. The coworker accepts or declines. A manager then approves or turns it down, and only then does the schedule change. **Manager must approve swaps** is on by default; a manager can turn it off on the Shift swaps tab, and then the swap happens as soon as the coworker accepts. Changing a shift by hand cancels any swap still open on it.
+
+![Staff schedule](docs/screenshots/staff-schedule.png)
 
 **Calendar.** The 📅 button next to Today opens a month calendar to jump the tee sheet to any date.
 
