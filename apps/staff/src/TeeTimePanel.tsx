@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import type { Client, PaymentMethod, SheetBooking, SheetTeeTime, Station, Waiver } from "./api";
+import type { Client, GolferAccount, PaymentMethod, SheetBooking, SheetTeeTime, Station, Waiver } from "./api";
 import { WaiverModal } from "./WaiverModal";
-import { GolferPicker } from "./Golfers";
+import { GolferPicker, useSearch } from "./Golfers";
 import { colors, type WebPress, formatTime, money, paymentMethodLabel, statusColor, statusLabel } from "./theme";
 
 interface Props {
@@ -252,20 +252,23 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, station, onO
           courseHoles={courseHoles}
           // Residency is checked and priced at the pro shop, so the starter doesn't pick a rate.
           showRate={station === "proshop"}
-          onSubmit={(name, players, holes, cart, resident) =>
-            run(() =>
-              client.book({
+          client={client}
+          onSubmit={(name, golfer, players, holes, cart, resident) =>
+            run(async () => {
+              const booking = (await client.book({
                 teeTimeId: teeTime.id,
                 holes,
-                // Walk-ins without an email get a placeholder so the booking can still be made.
-                customer: { name, email: `walkin+${Date.now()}@walkin.local` },
+                // A golfer found in the system books under their account; anyone else gets a
+                // placeholder email so the booking can still be made.
+                customer: golfer ? { name: golfer.name, email: golfer.email, phone: golfer.phone } : { name, email: `walkin+${Date.now()}@walkin.local` },
                 players: Array.from({ length: players }, () => ({
                   residency: resident ? "resident" : "nonresident",
                   ageGroup: "adult",
                 })),
                 addOns: cart ? [{ code: "gas_cart", quantity: players }] : [],
-              }),
-            )
+              })) as { id: string };
+              if (golfer) await client.linkGolfer(booking.id, golfer.id);
+            })
           }
         />
       )}
@@ -384,8 +387,18 @@ function PaymentForm({ booking, onPay, onCancel }: { booking: SheetBooking; onPa
   );
 }
 
-function WalkInForm({ maxPlayers, courseHoles, showRate, onSubmit }: { maxPlayers: number; courseHoles: number; showRate: boolean; onSubmit: (name: string, players: number, holes: number, cart: boolean, resident: boolean) => void }) {
+function WalkInForm(props: {
+  client: Client;
+  maxPlayers: number;
+  courseHoles: number;
+  showRate: boolean;
+  onSubmit: (name: string, golfer: GolferAccount | null, players: number, holes: number, cart: boolean, resident: boolean) => void;
+}) {
+  const { client, maxPlayers, courseHoles, showRate, onSubmit } = props;
   const [name, setName] = useState("");
+  // The golfer account picked from the search, if the walk-in is already in the system.
+  const [golfer, setGolfer] = useState<GolferAccount | null>(null);
+  const { results } = useSearch(client, golfer ? "" : name);
   const [chosenPlayers, setPlayers] = useState(1);
   // Spots can fill while the form is open; never offer more than are left.
   const players = Math.min(chosenPlayers, maxPlayers);
@@ -395,7 +408,47 @@ function WalkInForm({ maxPlayers, courseHoles, showRate, onSubmit }: { maxPlayer
   return (
     <View style={styles.walkIn}>
       <Text style={styles.section}>Add a walk-in</Text>
-      <TextInput style={styles.input} placeholder="Name" value={name} onChangeText={setName} />
+      <TextInput
+        style={[styles.input, golfer && { marginBottom: 4 }]}
+        accessibilityLabel="Golfer's name, phone or email"
+        placeholder="Search golfers by name, phone or email"
+        value={name}
+        onChangeText={(t) => {
+          setName(t);
+          setGolfer(null);
+        }}
+      />
+      {golfer ? (
+        <Text style={[styles.account, { marginBottom: 10 }]}>
+          ✓ {golfer.name} · {golfer.phone} · {golfer.roundsPlayed} {golfer.roundsPlayed === 1 ? "round" : "rounds"}
+        </Text>
+      ) : (
+        results &&
+        name.trim().length >= 2 && (
+          <View style={styles.suggestions} accessibilityLiveRegion="polite">
+            {results.slice(0, 6).map((g) => (
+              <Pressable
+                key={g.id}
+                accessibilityRole="button"
+                accessibilityLabel={`Use ${g.name}, ${g.phone}`}
+                onPress={() => {
+                  setGolfer(g);
+                  setName(g.name);
+                }}
+                style={({ hovered, focused }: WebPress) => [styles.suggestion, (hovered || focused) && { backgroundColor: colors.primaryLight }]}
+              >
+                <Text style={styles.name}>{g.name}</Text>
+                <Text style={styles.muted}>
+                  {g.phone} · {g.email}
+                </Text>
+              </Pressable>
+            ))}
+            <Text style={[styles.muted, { padding: 8 }]}>
+              {results.length ? "Not them? Keep typing to add the name as a new walk-in." : "No golfer accounts match. The name will be added as a new walk-in."}
+            </Text>
+          </View>
+        )
+      )}
       <Row label="Players">
         {Array.from({ length: maxPlayers }, (_, i) => i + 1).map((n) => (
           <Toggle key={n} label={String(n)} on={players === n} onPress={() => setPlayers(n)} />
@@ -421,8 +474,9 @@ function WalkInForm({ maxPlayers, courseHoles, showRate, onSubmit }: { maxPlayer
         primary
         onPress={() => {
           if (!name.trim()) return;
-          onSubmit(name.trim(), players, holes, cart, showRate && resident);
+          onSubmit(name.trim(), golfer, players, holes, cart, showRate && resident);
           setName("");
+          setGolfer(null);
         }}
       />
     </View>
@@ -505,6 +559,8 @@ const styles = StyleSheet.create({
   actionText: { fontSize: 14, fontWeight: "600", color: colors.text },
   chip: { borderWidth: 1, borderColor: colors.primary, borderRadius: 3, paddingHorizontal: 12, paddingVertical: 8, marginRight: 6 },
   walkIn: { marginTop: 4 },
+  suggestions: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, marginTop: -6, marginBottom: 10, backgroundColor: colors.card },
+  suggestion: { paddingHorizontal: 10, paddingVertical: 6, borderBottomWidth: 1, borderColor: colors.border },
   carts: { color: colors.primaryText, fontWeight: "700", fontSize: 13, marginTop: 4 },
   payment: { fontWeight: "700", fontSize: 13, marginTop: 4 },
   warning: { color: colors.warn, fontSize: 13, marginTop: 4 },

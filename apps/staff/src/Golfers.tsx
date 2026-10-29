@@ -8,7 +8,7 @@ import { colors, money, statusLabel, type WebPress } from "./theme";
 // rounds land on the same account.
 
 /** Waits a moment after typing stops, so each keystroke isn't its own search. */
-function useSearch(client: Client, q: string) {
+export function useSearch(client: Client, q: string) {
   const [results, setResults] = useState<GolferAccount[]>();
   const [error, setError] = useState<string>();
   useEffect(() => {
