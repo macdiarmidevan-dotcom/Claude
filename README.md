@@ -36,7 +36,9 @@ Every `/v1` request needs `Authorization: Bearer <key>` with a staff (`sk_`) key
 | `POST /v1/courses/:slug/quotes` | Price a group without booking |
 | `POST /v1/courses/:slug/bookings` | Add a walk-in or phone booking |
 | `GET /v1/courses/:slug/bookings/:id` | One booking with its price lines |
-| `POST /v1/courses/:slug/bookings/:id/check-in` | Check the group in, optionally with `{ "cartNumbers": ["12"] }` |
+| `POST /v1/courses/:slug/bookings/:id/payments` | Record a payment: `{ "amountCents": 2900, "method": "cash" }` |
+| `POST /v1/courses/:slug/bookings/:id/check-in` | Pro shop check-in. The group must be paid; pass `{ "payment": { "method": "card" } }` to take the balance in the same step |
+| `POST /v1/courses/:slug/bookings/:id/tee-off` | Starter check-in at the first tee, optionally with `{ "cartNumbers": ["12"] }`. Only after the pro shop has checked the group in |
 | `PUT /v1/courses/:slug/bookings/:id/carts` | Change cart numbers |
 | `POST /v1/courses/:slug/bookings/:id/move` | Move the group to another tee time with room |
 | `POST /v1/courses/:slug/bookings/:id/no-show` | Mark a no-show |
@@ -63,6 +65,8 @@ POST /v1/courses/river-bend/bookings
 
 ## Staff app
 
-The starter opens the day's tee sheet on an iPad. Each row shows the time, filled spots, and the groups with check-in status and cart numbers. Tapping a time opens a panel to check a group in and assign carts, mark no-shows, move a group to another time, cancel, add a walk-in, or block the time with a note. On an iPad in landscape or a desktop the panel sits beside the sheet; on a phone it slides up. The sheet refreshes every 5 seconds, so changes from the pro shop show up on the starter's iPad.
+Each device is set to **Pro shop** or **Starter** (switchable in the top bar). Check-in has two steps: the pro shop takes payment and checks the group in, then the starter checks them in at the tee box and assigns carts. The starter can't send off a group the pro shop hasn't checked in.
+
+Each row shows the time, filled spots, the groups (✓ checked in at the shop, ⛳ on the course, ✕ no-show), cart numbers, and whether the time is paid or what's owed. Tapping a time opens a panel to take payment and check in, send a group off with carts, mark no-shows, move a group to another time, cancel, add a walk-in, or block the time with a note. On an iPad in landscape or a desktop the panel sits beside the sheet; on a phone it slides up. The sheet refreshes every 5 seconds, so changes from the pro shop show up on the starter's iPad.
 
 ![Staff tee sheet on iPad](docs/screenshots/staff-ipad.png)

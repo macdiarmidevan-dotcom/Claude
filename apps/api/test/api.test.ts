@@ -121,7 +121,7 @@ describe("booking", () => {
       method: "POST",
       url: `/v1/courses/river-bend/bookings/${id}/check-in`,
       headers: auth(secretKey),
-      payload: { cartNumbers: ["12"] },
+      payload: { cartNumbers: ["12"], payment: { method: "card" } },
     });
     expect(checkIn.json()).toMatchObject({ status: "checked_in", cartNumbers: ["12"] });
 
@@ -175,12 +175,51 @@ describe("booking", () => {
     expect(res.json().error.code).toBe("tee_time_blocked");
   });
 
-  it("checks golfers in and won't check in a cancelled booking", async () => {
+  it("shows whether a group has paid", async () => {
     const teeTimeId = await teeTimeAt("14:06");
+    const { id, totalCents, payment } = (await book(secretKey, { teeTimeId, holes: 9, customer: golfer, players: [{}, {}] })).json();
+    expect(totalCents).toBe(5800);
+    expect(payment).toEqual({ status: "unpaid", paidCents: 0, balanceCents: 5800, methods: [] });
+
+    const pay = (amountCents: number, method: string) =>
+      app.inject({
+        method: "POST",
+        url: `/v1/courses/river-bend/bookings/${id}/payments`,
+        headers: auth(secretKey),
+        payload: { amountCents, method },
+      });
+    expect((await pay(2900, "cash")).json().payment).toMatchObject({ status: "partial", balanceCents: 2900 });
+    expect((await pay(5000, "card")).json().error.code).toBe("overpayment");
+    expect((await pay(2900, "card")).json().payment).toEqual({
+      status: "paid",
+      paidCents: 5800,
+      balanceCents: 0,
+      methods: expect.arrayContaining(["cash", "card"]),
+    });
+
+    const sheet = await app.inject({ url: `/v1/courses/river-bend/tee-sheet?date=${date}`, headers: auth(secretKey) });
+    const row = sheet.json().teeTimes.find((t: { id: string }) => t.id === teeTimeId);
+    expect(row.bookings[0].payment.status).toBe("paid");
+  });
+
+  it("checks in at the pro shop (with payment) before the starter sends the group off", async () => {
+    const teeTimeId = await teeTimeAt("14:14");
     const { id } = (await book(secretKey, { teeTimeId, holes: 9, customer: golfer, players: [{}] })).json();
-    const post = (action: string) =>
-      app.inject({ method: "POST", url: `/v1/courses/river-bend/bookings/${id}/${action}`, headers: auth(secretKey) });
-    expect((await post("check-in")).json().status).toBe("checked_in");
+    const post = (action: string, payload?: object) =>
+      app.inject({ method: "POST", url: `/v1/courses/river-bend/bookings/${id}/${action}`, headers: auth(secretKey), payload });
+
+    // The starter can't send off a group the pro shop hasn't checked in.
+    expect((await post("tee-off")).json().error.code).toBe("not_checked_in");
+    // The pro shop can't check in a group that still owes money...
+    expect((await post("check-in")).json().error.code).toBe("payment_required");
+    // ...so it takes the balance as part of check-in.
+    const checkedIn = (await post("check-in", { payment: { method: "card" } })).json();
+    expect(checkedIn).toMatchObject({ status: "checked_in", payment: { status: "paid", methods: ["card"] } });
+    expect(checkedIn.checkedInAt).toBeTruthy();
+
+    const off = (await post("tee-off", { cartNumbers: ["7"] })).json();
+    expect(off).toMatchObject({ status: "teed_off", cartNumbers: ["7"] });
+    expect(off.teedOffAt).toBeTruthy();
     expect((await post("cancel")).statusCode).toBe(409);
   });
 

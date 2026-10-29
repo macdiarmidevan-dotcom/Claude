@@ -16,7 +16,8 @@ export default function App() {
 
   useEffect(() => {
     AsyncStorage.getItem(SETTINGS_KEY)
-      .then((raw) => raw && setSettings(JSON.parse(raw)))
+      // Devices set up before stations existed default to the starter.
+      .then((raw) => raw && setSettings({ station: "starter", ...JSON.parse(raw) }))
       .catch(() => undefined)
       .finally(() => setLoaded(true));
   }, []);
@@ -40,7 +41,7 @@ export default function App() {
           <ActivityIndicator color="#fff" />
         </View>
       ) : settings ? (
-        <TeeSheetScreen settings={settings} onSignOut={signOut} />
+        <TeeSheetScreen settings={settings} onChangeSettings={save} onSignOut={signOut} />
       ) : (
         <SetupScreen initial={lastSettings} onSave={save} />
       )}

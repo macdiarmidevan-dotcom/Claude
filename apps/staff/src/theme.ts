@@ -16,7 +16,8 @@ export const colors = {
 
 export const statusLabel: Record<string, string> = {
   confirmed: "Booked",
-  checked_in: "Checked in",
+  checked_in: "Checked in at shop",
+  teed_off: "On the course",
   no_show: "No-show",
   cancelled: "Cancelled",
 };
@@ -24,6 +25,7 @@ export const statusLabel: Record<string, string> = {
 export const statusColor: Record<string, string> = {
   confirmed: colors.confirmed,
   checked_in: colors.checkedIn,
+  teed_off: colors.green,
   no_show: colors.noShow,
   cancelled: colors.muted,
 };
@@ -35,3 +37,12 @@ export const formatTime = (hhmm: string) => {
 };
 
 export const money = (cents: number) => `$${(cents / 100).toFixed(2)}`;
+
+export const paymentMethodLabel: Record<string, string> = {
+  card: "card",
+  cash: "cash",
+  prepaid: "prepaid online",
+  punch_card: "punch card",
+  gift_card: "gift card",
+  comp: "comp",
+};

@@ -1,9 +1,13 @@
 // Typed client for the golf API. Staff use a secret (sk_) key for their course.
 
+export type Station = "proshop" | "starter";
+
 export interface Settings {
   apiUrl: string;
   courseSlug: string;
   apiKey: string;
+  /** Which job this device does: the pro shop takes payment and checks in, the starter sends groups off. */
+  station: Station;
 }
 
 export interface Course {
@@ -14,7 +18,15 @@ export interface Course {
   addOns: { code: string; name: string; priceCents: number }[];
 }
 
-export type BookingStatus = "confirmed" | "checked_in" | "cancelled" | "no_show";
+export type BookingStatus = "confirmed" | "checked_in" | "teed_off" | "cancelled" | "no_show";
+export type PaymentMethod = "card" | "cash" | "prepaid" | "punch_card" | "gift_card" | "comp";
+
+export interface PaymentSummary {
+  status: "paid" | "partial" | "unpaid";
+  paidCents: number;
+  balanceCents: number;
+  methods: PaymentMethod[];
+}
 
 export interface SheetBooking {
   id: string;
@@ -27,6 +39,7 @@ export interface SheetBooking {
   source: string;
   totalCents: number;
   cartNumbers: string[];
+  payment: PaymentSummary;
 }
 
 export interface SheetTeeTime {
@@ -58,7 +71,7 @@ export class ApiError extends Error {
   }
 }
 
-export function createClient(settings: Settings) {
+export function createClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "apiKey">) {
   const base = `${settings.apiUrl.replace(/\/$/, "")}/v1/courses/${encodeURIComponent(settings.courseSlug)}`;
 
   async function request<T>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {
@@ -83,8 +96,10 @@ export function createClient(settings: Settings) {
     setTeeTime: (id: string, patch: { status?: "open" | "blocked"; note?: string | null }) =>
       request(`/tee-times/${id}`, { method: "PATCH", body: patch }),
     book: (walkIn: WalkIn) => request(`/bookings`, { method: "POST", body: { ...walkIn, source: "staff" } }),
-    checkIn: (id: string, cartNumbers: string[]) =>
-      request(`/bookings/${id}/check-in`, { method: "POST", body: { cartNumbers } }),
+    checkIn: (id: string, method?: PaymentMethod) =>
+      request(`/bookings/${id}/check-in`, { method: "POST", body: method ? { payment: { method } } : {} }),
+    teeOff: (id: string, cartNumbers: string[]) =>
+      request(`/bookings/${id}/tee-off`, { method: "POST", body: { cartNumbers } }),
     setCarts: (id: string, cartNumbers: string[]) =>
       request(`/bookings/${id}/carts`, { method: "PUT", body: { cartNumbers } }),
     noShow: (id: string) => request(`/bookings/${id}/no-show`, { method: "POST" }),
