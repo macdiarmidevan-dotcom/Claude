@@ -465,7 +465,7 @@ function AccountView({ client, id, isManager, onBack }: { client: Client; id: st
       return false;
     }
   }
-  if (statement) return <StatementView client={client} id={statement} onBack={() => setStatement(undefined)} />;
+  if (statement) return <StatementView client={client} id={statement} isManager={isManager} onBack={() => setStatement(undefined)} />;
   if (!a) return error ? <Text role="alert" style={[styles.error, { padding: 16 }]}>{error}</Text> : <ActivityIndicator color={colors.primary} style={{ marginTop: 30 }} />;
   const cents = parseCents(amount) ?? (amount.trim() ? undefined : a.balanceCents > 0 ? a.balanceCents : undefined);
   const pay = (cardPaymentId?: string) =>
@@ -600,9 +600,10 @@ function AccountView({ client, id, isManager, onBack }: { client: Client; id: st
 }
 
 /** One month's statement, laid out to print or save as a PDF from the browser. */
-function StatementView({ client, id, onBack }: { client: Client; id: string; onBack: () => void }) {
+function StatementView({ client, id, isManager, onBack }: { client: Client; id: string; isManager: boolean; onBack: () => void }) {
   const [s, setS] = useState<StatementDetail>();
   const [error, setError] = useState<string>();
+  const [emailed, setEmailed] = useState<string>();
   useEffect(() => {
     client.statement(id).then(setS).catch((e) => setError(e.message));
   }, [client, id]);
@@ -614,7 +615,20 @@ function StatementView({ client, id, onBack }: { client: Client; id: string; onB
           <Text style={styles.link}>‹ {s.account.golfer.name}</Text>
         </Pressable>
         {Platform.OS === "web" && <SmallButton label="Print" onPress={() => window.print()} />}
+        {isManager && (
+          <SmallButton
+            label={emailed ? "Emailed" : "Email to golfer"}
+            onPress={() =>
+              client
+                .emailStatement(s.id)
+                .then((c) => setEmailed(c.messages[0]?.status === "sent" ? `Emailed to ${c.messages[0].to}` : (c.messages[0]?.reason ?? "Not sent")))
+                .catch((e) => setError(e.message))
+            }
+          />
+        )}
       </View>
+      {emailed && <Text style={styles.help}>{emailed}</Text>}
+      {error && <Text style={styles.error}>{error}</Text>}
       <View style={[styles.card, { maxWidth: 720 }]}>
         <Text style={styles.h1}>Statement, {monthName(s.periodStart.slice(0, 7))}</Text>
         <Text style={styles.text}>{s.account.golfer.name}</Text>

@@ -14,6 +14,9 @@ export interface GolferAccount {
   roundsPlayed: number;
   lastPlayed: string | null;
   createdAt: string;
+  /** Left off marketing email or texts. Messages about their own tee times still go. */
+  emailOptOut: boolean;
+  smsOptOut: boolean;
 }
 
 const digits = (phone: string) => phone.replace(/\D/g, "");
@@ -34,6 +37,8 @@ const toAccount = (r: any): GolferAccount => ({
   roundsPlayed: r.rounds_played ?? 0,
   lastPlayed: r.last_played?.toISOString() ?? null,
   createdAt: r.account_created_at.toISOString(),
+  emailOptOut: !!r.email_opt_out,
+  smsOptOut: !!r.sms_opt_out,
 });
 
 function validate(input: { name?: string; email?: string; phone?: string }) {
@@ -193,13 +198,19 @@ export async function linkGolfer(db: Db, course: Course, bookingId: string, golf
 }
 
 /** Fixes a typo in a golfer's name, phone or email. */
-export async function updateGolfer(db: DbClient, course: Course, id: string, patch: { name?: string; email?: string; phone?: string }) {
+export async function updateGolfer(
+  db: DbClient,
+  course: Course,
+  id: string,
+  patch: { name?: string; email?: string; phone?: string; emailOptOut?: boolean; smsOptOut?: boolean },
+) {
   validate(patch);
   await accountRow(db, course, id);
   try {
     await db.query(
-      "UPDATE customers SET name = COALESCE($2, name), email = COALESCE($3, email), phone = COALESCE($4, phone) WHERE id = $1",
-      [id, patch.name?.trim() ?? null, patch.email?.trim().toLowerCase() ?? null, patch.phone?.trim() ?? null],
+      `UPDATE customers SET name = COALESCE($2, name), email = COALESCE($3, email), phone = COALESCE($4, phone),
+         email_opt_out = COALESCE($5, email_opt_out), sms_opt_out = COALESCE($6, sms_opt_out) WHERE id = $1`,
+      [id, patch.name?.trim() ?? null, patch.email?.trim().toLowerCase() ?? null, patch.phone?.trim() ?? null, patch.emailOptOut ?? null, patch.smsOptOut ?? null],
     );
   } catch (err) {
     if ((err as { code?: string }).code === "23505") throw conflict("account_exists", "Another golfer already uses that email or phone number");

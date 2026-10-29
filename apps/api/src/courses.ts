@@ -112,15 +112,33 @@ export function dayRange(course: Course, date: string): { start: DateTime; end: 
  * Returns the tee sheet for a local date, creating that day's tee times from the
  * course's templates the first time the day is opened.
  */
+/**
+ * Where a time on a day's original sheet ends up after that day's weather delays, applied in the
+ * order they were made (see delays.ts).
+ */
+export async function delayShifter(db: DbClient, course: Course, date: string) {
+  const { rows } = await db.query(
+    "SELECT from_at, minutes FROM tee_sheet_delays WHERE course_id = $1 AND date = $2 AND undone_at IS NULL ORDER BY created_at",
+    [course.id, date],
+  );
+  return (startsAt: string) => {
+    let t = DateTime.fromISO(startsAt);
+    for (const d of rows) if (t.toMillis() >= d.from_at.getTime()) t = t.plus({ minutes: d.minutes });
+    return t.toUTC().toISO()!;
+  };
+}
+
 export async function getTeeSheet(db: DbClient, course: Course, date: string): Promise<TeeTime[]> {
   const { start, end } = dayRange(course, date);
   const generated = generateTeeTimes(date, course.timeZone, await getTemplates(db, course.id));
   if (generated.length > 0) {
+    // A delayed day's template times are made where the delay moved them.
+    const shifted = await delayShifter(db, course, date);
     await db.query(
       `INSERT INTO tee_times (course_id, starts_at, max_players)
          SELECT $1, s, m FROM unnest($2::timestamptz[], $3::int[]) AS t(s, m)
        ON CONFLICT (course_id, starts_at) DO NOTHING`,
-      [course.id, generated.map((g) => g.startsAt), generated.map((g) => g.maxPlayers)],
+      [course.id, generated.map((g) => shifted(g.startsAt)), generated.map((g) => g.maxPlayers)],
     );
   }
   const { rows } = await db.query(

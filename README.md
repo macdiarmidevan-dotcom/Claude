@@ -173,6 +173,38 @@ API: `GET/PUT /settings/accounting`, `GET /accounting/journal?from&to` (up to tw
 
 ![The daily journal entry](docs/screenshots/accounting-export.png)
 
+## Carts and maintenance
+
+**Carts & maintenance › Carts** is the cart board: every cart with whether it's free, out on the course (and with which group), or out of service and why. A manager adds the fleet once (**Add carts**, numbers 1 to 60 in one go, with how many rounds between services). From then on the starter can only hand out carts that are in the fleet and in service, picks free carts by tapping their numbers, and marks a group's carts back in when they return (a cart counts as back six hours after tee off anyway). Rounds are counted on each cart from the cart numbers given at the tee, so **Service due** shows up on its own; logging a service restarts the count. Until any carts are added, any cart number is accepted, as before.
+
+**Equipment** lists mowers, utility vehicles and other machines with their hour meter and service interval in hours. **Work orders** is for anything that needs fixing, on a cart, a machine, the course or the clubhouse: anyone on staff can report a problem (optionally taking the cart out of service until it's fixed), assign it, set how urgent it is and when it's due, add notes and move it along. Finishing one on a cart or machine records the repair and cost in its service history and can put it back in service. Only managers cancel a work order.
+
+API: `GET/POST /fleet`, `POST /fleet/carts`, `GET/PATCH /fleet/:id`, `POST /fleet/:id/status`, `POST /fleet/:id/service`, `PUT /fleet/:id/hours`, `POST /bookings/:id/carts-in`, `GET/POST /work-orders`, `GET/PATCH /work-orders/:id`, `POST /work-orders/:id/status`, `POST /work-orders/:id/notes`.
+
+![The cart board](docs/screenshots/cart-fleet.png)
+
+## Golfer messages
+
+**Messages** sends an email, a text, or both to a group of golfers: everyone booked on a day (optionally between two times), the players in a league or outing, or one golfer. Managers can also message all golfers or all house account holders. `{first_name}`, `{tee_time}`, `{date}` and `{course}` are filled in for each golfer, and emails end with the course signature (**Messages › Settings**, which also sets the from name and reply-to address). Before sending, the screen says how many golfers it reaches by email and by text and how many can't be reached. After sending, **Sent** shows every golfer, the address used, and why anyone was skipped (no email, no mobile number, opted out).
+
+Messages to all golfers or all house account holders count as marketing and leave off golfers who opted out; the switches are on each golfer's page, along with the messages they've been sent. Messages about a golfer's own tee time, and statements, go either way. Managers can email a house account statement from the statement page.
+
+No email or text provider is connected yet, so the app runs in practice mode: every message is recorded exactly as the golfer would get it, but nothing is delivered. Connecting a provider (for example SendGrid or Postmark for email and Twilio for texts) means adding a `MessageSender` in `apps/api/src/messages.ts`.
+
+API: `POST /messages/preview`, `POST /messages`, `GET /messages`, `GET /messages/:id`, `GET /golfers/:id/messages`, `POST /statements/:id/email`, `GET/PUT /settings/messaging`, plus `emailOptOut` and `smsOptOut` on `PATCH /golfers/:id`.
+
+![A sent message](docs/screenshots/messages.png)
+
+## Weather and frost delays
+
+**Weather delay…** on the tee sheet (today or a day ahead) is for frost, fog, lightning and other holds. Pick why, the first tee time to push back, and by how long. Every tee time from then on moves later by that much, groups and all, so the gaps between groups stay the same; the form says how many tee times and groups move and what the last tee time becomes. By default the golfers whose times moved get a text and an email with their own new tee time (the wording can be changed before sending, and **Messages › Sent** shows who couldn't be reached). The tee sheet shows a banner for the delay, and the latest delay on a day can be taken back.
+
+The booking system keeps its original times. Template tee times made for a delayed day, and bookings synced from TeeItUp or GolfNow, are moved through the day's delays so they land on the delayed sheet; so push the delay back here, not in the booking system as well.
+
+API: `GET /tee-sheet/delays?date`, `POST /tee-sheet/delays`, `POST /tee-sheet/delays/:id/undo`.
+
+![Pushing the tee sheet back for frost](docs/screenshots/weather-delay.png)
+
 ## AI assistant
 
 Managers can ask Claude, ChatGPT or another MCP client about the course: "how many rounds today?", "who still owes?", "is Mike Sullivan booked this week?", "what did we take last week?". Add a custom connector with the address `https://<your server>/v1/courses/<course>/mcp` and the manager key as a Bearer token.
