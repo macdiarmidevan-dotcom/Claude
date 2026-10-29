@@ -66,9 +66,19 @@ POST /v1/courses/river-bend/bookings
 - **No double-booking.** A booking locks its tee time row for the transaction, so simultaneous requests for the last spots can't overbook.
 - **Rates.** The most specific matching rule wins (residency, age group, time window), and ties go to the lower price. Holidays use weekend rates. 18 holes on a 9-hole course is the 9-hole rate plus the replay rate.
 
-## Tee sheet import
+## Tee sheet sync and import
 
-Golfers keep booking on the course's booking provider (TeeItUp or GolfNow). A manager exports that tee sheet as a CSV file and imports it from **Import tee sheet** in the app. The app first shows what would change, and then applies it.
+Golfers keep booking on the course's booking provider (TeeItUp or GolfNow). Their bookings come in under **Sync tee sheet** in the app, which managers can open.
+
+**Automatic sync.** A manager connects the provider once. The server then pulls the provider's tee sheet on a schedule (every 5 minutes to 1 hour, 10 by default), and also whenever someone presses **Sync now**. Each pull goes through the same import as an uploaded file, so the rules below apply. The screen shows when the last sync ran and what it changed, or why it failed. A failed or empty pull never changes the tee sheet. There are two ways to connect:
+- **Report link.** This is a link to a tee sheet CSV export that the provider publishes or schedules. The link must be https. The server refuses links to private network addresses and redirects, gives up after 20 seconds, and caps the file at 6 MB.
+- **Provider API.** This needs partner API access that the provider grants to the course. The course or facility ID and API key are stored encrypted (AES-256-GCM, using `SYNC_SECRET`) and are never sent back to the app. Until the provider grants access, a sync shows "waiting for provider access" and doesn't pretend to have synced.
+
+Set `SYNC_SECRET` on the server to a long random string before saving provider API details. The sync loop starts with the API server (`src/server.ts`), and running more than one server is safe because each course's sync is claimed before it runs.
+
+![Tee sheet sync](docs/screenshots/tee-sheet-sync.png)
+
+**File import.** A manager can also export the tee sheet as a CSV file and upload it on the same screen. The app first shows what would change, and then applies it.
 
 - **Columns:** headers are matched loosely ("Tee Time", "Time", "Start Time" all work). The file needs a date, a tee time and a golfer name. It also uses players, holes, price, amount paid online, status and confirmation number when they're there.
 - **Re-importing** matches bookings on the provider's confirmation number, so nothing is duplicated:

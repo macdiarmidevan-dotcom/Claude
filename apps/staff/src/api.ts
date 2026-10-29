@@ -94,12 +94,38 @@ export interface ImportResult {
   overbooked: { date: string; time: string; players: number; maxPlayers: number }[];
 }
 
+export type SyncMethod = "report_url" | "provider_api";
+
+export interface SyncConnection {
+  source: ImportSource;
+  method: SyncMethod;
+  reportUrl: string | null;
+  hasCredentials: boolean;
+  enabled: boolean;
+  intervalMinutes: number;
+  lastRunAt: string | null;
+  lastStatus: "ok" | "error" | "waiting" | null;
+  lastMessage: string | null;
+}
+
+export interface SyncSettings {
+  source: ImportSource;
+  method: SyncMethod;
+  reportUrl?: string | null;
+  /** Left out keeps the saved sign-in details; null removes them. */
+  credentials?: Record<string, string> | null;
+  enabled: boolean;
+  intervalMinutes: number;
+}
+
 export interface ImportRun {
   id: string;
   source: ImportSource;
   fileName: string | null;
   dates: string[];
   counts: { created: number; updated: number; cancelled: number; unchanged: number; problems: number };
+  /** Whether someone uploaded a file or the automatic sync brought it in. */
+  via?: "upload" | "sync";
   createdAt: string;
 }
 
@@ -224,6 +250,10 @@ function createHttpClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "ap
     importTeeSheet: (body: { source: ImportSource; csv: string; fileName?: string; dryRun?: boolean }) =>
       request<ImportResult>("/imports", { method: "POST", body }),
     imports: () => request<ImportRun[]>("/imports"),
+    sync: () => request<SyncConnection | null>("/sync"),
+    saveSync: (settings: SyncSettings) => request<SyncConnection>("/sync", { method: "PUT", body: settings }),
+    removeSync: () => request("/sync", { method: "DELETE" }),
+    syncNow: () => request<{ connection: SyncConnection; result?: ImportResult }>("/sync/run", { method: "POST" }),
     teeOff: (id: string, cartNumbers: string[], waivers: WaiverSignature[]) =>
       request(`/bookings/${id}/tee-off`, { method: "POST", body: { cartNumbers, waivers } }),
     setCarts: (id: string, cartNumbers: string[], waivers: WaiverSignature[]) =>

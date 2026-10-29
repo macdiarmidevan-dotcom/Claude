@@ -3,6 +3,7 @@ import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } fr
 import type { Client, ImportResult, ImportRun, ImportSource } from "./api";
 import { colors, formatTime, type WebPress } from "./theme";
 import { dayParts } from "./dates";
+import { SyncCard } from "./SyncCard";
 
 const SOURCES: { id: ImportSource; label: string }[] = [
   { id: "teeitup", label: "TeeItUp" },
@@ -89,9 +90,13 @@ export function ImportScreen({ client }: { client: Client }) {
   return (
     <ScrollView contentContainerStyle={styles.page} keyboardShouldPersistTaps="handled">
       <Text style={styles.lead}>
-        Golfers keep booking on your booking site. Export the tee sheet there and bring it in here, so staff can check
-        groups in. Importing the same file again only applies what changed.
+        Golfers keep booking on your booking site. Their bookings come in here so staff can check groups in, either
+        automatically or by uploading an export. Either way, only what changed is applied.
       </Text>
+
+      <SyncCard client={client} onSynced={loadRuns} />
+
+      <Text role="heading" aria-level={2} style={styles.sectionTitle}>Upload a file</Text>
 
       <Text style={styles.label}>Where the file comes from</Text>
       <View style={styles.choices}>
@@ -186,19 +191,12 @@ export function ImportScreen({ client }: { client: Client }) {
             <Text key={r.id} style={styles.run}>
               {new Date(r.createdAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} ·{" "}
               {SOURCES.find((s) => s.id === r.source)?.label} · {r.counts.created} new, {r.counts.updated} changed, {r.counts.cancelled} cancelled
-              {r.fileName ? ` · ${r.fileName}` : ""}
+              {r.via === "sync" ? " · automatic sync" : r.fileName ? ` · ${r.fileName}` : ""}
             </Text>
           ))}
         </View>
       )}
 
-      <View style={styles.note}>
-        <Text style={styles.noteTitle}>Live sync with TeeItUp</Text>
-        <Text style={styles.help}>
-          Once River Bend has TeeItUp partner API access, new bookings will come in on their own every few minutes, and
-          this file import stays as a backup.
-        </Text>
-      </View>
     </ScrollView>
   );
 }
@@ -260,6 +258,7 @@ function Button({ label, onPress, primary, disabled }: { label: string; onPress:
 
 const styles = StyleSheet.create({
   page: { padding: 24, paddingBottom: 60, maxWidth: 760 },
+  sectionTitle: { fontSize: 18, fontWeight: "700", color: "#1c1c1a", marginBottom: 12 },
   lead: { fontSize: 16, lineHeight: 24, color: colors.text, marginBottom: 20 },
   label: { fontSize: 13, fontWeight: "700", color: colors.muted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 },
   help: { color: colors.muted, fontSize: 14, lineHeight: 21, marginTop: 8 },
@@ -285,6 +284,4 @@ const styles = StyleSheet.create({
   changeText: { flex: 1, fontSize: 14, color: colors.text },
   problem: { fontSize: 14, color: colors.noShow, marginBottom: 4 },
   run: { fontSize: 14, color: colors.text, marginBottom: 6 },
-  note: { marginTop: 28, padding: 16, backgroundColor: colors.greenLight, borderRadius: 10 },
-  noteTitle: { fontWeight: "700", color: colors.greenText, fontSize: 15 },
 });

@@ -7,6 +7,7 @@ import { lookupApiKey, type ApiKeyContext } from "./keys.ts";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { buildMcpServer } from "./mcp.ts";
 import { importTeeSheet, listImports } from "./imports.ts";
+import { deleteSync, getSync, runSync, saveSync, type FetchReport } from "./sync.ts";
 import { createGolfer, getGolfer, linkGolfer, searchGolfers, updateGolfer } from "./golfers.ts";
 import {
   changeOwnPassword,
@@ -60,6 +61,9 @@ const ACTIONS: Record<string, string> = {
   "POST /v1/courses/:slug/imports": "Imported the tee sheet",
   "POST /v1/courses/:slug/staff": "Added a staff account",
   "POST /v1/courses/:slug/golfers": "Created a golfer account",
+  "PUT /v1/courses/:slug/sync": "Changed tee sheet sync",
+  "DELETE /v1/courses/:slug/sync": "Turned off tee sheet sync",
+  "POST /v1/courses/:slug/sync/run": "Synced the tee sheet",
   "PATCH /v1/courses/:slug/golfers/:id": "Changed a golfer account",
   "PUT /v1/courses/:slug/bookings/:id/golfer": "Linked a golfer account",
   "PATCH /v1/courses/:slug/staff/:id": "Changed a staff account",
@@ -146,12 +150,20 @@ const golferPatch = z.object({
   email: z.string().trim().max(200).optional(),
   phone: z.string().trim().max(40).optional(),
 });
+const syncBody = z.object({
+  source: z.enum(["teeitup", "golfnow", "import"]),
+  method: z.enum(["report_url", "provider_api"]),
+  reportUrl: z.string().trim().max(2000).nullish(),
+  credentials: z.record(z.string().max(100), z.string().max(2000)).nullish(),
+  enabled: z.boolean().default(true),
+  intervalMinutes: z.number().int().min(5).max(1440).default(10),
+});
 const passwordBody = z.object({ current: z.string().max(200), next: z.string().max(200) });
 const paymentBody = z.object({ amountCents: z.number().int().positive(), method: paymentMethod });
 const idParams = z.object({ slug: z.string(), id: z.uuid() });
 const slugParams = z.object({ slug: z.string() });
 
-export function buildApp(db: Db): FastifyInstance {
+export function buildApp(db: Db, opts: { fetchReport?: FetchReport } = {}): FastifyInstance {
   const app = Fastify({ logger: process.env.NODE_ENV !== "test" });
 
   // The staff web app calls the API from the browser. Auth is by API key, not cookies,
@@ -299,6 +311,15 @@ export function buildApp(db: Db): FastifyInstance {
     const { golferId } = z.object({ golferId: z.uuid() }).parse(req.body);
     return linkGolfer(db, course, idParams.parse(req.params).id, golferId);
   });
+
+  // Automatic tee sheet sync with the course's booking provider. Managers only.
+  app.get("/v1/courses/:slug/sync", async (req) => getSync(db, await managedCourseFor(req)));
+  app.put("/v1/courses/:slug/sync", async (req) => saveSync(db, await managedCourseFor(req), syncBody.parse(req.body)));
+  app.delete("/v1/courses/:slug/sync", async (req) => {
+    await deleteSync(db, await managedCourseFor(req));
+    return { ok: true };
+  });
+  app.post("/v1/courses/:slug/sync/run", async (req) => runSync(db, await managedCourseFor(req), opts.fetchReport));
 
   app.get("/v1/courses/:slug/activity", async (req) => listActivity(db, (await managedCourseFor(req)).id));
 

@@ -47,7 +47,7 @@ interface Existing {
 export async function importTeeSheet(
   db: Db,
   course: Course,
-  input: { source: ImportSource; csv: string; fileName?: string; dryRun?: boolean },
+  input: { source: ImportSource; csv: string; fileName?: string; dryRun?: boolean; via?: "upload" | "sync" },
 ): Promise<ImportResult> {
   const parsed = parseTeeSheetCsv(input.csv);
   const dates = [...new Set(parsed.bookings.map((b) => b.date))].sort();
@@ -120,9 +120,9 @@ export async function importTeeSheet(
       await client.query("ROLLBACK");
     } else {
       await client.query(
-        `INSERT INTO import_runs (course_id, source, file_name, dates, created, updated, cancelled, unchanged, problems)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-        [course.id, input.source, input.fileName ?? null, dates, result.counts.created, result.counts.updated, result.counts.cancelled, result.counts.unchanged, JSON.stringify(result.problems)],
+        `INSERT INTO import_runs (course_id, source, file_name, dates, created, updated, cancelled, unchanged, problems, via)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        [course.id, input.source, input.fileName ?? null, dates, result.counts.created, result.counts.updated, result.counts.cancelled, result.counts.unchanged, JSON.stringify(result.problems), input.via ?? "upload"],
       );
       await client.query("COMMIT");
     }
@@ -258,7 +258,7 @@ async function topUpPrepaid(client: DbClient, bookingId: string, paidCents: numb
 
 export async function listImports(db: DbClient, course: Course) {
   const { rows } = await db.query(
-    `SELECT id, source, file_name, dates, created, updated, cancelled, unchanged, jsonb_array_length(problems) AS problems, created_at
+    `SELECT id, source, file_name, dates, created, updated, cancelled, unchanged, jsonb_array_length(problems) AS problems, created_at, via
        FROM import_runs WHERE course_id = $1 ORDER BY created_at DESC LIMIT 20`,
     [course.id],
   );
@@ -268,6 +268,7 @@ export async function listImports(db: DbClient, course: Course) {
     fileName: r.file_name,
     dates: r.dates,
     counts: { created: r.created, updated: r.updated, cancelled: r.cancelled, unchanged: r.unchanged, problems: r.problems },
+    via: r.via as "upload" | "sync",
     createdAt: r.created_at.toISOString(),
   }));
 }
