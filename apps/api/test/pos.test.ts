@@ -105,4 +105,31 @@ describe("pro shop", () => {
     expect((await call(staff, "GET", "/products")).json()).toHaveLength(1);
     expect((await call(staff, "GET", "/products?all=1")).json()).toHaveLength(2);
   });
+
+  it("rings up items bought at tee time check-in with the round", async () => {
+    await call(manager, "PATCH", `/products/${tokens}`, { active: true });
+    let tuesday = DateTime.now().setZone("America/Chicago").plus({ days: 1 });
+    while (tuesday.weekday !== 2) tuesday = tuesday.plus({ days: 1 });
+    const sheet = (await call(staff, "GET", `/tee-sheet?date=${tuesday.toISODate()}`)).json();
+    const teeTimeId = sheet.teeTimes.find((t: { localTime: string }) => t.localTime === "10:06").id;
+    const booking = (await call(staff, "POST", "/bookings", { teeTimeId, holes: 9, customer: { name: "Walk-in", email: "walkin+9@walkin.local" }, players: [{}], source: "staff" })).json();
+    const before = (await call(staff, "GET", "/products")).json().find((p: { id: string }) => p.id === balls).stock;
+
+    const res = await call(staff, "POST", `/bookings/${booking.id}/check-in`, {
+      payment: { method: "punch_card" },
+      items: { lines: [{ productId: balls, quantity: 1 }, { productId: tokens, quantity: 1 }], paymentMethod: "cash" },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().status).toBe("checked_in");
+    expect((await call(staff, "GET", "/products")).json().find((p: { id: string }) => p.id === balls).stock).toBe(before - 1);
+    const day = (await call(staff, "GET", `/sales?date=${today}`)).json();
+    expect(day.sales[0]).toMatchObject({ paymentMethod: "cash", subtotalCents: 5499 + 800, staff: "Jordan Price" });
+
+    // A bad item stops the whole check-in, so the round isn't half done.
+    const other = (await call(staff, "POST", "/bookings", { teeTimeId, holes: 9, customer: { name: "Walk-in", email: "walkin+10@walkin.local" }, players: [{}], source: "staff" })).json();
+    await call(manager, "PATCH", `/products/${tokens}`, { active: false });
+    const failed = await call(staff, "POST", `/bookings/${other.id}/check-in`, { payment: { method: "cash" }, items: { lines: [{ productId: tokens, quantity: 1 }], paymentMethod: "cash" } });
+    expect(failed.json().error.code).toBe("product_inactive");
+    expect((await call(staff, "GET", `/bookings/${other.id}`)).json().status).toBe("confirmed");
+  });
 });

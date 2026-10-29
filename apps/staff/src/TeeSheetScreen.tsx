@@ -135,6 +135,7 @@ export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu,
       teeTime={selected}
       sheet={sheet}
       courseHoles={course.holes}
+      course={course}
       station={station}
       onOpenGolfer={onOpenGolfer}
       onChanged={load}

@@ -3,6 +3,7 @@ import { NoRateError, quotePlayer, type PlayerProfile } from "@golf/core";
 import { withTransaction, type Db, type DbClient } from "./db.ts";
 import { badRequest, conflict, notFound } from "./errors.ts";
 import { getAddOns, getHolidays, getRates, toTeeTime, type Course, type TeeTime } from "./courses.ts";
+import { insertSale, type SaleLineInput, type SalePaymentMethod } from "./pos.ts";
 
 export type BookingSource = "staff" | "phone" | "teeitup" | "golfnow" | "import";
 
@@ -341,10 +342,20 @@ export async function checkIn(
     payment?: { method: PaymentMethod } | undefined;
     cartNumbers?: string[] | undefined;
     waivers?: WaiverSignature[] | undefined;
+    /** Pro shop items bought at check-in (water, snacks, balls), rung up as one sale. */
+    items?: { lines: SaleLineInput[]; paymentMethod: SalePaymentMethod } | undefined;
+    staffId?: string | undefined;
   },
 ): Promise<Booking> {
   await withTransaction(db, async (client) => {
-    await client.query("SELECT id FROM bookings WHERE id = $1 AND course_id = $2 FOR UPDATE", [id, course.id]);
+    const { rows: locked } = await client.query(
+      `SELECT b.id, CASE WHEN c.account_created_at IS NOT NULL THEN c.id END AS golfer_id
+         FROM bookings b JOIN customers c ON c.id = b.customer_id WHERE b.id = $1 AND b.course_id = $2 FOR UPDATE OF b`,
+      [id, course.id],
+    );
+    if (opts.items?.lines.length) {
+      await insertSale(client, course, opts.staffId, { ...opts.items, golferId: locked[0]?.golfer_id ?? null });
+    }
     const booking = await getBooking(client, course, id);
     if (opts.payment && booking.payment.balanceCents > 0) {
       await addPayment(client, course, id, booking.payment.balanceCents, opts.payment.method);

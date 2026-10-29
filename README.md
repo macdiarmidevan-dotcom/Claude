@@ -150,6 +150,10 @@ Each row shows the time, filled spots, the groups (✓ checked in at the shop, �
 
 ![Reports](docs/screenshots/reports.png)
 
+**Checking out.** **Check in** at the pro shop opens a bill for the group: the round's balance, then anything else they're buying. Staff tap quick picks (drinks and snacks first) or search the pro shop items, change quantities, and the total updates with sales tax on the items. The round and items are paid together; if the round goes on a punch card or comp, staff choose how the items are paid. The items are rung up as a pro shop sale on the golfer's account and come off stock, all in the same step as the check-in, so a bad item can't leave a group half checked in. Walk-ins and guests show their price as staff choose players, holes, walking or riding, and resident or nonresident.
+
+![Check-in with items](docs/screenshots/check-in-with-items.png)
+
 **Calendar.** The 📅 button next to Today opens a month calendar to jump the tee sheet to any date.
 
 **Manager tools.** Signed in as a manager, the app shows a **Waiver** button where the manager can change the wording. Each save is a new version; drivers who already signed stay tied to the version they read.
