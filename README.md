@@ -165,6 +165,14 @@ Menu items are products with **Food or drink** turned on, and optionally **Made 
 
 ![A house account](docs/screenshots/house-account.png)
 
+## Accounting export
+
+**Reports › Send to accounting** (managers) turns the report's dates into one balanced journal entry per day that QuickBooks Online or Xero imports, so the bookkeeper doesn't retype the day's totals. Money taken is debited to where it went (cash and checks to Undeposited Funds, cards to Card Clearing, gift cards and rain checks spent against what's held for golfers, charges to house accounts receivable). Revenue (green fees, carts and extras, pro shop, food and drink, leagues and outings), sales tax, gift cards sold and payments on house accounts are credited. A round paid on a different day than it's played lands in a clearing account, which evens out across days. **Show the entries** previews each day; **Download import file** saves the CSV (`Journal No, Journal Date, Account, Debits, Credits, Description` for QuickBooks, the manual journal layout for Xero) and records who exported which dates. **Account names** sets the course's own names (QuickBooks) or codes (Xero) for each line.
+
+API: `GET/PUT /settings/accounting`, `GET /accounting/journal?from&to` (up to two months), `POST /accounting/export`.
+
+![The daily journal entry](docs/screenshots/accounting-export.png)
+
 ## AI assistant
 
 Managers can ask Claude, ChatGPT or another MCP client about the course: "how many rounds today?", "who still owes?", "is Mike Sullivan booked this week?", "what did we take last week?". Add a custom connector with the address `https://<your server>/v1/courses/<course>/mcp` and the manager key as a Bearer token.

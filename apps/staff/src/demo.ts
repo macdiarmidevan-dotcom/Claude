@@ -10,6 +10,10 @@ import {
   type Role,
   type EmployeeType,
   type DayClose,
+  type AccountingFormat,
+  type AccountingSettings,
+  type AccountKey,
+  type Journal,
   type CardPayment,
   type CardTerminal,
   type PaymentSettings,
@@ -1149,6 +1153,167 @@ export function createDemoClient(apiKey: string): Client {
     providers: PROCESSORS,
   });
 
+  function demoReport(from: string, to: string): Report {
+    managerOnly();
+    const dayOf = (iso: string) => new Intl.DateTimeFormat("en-CA", { timeZone: riverBend.timeZone }).format(new Date(iso));
+    const inRange = (d: string) => d >= from && d <= to;
+    type Day = Report["days"][number];
+    const days = new Map<string, Day>();
+    const at = (date: string) => {
+      if (!days.has(date)) days.set(date, { date, greenFeesCents: 0, cartsAndExtrasCents: 0, proShopCents: 0, foodBevCents: 0, eventsCents: 0, taxCents: 0, collectedCents: 0, rounds: 0 });
+      return days.get(date)!;
+    };
+    const collected: Record<MoneyMethod, number> = { cash: 0, card: 0, gift_card: 0, punch_card: 0, season_pass: 0, loyalty: 0, rain_check: 0, check: 0, house_account: 0, prepaid: 0, comp: 0 };
+    const bySource: Record<string, number> = {};
+    let played = 0;
+    let booked = 0;
+    let noShows = 0;
+    for (const b of bookings) {
+      const t = teeTimes.get(b.teeTimeId)!;
+      if (b.status === "cancelled" || !inRange(t.date)) continue;
+      if (b.status === "no_show") {
+        noShows += b.players;
+        continue;
+      }
+      booked += b.players;
+      bySource[b.source] = (bySource[b.source] ?? 0) + b.players;
+      const d = at(t.date);
+      // The demo doesn't keep booking lines, so carts are worked out from whether the group rides.
+      const carts = b.riding ? Math.min(b.totalCents, b.players * 1300) : 0;
+      d.cartsAndExtrasCents += carts;
+      d.greenFeesCents += b.totalCents - carts;
+      if (b.status === "checked_in" || b.status === "teed_off") {
+        d.rounds += b.players;
+        played += b.players;
+      }
+      // Demo payments are counted on the day of the round.
+      for (const p of b.paid) {
+        d.collectedCents += p.amountCents;
+        collected[p.method] += p.amountCents;
+      }
+    }
+    const kept = sales.filter((x) => inRange(dayOf(x.at)));
+    const categories = new Map<string, { category: string; cents: number; items: number }>();
+    const fbCategories = new Map<string, { category: string; cents: number; items: number }>();
+    for (const sale of kept.filter((x) => x.status === "completed")) {
+      const d = at(dayOf(sale.at));
+      d.proShopCents += sale.subtotalCents;
+      d.taxCents += sale.taxCents;
+      d.collectedCents += sale.totalCents;
+      collected[sale.paymentMethod] += sale.totalCents;
+      for (const l of sale.lines) {
+        const into = l.foodBev ? fbCategories : categories;
+        const c = into.get(l.category) ?? { category: l.category, cents: 0, items: 0 };
+        c.cents += l.totalCents;
+        c.items += l.quantity;
+        into.set(l.category, c);
+        if (l.foodBev) {
+          d.proShopCents -= l.totalCents;
+          d.foodBevCents += l.totalCents;
+        }
+      }
+    }
+    // League and outing payments count on the day they were taken. Comps are money not collected.
+    for (const ev of events)
+      for (const p of ev.payments) {
+        if (!inRange(dayOf(p.at))) continue;
+        const d = at(dayOf(p.at));
+        collected[p.method] += p.amountCents;
+        if (p.method === "comp") continue;
+        d.eventsCents += p.amountCents;
+        d.collectedCents += p.amountCents;
+      }
+    let giftCardsSoldCents = 0;
+    let accountPaymentsCents = 0;
+    for (const h of heldMoney(dayOf, inRange)) {
+      collected[h.method] += h.cents;
+      if (h.method === "comp") {
+        giftCardsSoldCents += h.cents;
+        continue;
+      }
+      at(h.day).collectedCents += h.cents;
+      if (h.what === "gift") giftCardsSoldCents += h.cents;
+      else accountPaymentsCents += h.cents;
+    }
+    const list = [...days.values()].sort((a, b) => a.date.localeCompare(b.date));
+    const sum = (k: keyof Omit<Day, "date">) => list.reduce((t, d) => t + d[k], 0);
+    const spots = [...teeTimes.values()].filter((t) => inRange(t.date) && t.status === "open").reduce((t, x) => t + x.maxPlayers, 0);
+    const worked = punches.filter((p) => p.clockOut && inRange(dayOf(p.clockIn)));
+    return {
+      from,
+      to,
+      revenue: {
+        greenFeesCents: sum("greenFeesCents"),
+        cartsAndExtrasCents: sum("cartsAndExtrasCents"),
+        proShopCents: sum("proShopCents"),
+        foodBevCents: sum("foodBevCents"),
+        eventsCents: sum("eventsCents"),
+        totalCents: sum("greenFeesCents") + sum("cartsAndExtrasCents") + sum("proShopCents") + sum("foodBevCents") + sum("eventsCents"),
+        salesTaxCents: sum("taxCents"),
+        proShopRefundsCents: kept.filter((x) => x.status === "refunded").reduce((t, x) => t + x.totalCents, 0),
+        proShopByCategory: [...categories.values()].sort((a, b) => b.cents - a.cents),
+        foodBevByCategory: [...fbCategories.values()].sort((a, b) => b.cents - a.cents),
+      },
+      collected: { ...collected, totalCents: Object.values(collected).reduce((t, c) => t + c, 0) },
+      other: { giftCardsSoldCents, accountPaymentsCents },
+      rounds: { played, booked, noShows, openSpots: spots, occupancy: spots ? Math.round((booked / spots) * 1000) / 10 : null, bySource },
+      labor: {
+        hours: Math.round(worked.reduce((t, p) => t + (Date.parse(p.clockOut!) - Date.parse(p.clockIn)) / 3_600_000, 0) * 10) / 10,
+        people: new Set(worked.map((p) => p.staffId)).size,
+      },
+      days: list,
+    };
+  }
+
+  const ACCOUNT_DEFAULTS: Record<AccountKey, string> = {
+    cash: "Undeposited Funds", card: "Card Clearing", check: "Undeposited Funds", house_account: "Accounts Receivable - House Accounts",
+    gift_card: "Gift Cards Outstanding", rain_check: "Rain Checks Outstanding", loyalty: "Loyalty Rewards", punch_card: "Prepaid Rounds",
+    season_pass: "Prepaid Rounds", prepaid: "Booking Provider Receivable", comp: "Comps and Promotions", green_fees: "Green Fees",
+    carts_extras: "Cart Rentals and Extras", pro_shop: "Pro Shop Sales", food_bev: "Food and Beverage Sales", events: "League and Outing Revenue",
+    sales_tax: "Sales Tax Payable", clearing: "Tee Sheet Clearing",
+  };
+  const MONEY_LINES: [MoneyMethod, string][] = [
+    ["cash", "Cash taken"], ["card", "Card payments"], ["check", "Checks taken"], ["house_account", "Charged to house accounts"],
+    ["gift_card", "Gift cards spent"], ["rain_check", "Rain checks used"], ["loyalty", "Loyalty points used"], ["punch_card", "Punch card rounds"],
+    ["season_pass", "Season pass rounds"], ["prepaid", "Prepaid online through the booking provider"], ["comp", "Comps"],
+  ];
+  const accounting: { format: AccountingFormat; accounts: Partial<Record<AccountKey, string>>; exports: AccountingSettings["recentExports"] } = { format: "quickbooks", accounts: {}, exports: [] };
+  const accountingView = (): AccountingSettings => ({
+    format: accounting.format,
+    accounts: Object.fromEntries((Object.keys(ACCOUNT_DEFAULTS) as AccountKey[]).map((k) => [k, accounting.accounts[k] || ACCOUNT_DEFAULTS[k]])) as Record<AccountKey, string>,
+    defaults: ACCOUNT_DEFAULTS,
+    recentExports: accounting.exports.slice(0, 5),
+  });
+  function demoJournal(from: string, to: string): Journal {
+    const { accounts } = accountingView();
+    const days: Journal["days"] = [];
+    const dayOf = (iso: string) => new Intl.DateTimeFormat("en-CA", { timeZone: riverBend.timeZone }).format(new Date(iso));
+    for (let d = from; d <= to; d = addDays(d, 1)) {
+      const r = demoReport(d, d);
+      const eventComps = events.flatMap((ev) => ev.payments).filter((p) => p.method === "comp" && dayOf(p.at) === d).reduce((t, p) => t + p.amountCents, 0);
+      const lines: Journal["days"][number]["lines"] = [];
+      const line = (key: AccountKey, description: string, cents: number, side: "debit" | "credit") => {
+        if (!cents) return;
+        const debit = (side === "debit") === cents > 0;
+        lines.push({ key, account: accounts[key], description, debitCents: debit ? Math.abs(cents) : 0, creditCents: debit ? 0 : Math.abs(cents) });
+      };
+      for (const [k, label] of MONEY_LINES) line(k, label, r.collected[k], "debit");
+      line("green_fees", "Green fees", r.revenue.greenFeesCents, "credit");
+      line("carts_extras", "Carts and extras", r.revenue.cartsAndExtrasCents, "credit");
+      line("pro_shop", "Pro shop sales", r.revenue.proShopCents, "credit");
+      line("food_bev", "Food and drink sales", r.revenue.foodBevCents, "credit");
+      line("events", "Leagues and outings", r.revenue.eventsCents + eventComps, "credit");
+      line("sales_tax", "Sales tax collected", r.revenue.salesTaxCents, "credit");
+      line("gift_card", "Gift cards sold", r.other.giftCardsSoldCents, "credit");
+      line("house_account", "Payments on house accounts", r.other.accountPaymentsCents, "credit");
+      const debits = lines.reduce((t, l) => t + l.debitCents, 0);
+      const credits = lines.reduce((t, l) => t + l.creditCents, 0);
+      line("clearing", "Rounds paid on a different day than played", debits - credits, "credit");
+      if (lines.length) days.push({ date: d, lines, totalCents: Math.max(debits, credits) });
+    }
+    return { from, to, format: accounting.format, days };
+  }
+
   const reply = <T>(fn: () => T) => new Promise<T>((resolve, reject) => setTimeout(() => {
     try { resolve(fn()); } catch (e) { reject(e); }
   }, 120));
@@ -1616,119 +1781,48 @@ export function createDemoClient(apiKey: string): Client {
         log("Refunded a sale", sale.golfer?.name);
         return sale;
       }),
-    report: (from: string, to: string) =>
-      reply((): Report => {
-        managerOnly();
-        const dayOf = (iso: string) => new Intl.DateTimeFormat("en-CA", { timeZone: riverBend.timeZone }).format(new Date(iso));
-        const inRange = (d: string) => d >= from && d <= to;
-        type Day = Report["days"][number];
-        const days = new Map<string, Day>();
-        const at = (date: string) => {
-          if (!days.has(date)) days.set(date, { date, greenFeesCents: 0, cartsAndExtrasCents: 0, proShopCents: 0, foodBevCents: 0, eventsCents: 0, taxCents: 0, collectedCents: 0, rounds: 0 });
-          return days.get(date)!;
-        };
-        const collected: Record<MoneyMethod, number> = { cash: 0, card: 0, gift_card: 0, punch_card: 0, season_pass: 0, loyalty: 0, rain_check: 0, check: 0, house_account: 0, prepaid: 0, comp: 0 };
-        const bySource: Record<string, number> = {};
-        let played = 0;
-        let booked = 0;
-        let noShows = 0;
-        for (const b of bookings) {
-          const t = teeTimes.get(b.teeTimeId)!;
-          if (b.status === "cancelled" || !inRange(t.date)) continue;
-          if (b.status === "no_show") {
-            noShows += b.players;
-            continue;
-          }
-          booked += b.players;
-          bySource[b.source] = (bySource[b.source] ?? 0) + b.players;
-          const d = at(t.date);
-          // The demo doesn't keep booking lines, so carts are worked out from whether the group rides.
-          const carts = b.riding ? Math.min(b.totalCents, b.players * 1300) : 0;
-          d.cartsAndExtrasCents += carts;
-          d.greenFeesCents += b.totalCents - carts;
-          if (b.status === "checked_in" || b.status === "teed_off") {
-            d.rounds += b.players;
-            played += b.players;
-          }
-          // Demo payments are counted on the day of the round.
-          for (const p of b.paid) {
-            d.collectedCents += p.amountCents;
-            collected[p.method] += p.amountCents;
-          }
-        }
-        const kept = sales.filter((x) => inRange(dayOf(x.at)));
-        const categories = new Map<string, { category: string; cents: number; items: number }>();
-        const fbCategories = new Map<string, { category: string; cents: number; items: number }>();
-        for (const sale of kept.filter((x) => x.status === "completed")) {
-          const d = at(dayOf(sale.at));
-          d.proShopCents += sale.subtotalCents;
-          d.taxCents += sale.taxCents;
-          d.collectedCents += sale.totalCents;
-          collected[sale.paymentMethod] += sale.totalCents;
-          for (const l of sale.lines) {
-            const into = l.foodBev ? fbCategories : categories;
-            const c = into.get(l.category) ?? { category: l.category, cents: 0, items: 0 };
-            c.cents += l.totalCents;
-            c.items += l.quantity;
-            into.set(l.category, c);
-            if (l.foodBev) {
-              d.proShopCents -= l.totalCents;
-              d.foodBevCents += l.totalCents;
-            }
-          }
-        }
-        // League and outing payments count on the day they were taken. Comps are money not collected.
-        for (const ev of events)
-          for (const p of ev.payments) {
-            if (!inRange(dayOf(p.at))) continue;
-            const d = at(dayOf(p.at));
-            collected[p.method] += p.amountCents;
-            if (p.method === "comp") continue;
-            d.eventsCents += p.amountCents;
-            d.collectedCents += p.amountCents;
-          }
-        let giftCardsSoldCents = 0;
-        let accountPaymentsCents = 0;
-        for (const h of heldMoney(dayOf, inRange)) {
-          collected[h.method] += h.cents;
-          if (h.method === "comp") {
-            giftCardsSoldCents += h.cents;
-            continue;
-          }
-          at(h.day).collectedCents += h.cents;
-          if (h.what === "gift") giftCardsSoldCents += h.cents;
-          else accountPaymentsCents += h.cents;
-        }
-        const list = [...days.values()].sort((a, b) => a.date.localeCompare(b.date));
-        const sum = (k: keyof Omit<Day, "date">) => list.reduce((t, d) => t + d[k], 0);
-        const spots = [...teeTimes.values()].filter((t) => inRange(t.date) && t.status === "open").reduce((t, x) => t + x.maxPlayers, 0);
-        const worked = punches.filter((p) => p.clockOut && inRange(dayOf(p.clockIn)));
-        return {
-          from,
-          to,
-          revenue: {
-            greenFeesCents: sum("greenFeesCents"),
-            cartsAndExtrasCents: sum("cartsAndExtrasCents"),
-            proShopCents: sum("proShopCents"),
-            foodBevCents: sum("foodBevCents"),
-            eventsCents: sum("eventsCents"),
-            totalCents: sum("greenFeesCents") + sum("cartsAndExtrasCents") + sum("proShopCents") + sum("foodBevCents") + sum("eventsCents"),
-            salesTaxCents: sum("taxCents"),
-            proShopRefundsCents: kept.filter((x) => x.status === "refunded").reduce((t, x) => t + x.totalCents, 0),
-            proShopByCategory: [...categories.values()].sort((a, b) => b.cents - a.cents),
-            foodBevByCategory: [...fbCategories.values()].sort((a, b) => b.cents - a.cents),
-          },
-          collected: { ...collected, totalCents: Object.values(collected).reduce((t, c) => t + c, 0) },
-          other: { giftCardsSoldCents, accountPaymentsCents },
-          rounds: { played, booked, noShows, openSpots: spots, occupancy: spots ? Math.round((booked / spots) * 1000) / 10 : null, bySource },
-          labor: {
-            hours: Math.round(worked.reduce((t, p) => t + (Date.parse(p.clockOut!) - Date.parse(p.clockIn)) / 3_600_000, 0) * 10) / 10,
-            people: new Set(worked.map((p) => p.staffId)).size,
-          },
-          days: list,
-        };
-      }),
+    report: (from: string, to: string) => reply(() => demoReport(from, to)),
     dayClose: (date: string) => reply(() => demoClose(date)),
+    accountingSettings: () => reply(() => (managerOnly(), accountingView())),
+    saveAccountingSettings: (input: { format?: AccountingFormat; accounts?: Partial<Record<AccountKey, string>> }) =>
+      reply(() => {
+        managerOnly();
+        if (input.format) accounting.format = input.format;
+        for (const [k, v] of Object.entries(input.accounts ?? {}) as [AccountKey, string][]) {
+          if (v.trim() && v.trim() !== ACCOUNT_DEFAULTS[k]) accounting.accounts[k] = v.trim();
+          else delete accounting.accounts[k];
+        }
+        log("Changed accounting settings");
+        return accountingView();
+      }),
+    journal: (from: string, to: string) => reply(() => (managerOnly(), demoJournal(from, to))),
+    exportJournal: (from: string, to: string, format?: AccountingFormat) =>
+      reply(() => {
+        managerOnly();
+        const j = demoJournal(from, to);
+        const fmt = format ?? j.format;
+        const cell = (v: string) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+        const amt = (c: number) => (c / 100).toFixed(2);
+        const [y, mo, da] = [0, 1, 2] as const;
+        const parts = (d: string) => d.split("-");
+        const rows: string[][] = [];
+        if (fmt === "quickbooks") {
+          rows.push(["Journal No", "Journal Date", "Account", "Debits", "Credits", "Description"]);
+          for (const d of j.days) {
+            const p = parts(d.date);
+            for (const l of d.lines) rows.push([`GOLF-${p.join("")}`, `${p[mo]}/${p[da]}/${p[y]}`, l.account, l.debitCents ? amt(l.debitCents) : "", l.creditCents ? amt(l.creditCents) : "", l.description]);
+          }
+        } else {
+          rows.push(["*Narration", "*Date", "Description", "*AccountCode", "*TaxRate", "*Amount"]);
+          for (const d of j.days) {
+            const p = parts(d.date);
+            for (const l of d.lines) rows.push([`${riverBend.name} daily summary ${d.date}`, `${p[da]}/${p[mo]}/${p[y]}`, l.description, l.account, "Tax Exempt", amt(l.debitCents - l.creditCents)]);
+          }
+        }
+        accounting.exports.unshift({ from, to, format: fmt, staff: account()?.name ?? null, at: new Date().toISOString() });
+        log(`Exported the daily summary for ${fmt === "xero" ? "Xero" : "QuickBooks"}`);
+        return { fileName: `${riverBend.slug}-${fmt}-${from}${from === to ? "" : `-to-${to}`}.csv`, csv: rows.map((r) => r.map(cell).join(",")).join("\n") + "\n", days: j.days.length };
+      }),
     closeDay: (date: string, input: { countedCashCents: number; note?: string | null }) =>
       reply(() => {
         const expected = demoClose(date).expected;

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import type { Client, DayClose, Me, MoneyMethod, Report } from "./api";
 import { addDays, dayParts, todayIn, weekStart } from "./dates";
+import { AccountingCard } from "./AccountingCard";
 import { colors, money, radius, type WebPress } from "./theme";
 
 type Period = "today" | "yesterday" | "week" | "last-week" | "month" | "last-month";
@@ -191,6 +192,7 @@ function ManagerReports({ client, today }: { client: Client; today: string }) {
           <Text style={styles.muted}>
             Green fees and carts count on the day of the round; money taken counts on the day it was paid. No-shows and cancellations are left out of revenue.
           </Text>
+          <AccountingCard client={client} from={from} to={to} />
         </>
       )}
     </View>

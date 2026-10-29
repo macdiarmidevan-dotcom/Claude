@@ -84,6 +84,7 @@ import {
   setStandingTimeActive,
   updateEvent,
 } from "./events.ts";
+import { ACCOUNT_KEYS, exportJournal, getAccountingSettings, journal, saveAccountingSettings } from "./accounting.ts";
 import {
   adjustAccount,
   adjustGiftCard,
@@ -226,6 +227,8 @@ const ACTIONS: Record<string, string> = {
   "POST /v1/courses/:slug/house-accounts/:id/payments": "Took a house account payment",
   "POST /v1/courses/:slug/house-accounts/:id/adjust": "Adjusted a house account",
   "POST /v1/courses/:slug/house-accounts/statements": "Made house account statements",
+  "PUT /v1/courses/:slug/settings/accounting": "Changed accounting settings",
+  "POST /v1/courses/:slug/accounting/export": "Exported to accounting",
 };
 
 const player = z.object({
@@ -988,6 +991,27 @@ export function buildApp(db: Db, opts: { fetchReport?: FetchReport; paymentsFetc
     return runStatements(db, course, z.object({ month: z.string().regex(/^\d{4}-\d{2}$/) }).parse(req.body).month);
   });
   app.get("/v1/courses/:slug/statements/:id", async (req) => getStatement(db, await courseFor(req), idParams.parse(req.params).id));
+
+  // The bookkeeper's daily summary, for QuickBooks or Xero. Managers only.
+  const accountingFormat = z.enum(["quickbooks", "xero"]);
+  app.get("/v1/courses/:slug/settings/accounting", async (req) => getAccountingSettings(db, await managedCourseFor(req)));
+  app.put("/v1/courses/:slug/settings/accounting", async (req) => {
+    const course = await managedCourseFor(req);
+    const body = z
+      .object({ format: accountingFormat.optional(), accounts: z.partialRecord(z.enum(ACCOUNT_KEYS), z.string().max(100)).optional() })
+      .parse(req.body);
+    return saveAccountingSettings(db, course, body);
+  });
+  app.get("/v1/courses/:slug/accounting/journal", async (req) => {
+    const course = await managedCourseFor(req);
+    const { from, to } = rangeQuery.parse(req.query);
+    return journal(db, course, from, to);
+  });
+  app.post("/v1/courses/:slug/accounting/export", async (req) => {
+    const course = await managedCourseFor(req);
+    const body = rangeQuery.extend({ format: accountingFormat.optional() }).parse(req.body);
+    return exportJournal(db, course, req.staff?.user.id, body.from, body.to, body.format);
+  });
 
   // Food and bar: open tabs, the kitchen and bar screens, and paying a tab at the end.
   const isManager = (req: FastifyRequest) => req.apiKey!.role === "manager";

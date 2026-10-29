@@ -678,6 +678,41 @@ export interface Report {
   days: { date: string; greenFeesCents: number; cartsAndExtrasCents: number; proShopCents: number; foodBevCents: number; eventsCents: number; taxCents: number; collectedCents: number; rounds: number }[];
 }
 
+export type AccountingFormat = "quickbooks" | "xero";
+export type AccountKey =
+  | "cash"
+  | "card"
+  | "check"
+  | "house_account"
+  | "gift_card"
+  | "rain_check"
+  | "loyalty"
+  | "punch_card"
+  | "season_pass"
+  | "prepaid"
+  | "comp"
+  | "green_fees"
+  | "carts_extras"
+  | "pro_shop"
+  | "food_bev"
+  | "events"
+  | "sales_tax"
+  | "clearing";
+
+export interface AccountingSettings {
+  format: AccountingFormat;
+  accounts: Record<AccountKey, string>;
+  defaults: Record<AccountKey, string>;
+  recentExports: { from: string; to: string; format: AccountingFormat; staff: string | null; at: string }[];
+}
+
+export interface Journal {
+  from: string;
+  to: string;
+  format: AccountingFormat;
+  days: { date: string; totalCents: number; lines: { key: AccountKey; account: string; description: string; debitCents: number; creditCents: number }[] }[];
+}
+
 export interface DayClose {
   date: string;
   expected: Record<MoneyMethod, number>;
@@ -843,6 +878,12 @@ function createHttpClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "ap
     adjustHouseAccount: (id: string, input: { amountCents: number; description: string }) => request<HouseAccountDetail>(`/house-accounts/${id}/adjust`, { method: "POST", body: input }),
     runStatements: (month: string) => request<{ month: string; statements: number }>("/house-accounts/statements", { method: "POST", body: { month } }),
     statement: (id: string) => request<StatementDetail>(`/statements/${id}`),
+    accountingSettings: () => request<AccountingSettings>("/settings/accounting"),
+    saveAccountingSettings: (input: { format?: AccountingFormat; accounts?: Partial<Record<AccountKey, string>> }) =>
+      request<AccountingSettings>("/settings/accounting", { method: "PUT", body: input }),
+    journal: (from: string, to: string) => request<Journal>(`/accounting/journal?from=${from}&to=${to}`),
+    exportJournal: (from: string, to: string, format?: AccountingFormat) =>
+      request<{ fileName: string; csv: string; days: number }>("/accounting/export", { method: "POST", body: { from, to, ...(format ? { format } : {}) } }),
     voidTab: (id: string, reason: string) => request<Tab>(`/tabs/${id}/void`, { method: "POST", body: { reason } }),
     prep: (station: PrepStation) => request<PrepTicket[]>(`/prep/${station}`),
     setPrepStatus: (itemIds: string[], status: "sent" | "ready" | "served") => request<{ updated: number }>("/prep/items", { method: "POST", body: { itemIds, status } }),
