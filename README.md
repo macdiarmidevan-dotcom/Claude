@@ -40,6 +40,8 @@ Every `/v1` request needs `Authorization: Bearer <key>` with a staff (`sk_`) key
 | `POST /v1/courses/:slug/bookings/:id/check-in` | Pro shop check-in. The group must be paid; pass `{ "payment": { "method": "card" } }` to take the balance in the same step |
 | `POST /v1/courses/:slug/bookings/:id/tee-off` | Starter check-in at the first tee, optionally with `{ "cartNumbers": ["12"] }`. Only after the pro shop has checked the group in |
 | `GET /v1/courses/:slug/waiver` | The cart waiver drivers sign |
+| `PUT /v1/courses/:slug/waiver` | Manager only. Reword the waiver: `{ "title": "…", "body": "…" }`. Saves a new version |
+| `GET /v1/courses/:slug/me` | Whether this key is a `staff` or `manager` key |
 | `PUT /v1/courses/:slug/bookings/:id/carts` | Change cart numbers: `{ "cartNumbers": ["12"], "waivers": [{ "cartNumber": "12", "driverName": "…", "signature": "M10 100 L…" }] }` |
 | `POST /v1/courses/:slug/bookings/:id/move` | Move the group to another tee time with room |
 | `POST /v1/courses/:slug/bookings/:id/no-show` | Mark a no-show |
@@ -71,5 +73,11 @@ Each device is set to **Pro shop** or **Starter** (switchable in the top bar). C
 Each row shows the time, filled spots, the groups (✓ checked in at the shop, ⛳ on the course, ✕ no-show), cart numbers, and whether the time is paid or what's owed. Tapping a time opens a panel to take payment and check in, send a group off with carts, mark no-shows, move a group to another time, cancel, add a walk-in, or block the time with a note. On an iPad in landscape or a desktop the panel sits beside the sheet; on a phone it slides up. The sheet refreshes every 5 seconds, so changes from the pro shop show up on the starter's iPad.
 
 **Cart waivers.** When carts are assigned, the app pops up the course's cart waiver for each cart's driver in turn: they read it, enter their name, tick that they agree, and sign with a finger. A cart can't be assigned until its driver has signed (the API enforces this too, on every route that sets carts). Each signature is stored with the driver's name, the cart, the exact waiver version and the time. The seeded River Bend waiver is sample text: the course must supply its own reviewed wording.
+
+**Manager tools.** `pnpm db:seed` prints a staff key and a manager key. Signed in with the manager key, the app shows a **Waiver** button where the manager can change the wording. Each save is a new version; drivers who already signed stay tied to the version they read.
+
+**Starter station.** The starter doesn't choose resident or nonresident for walk-ins; the pro shop does that when it takes payment.
+
+**Demo build.** `pnpm --filter @golf/staff export:demo` builds a version that runs a pretend River Bend tee sheet in the browser with no server, for showing the app around. Nothing in it is saved.
 
 ![Staff tee sheet on iPad](docs/screenshots/staff-ipad.png)

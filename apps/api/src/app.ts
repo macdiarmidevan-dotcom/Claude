@@ -11,6 +11,7 @@ import {
   listBookingsForDay,
   checkIn,
   getActiveWaiver,
+  updateWaiver,
   moveBooking,
   recordPayment,
   setCartNumbers,
@@ -72,6 +73,10 @@ const checkInBody = z.object({
 });
 const teeOffBody = z.object({ cartNumbers: cartNumbers.optional(), waivers });
 const cartsBody = z.object({ cartNumbers, waivers });
+const waiverBody = z.object({
+  title: z.string().trim().min(1).max(200),
+  body: z.string().trim().min(20).max(50_000),
+});
 const paymentBody = z.object({ amountCents: z.number().int().positive(), method: paymentMethod });
 const idParams = z.object({ slug: z.string(), id: z.uuid() });
 const slugParams = z.object({ slug: z.string() });
@@ -121,12 +126,31 @@ export function buildApp(db: Db): FastifyInstance {
     return course;
   }
 
+  /** Like courseFor, but only a manager's key may make the change. */
+  async function managedCourseFor(req: FastifyRequest): Promise<Course> {
+    const course = await courseFor(req);
+    if (req.apiKey!.role !== "manager") throw new AppError(403, "manager_only", "Only a manager can change this");
+    return course;
+  }
+
+  // What this device's key is allowed to do, so the app only shows manager tools to managers.
+  app.get("/v1/courses/:slug/me", async (req) => {
+    await courseFor(req);
+    return { role: req.apiKey!.role };
+  });
+
   // The liability waiver each cart driver signs.
   app.get("/v1/courses/:slug/waiver", async (req) => {
     const course = await courseFor(req);
     const waiver = await getActiveWaiver(db, course);
     if (!waiver) throw notFound("Waiver");
     return waiver;
+  });
+
+  // A manager rewords the waiver. Drivers sign the new version from now on.
+  app.put("/v1/courses/:slug/waiver", async (req) => {
+    const course = await managedCourseFor(req);
+    return updateWaiver(db, course, waiverBody.parse(req.body));
   });
 
   app.get("/v1/courses/:slug", async (req) => {

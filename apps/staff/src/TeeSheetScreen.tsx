@@ -4,6 +4,7 @@ import { ApiError, createClient, type Course, type Settings, type SheetTeeTime }
 import { addDays, formatDate, nowIn, todayIn } from "./dates";
 import { TeeTimePanel } from "./TeeTimePanel";
 import { StationPicker } from "./SetupScreen";
+import { WaiverEditor } from "./WaiverEditor";
 import { colors, formatTime, money, statusColor } from "./theme";
 
 // Other devices' changes show up within this many seconds.
@@ -21,6 +22,8 @@ export function TeeSheetScreen({ settings, onChangeSettings, onSignOut }: { sett
   const [selectedId, setSelectedId] = useState<string>();
   const [error, setError] = useState<string>();
   const [lastSync, setLastSync] = useState<Date>();
+  const [isManager, setIsManager] = useState(false);
+  const [editingWaiver, setEditingWaiver] = useState(false);
   const listRef = useRef<FlatList<SheetTeeTime>>(null);
   const scrolledFor = useRef<string | undefined>(undefined);
 
@@ -32,6 +35,10 @@ export function TeeSheetScreen({ settings, onChangeSettings, onSignOut }: { sett
         setDate(todayIn(c.timeZone));
       })
       .catch((e) => setError(e.message));
+    client
+      .me()
+      .then((me) => setIsManager(me.role === "manager"))
+      .catch(() => setIsManager(false));
   }, [client]);
 
   const load = useCallback(async () => {
@@ -106,12 +113,18 @@ export function TeeSheetScreen({ settings, onChangeSettings, onSignOut }: { sett
         </View>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 14 }}>
           {width >= 600 && stationPicker}
+          {isManager && (
+            <Pressable accessibilityRole="button" onPress={() => setEditingWaiver(true)} hitSlop={8}>
+              <Text style={styles.signOut}>Waiver</Text>
+            </Pressable>
+          )}
           <Pressable accessibilityRole="button" onPress={onSignOut} hitSlop={8}>
             <Text style={styles.signOut}>Sign out</Text>
           </Pressable>
         </View>
       </View>
       {width < 600 && <View style={styles.stationRow}>{stationPicker}</View>}
+      {editingWaiver && <WaiverEditor client={client} onClose={() => setEditingWaiver(false)} />}
 
       {date && (
         <View style={styles.dateBar}>

@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "main": "index.ts",
   "dependencies": {
+    "@golf/core": "workspace:*",
     "@expo/metro-runtime": "~58.0.15",
     "@react-native-async-storage/async-storage": "2.2.0",
     "expo": "~58.0.21",
@@ -24,7 +25,8 @@
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
     "test": "echo \"no tests yet\"",
-    "export:web": "expo export --platform web"
+    "export:web": "expo export --platform web",
+    "export:demo": "EXPO_PUBLIC_DEMO=1 expo export --platform web --output-dir dist-demo"
   },
   "private": true
 }

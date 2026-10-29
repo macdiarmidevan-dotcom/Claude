@@ -1,4 +1,5 @@
 // Typed client for the golf API. Staff use a secret (sk_) key for their course.
+import { createDemoClient, DEMO, DEMO_URL } from "./demo";
 
 export type Station = "proshop" | "starter";
 
@@ -86,7 +87,12 @@ export class ApiError extends Error {
   }
 }
 
-export function createClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "apiKey">) {
+export function createClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "apiKey">): Client {
+  if (DEMO && settings.apiUrl === DEMO_URL) return createDemoClient(settings.apiKey);
+  return createHttpClient(settings);
+}
+
+function createHttpClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "apiKey">) {
   const base = `${settings.apiUrl.replace(/\/$/, "")}/v1/courses/${encodeURIComponent(settings.courseSlug)}`;
 
   async function request<T>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {
@@ -114,6 +120,9 @@ export function createClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | 
     checkIn: (id: string, method?: PaymentMethod) =>
       request(`/bookings/${id}/check-in`, { method: "POST", body: method ? { payment: { method } } : {} }),
     waiver: () => request<Waiver>("/waiver"),
+    /** Managers can change course settings; other staff keys can't. */
+    me: () => request<{ role: "staff" | "manager" }>("/me"),
+    saveWaiver: (waiver: { title: string; body: string }) => request<Waiver>("/waiver", { method: "PUT", body: waiver }),
     teeOff: (id: string, cartNumbers: string[], waivers: WaiverSignature[]) =>
       request(`/bookings/${id}/tee-off`, { method: "POST", body: { cartNumbers, waivers } }),
     setCarts: (id: string, cartNumbers: string[], waivers: WaiverSignature[]) =>
@@ -124,4 +133,4 @@ export function createClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | 
   };
 }
 
-export type Client = ReturnType<typeof createClient>;
+export type Client = ReturnType<typeof createHttpClient>;

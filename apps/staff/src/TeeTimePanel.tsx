@@ -179,6 +179,8 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, station, onC
         <WalkInForm
           maxPlayers={spotsLeft}
           courseHoles={courseHoles}
+          // Residency is checked and priced at the pro shop, so the starter doesn't pick a rate.
+          showRate={station === "proshop"}
           onSubmit={(name, players, holes, cart, resident) =>
             run(() =>
               client.book({
@@ -310,7 +312,7 @@ function PaymentForm({ booking, onPay, onCancel }: { booking: SheetBooking; onPa
   );
 }
 
-function WalkInForm({ maxPlayers, courseHoles, onSubmit }: { maxPlayers: number; courseHoles: number; onSubmit: (name: string, players: number, holes: number, cart: boolean, resident: boolean) => void }) {
+function WalkInForm({ maxPlayers, courseHoles, showRate, onSubmit }: { maxPlayers: number; courseHoles: number; showRate: boolean; onSubmit: (name: string, players: number, holes: number, cart: boolean, resident: boolean) => void }) {
   const [name, setName] = useState("");
   const [chosenPlayers, setPlayers] = useState(1);
   // Spots can fill while the form is open; never offer more than are left.
@@ -336,16 +338,18 @@ function WalkInForm({ maxPlayers, courseHoles, onSubmit }: { maxPlayers: number;
         <Toggle label="Walking" on={!cart} onPress={() => setCart(false)} />
         <Toggle label="Gas carts" on={cart} onPress={() => setCart(true)} />
       </Row>
-      <Row label="Rate">
-        <Toggle label="Nonresident" on={!resident} onPress={() => setResident(false)} />
-        <Toggle label="Resident" on={resident} onPress={() => setResident(true)} />
-      </Row>
+      {showRate && (
+        <Row label="Rate">
+          <Toggle label="Nonresident" on={!resident} onPress={() => setResident(false)} />
+          <Toggle label="Resident" on={resident} onPress={() => setResident(true)} />
+        </Row>
+      )}
       <Action
         label="Add to tee sheet"
         primary
         onPress={() => {
           if (!name.trim()) return;
-          onSubmit(name.trim(), players, holes, cart, resident);
+          onSubmit(name.trim(), players, holes, cart, showRate && resident);
           setName("");
         }}
       />

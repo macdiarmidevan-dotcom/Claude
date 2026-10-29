@@ -223,7 +223,9 @@ export async function getBooking(db: DbClient, course: Course, id: string): Prom
   const r = rows[0];
   if (!r) throw notFound("Booking");
   const { rows: waivers } = await db.query(
-    "SELECT cart_number, driver_name, signed_at FROM cart_waivers WHERE booking_id = $1 ORDER BY cart_number",
+    `SELECT w.cart_number, w.driver_name, w.signed_at, cw.version
+       FROM cart_waivers w JOIN course_waivers cw ON cw.id = w.waiver_id
+      WHERE w.booking_id = $1 ORDER BY w.cart_number`,
     [id],
   );
   const { rows: lines } = await db.query(
@@ -253,7 +255,12 @@ export async function getBooking(db: DbClient, course: Course, id: string): Prom
     })),
     cartNumbers: r.cart_numbers,
     payment: paymentSummary(r.total_cents, r.paid_cents, r.payment_methods),
-    waivers: waivers.map((w) => ({ cartNumber: w.cart_number, driverName: w.driver_name, signedAt: w.signed_at.toISOString() })),
+    waivers: waivers.map((w) => ({
+      cartNumber: w.cart_number,
+      driverName: w.driver_name,
+      signedAt: w.signed_at.toISOString(),
+      waiverVersion: w.version,
+    })),
     checkedInAt: r.checked_in_at?.toISOString() ?? null,
     teedOffAt: r.teed_off_at?.toISOString() ?? null,
     notes: r.notes,
@@ -398,6 +405,29 @@ export async function getActiveWaiver(db: DbClient, course: Course) {
     [course.id],
   );
   return rows[0] as { id: string; version: number; title: string; body: string } | undefined;
+}
+
+/**
+ * Replaces the wording drivers sign. The old version stays on file so every signed
+ * waiver still points at the exact text that driver agreed to.
+ */
+export async function updateWaiver(db: Db, course: Course, waiver: { title: string; body: string }) {
+  return withTransaction(db, async (client) => {
+    // Lock the course's waivers so two managers saving at once can't both take the next version.
+    const { rows } = await client.query<{ version: number }>(
+      "SELECT version FROM course_waivers WHERE course_id = $1 ORDER BY version DESC FOR UPDATE",
+      [course.id],
+    );
+    const version = (rows[0]?.version ?? 0) + 1;
+    await client.query("UPDATE course_waivers SET active = false WHERE course_id = $1 AND active", [course.id]);
+    await client.query("INSERT INTO course_waivers (course_id, version, title, body) VALUES ($1, $2, $3, $4)", [
+      course.id,
+      version,
+      waiver.title,
+      waiver.body,
+    ]);
+    return (await getActiveWaiver(client, course))!;
+  });
 }
 
 /**

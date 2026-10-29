@@ -1,6 +1,8 @@
 {
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
-    "strict": true
+    "strict": true,
+    // @golf/core imports its own files with .ts extensions.
+    "allowImportingTsExtensions": true
   }
 }

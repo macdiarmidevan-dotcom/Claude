@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { createClient, type Settings, type Station } from "./api";
 import { colors } from "./theme";
+import { DEMO } from "./demo";
 
 export function SetupScreen({ initial, onSave }: { initial?: Settings; onSave: (s: Settings) => void }) {
   const [apiUrl, setApiUrl] = useState(initial?.apiUrl ?? "http://localhost:3000");
@@ -30,7 +31,11 @@ export function SetupScreen({ initial, onSave }: { initial?: Settings; onSave: (
     <View style={styles.page}>
       <View style={styles.card}>
         <Text style={styles.title}>Tee Sheet</Text>
-        <Text style={styles.subtitle}>Connect this device to your course. Your manager has the staff key.</Text>
+        <Text style={styles.subtitle}>
+          {DEMO
+            ? "This is a demo with a pretend River Bend tee sheet. Press Connect to look around. Nothing you do is saved. The key below signs you in as a manager; change it to demo-staff to see what other staff see."
+            : "Connect this device to your course. Your manager has the staff key."}
+        </Text>
         <Field label="Server" value={apiUrl} onChangeText={setApiUrl} />
         <Field label="Course" value={courseSlug} onChangeText={setCourseSlug} />
         <Field label="Staff key" value={apiKey} onChangeText={setApiKey} secureTextEntry placeholder="sk_…" />

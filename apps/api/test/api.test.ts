@@ -14,6 +14,7 @@ let db: Db;
 let app: FastifyInstance;
 let publicKey: string;
 let secretKey: string;
+let managerKey: string;
 
 // Next Tuesday at least a day out, so it gets weekday rates.
 const now = DateTime.now().setZone("America/Chicago");
@@ -43,6 +44,7 @@ beforeAll(async () => {
   await migrate(db);
   const seeded = await seedRiverBend(db);
   secretKey = seeded.secretKey;
+  managerKey = seeded.managerKey;
   // Public keys from before the scope change must not reach anything.
   publicKey = await createApiKey(db, seeded.courseId, "public");
   app = buildApp(db);
@@ -202,6 +204,34 @@ describe("booking", () => {
     // Signatures must be drawn path data, not arbitrary markup.
     const bad = await carts({ cartNumbers: ["5"], waivers: [{ cartNumber: "5", driverName: "X", signature: "<script>alert(1)</script>" }] });
     expect(bad.statusCode).toBe(400);
+  });
+
+  it("lets only a manager reword the waiver, keeping the old version", async () => {
+    const me = (key: string) => app.inject({ url: "/v1/courses/river-bend/me", headers: auth(key) });
+    expect((await me(secretKey)).json()).toEqual({ role: "staff" });
+    expect((await me(managerKey)).json()).toEqual({ role: "manager" });
+
+    const teeTimeId = await teeTimeAt("13:58");
+    const { id } = (await book(secretKey, { teeTimeId, holes: 9, customer: golfer, players: [{}] })).json();
+    const before = await app.inject({ method: "PUT", url: `/v1/courses/river-bend/bookings/${id}/carts`, headers: auth(secretKey), payload: { cartNumbers: ["9"], waivers: signed("9") } });
+    expect(before.json().waivers[0].waiverVersion).toBe(1);
+
+    const wording = { title: "River Bend Cart Agreement", body: "Drivers must be 16 or older and follow all cart rules." };
+    const put = (key: string, payload: object) =>
+      app.inject({ method: "PUT", url: "/v1/courses/river-bend/waiver", headers: auth(key), payload });
+    const denied = await put(secretKey, wording);
+    expect(denied.statusCode).toBe(403);
+    expect(denied.json().error.code).toBe("manager_only");
+    expect((await put(managerKey, { title: "", body: "" })).statusCode).toBe(400);
+
+    const updated = await put(managerKey, wording);
+    expect(updated.statusCode).toBe(200);
+    expect(updated.json()).toMatchObject({ version: 2, ...wording });
+    const current = await app.inject({ url: "/v1/courses/river-bend/waiver", headers: auth(secretKey) });
+    expect(current.json()).toMatchObject({ version: 2, title: wording.title });
+    // The driver who already signed is still tied to the wording they agreed to.
+    const booking = await app.inject({ url: `/v1/courses/river-bend/bookings/${id}`, headers: auth(secretKey) });
+    expect(booking.json().waivers[0].waiverVersion).toBe(1);
   });
 
   it("shows whether a group has paid", async () => {

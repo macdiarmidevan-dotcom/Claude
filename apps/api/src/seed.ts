@@ -59,15 +59,17 @@ export async function seedRiverBend(db: Db) {
     ]);
 
     const secretKey = await createApiKey(client, courseId, "secret", "River Bend staff");
-    return { courseId, secretKey };
+    const managerKey = await createApiKey(client, courseId, "secret", "River Bend manager", "manager");
+    return { courseId, secretKey, managerKey };
   });
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const db = createPool();
   await migrate(db);
-  const { secretKey } = await seedRiverBend(db);
-  console.log("Seeded River Bend Golf Club. Save this key, it won't be shown again:");
+  const { secretKey, managerKey } = await seedRiverBend(db);
+  console.log("Seeded River Bend Golf Club. Save these keys, they won't be shown again:");
   console.log(`  Secret key (staff): ${secretKey}`);
+  console.log(`  Secret key (manager): ${managerKey}`);
   await db.end();
 }

@@ -6,13 +6,17 @@ import type { Settings } from "./src/api";
 import { SetupScreen } from "./src/SetupScreen";
 import { TeeSheetScreen } from "./src/TeeSheetScreen";
 import { colors } from "./src/theme";
+import { DEMO, DEMO_URL } from "./src/demo";
 
 const SETTINGS_KEY = "golf-staff-settings";
 
 export default function App() {
   const [loaded, setLoaded] = useState(false);
   const [settings, setSettings] = useState<Settings>();
-  const [lastSettings, setLastSettings] = useState<Settings>();
+  // The demo build fills in a pretend course so visitors can just press Connect.
+  const [lastSettings, setLastSettings] = useState<Settings | undefined>(
+    DEMO ? { apiUrl: DEMO_URL, courseSlug: "river-bend", apiKey: "demo-manager", station: "proshop" } : undefined,
+  );
 
   useEffect(() => {
     AsyncStorage.getItem(SETTINGS_KEY)
@@ -28,7 +32,7 @@ export default function App() {
   }
 
   function signOut() {
-    setLastSettings(settings && { ...settings, apiKey: "" });
+    setLastSettings(settings && { ...settings, apiKey: DEMO ? settings.apiKey : "" });
     setSettings(undefined);
     AsyncStorage.removeItem(SETTINGS_KEY).catch(() => undefined);
   }
