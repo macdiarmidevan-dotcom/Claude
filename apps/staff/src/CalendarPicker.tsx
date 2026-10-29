@@ -53,7 +53,7 @@ export function CalendarPicker({ date, today, onPick, onClose }: { date: string;
                     }}
                     style={({ hovered, focused }: WebPress) => [
                       styles.cell,
-                      hovered && !on && { backgroundColor: colors.greenLight },
+                      hovered && !on && { backgroundColor: colors.primaryLight },
                       isToday && !on && styles.today,
                       on && styles.on,
                       focused && styles.focusRing,
@@ -91,18 +91,18 @@ function Arrow({ label, name, onPress }: { label: string; name: string; onPress:
 
 const styles = StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.45)", alignItems: "center", justifyContent: "center", padding: 16 },
-  card: { backgroundColor: colors.card, borderRadius: 14, padding: 16, width: "100%", maxWidth: 380 },
+  card: { backgroundColor: colors.card, borderRadius: 3, padding: 16, width: "100%", maxWidth: 380 },
   head: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
-  month: { fontSize: 18, fontWeight: "700", color: colors.text },
+  month: { fontSize: 16, fontWeight: "700", color: colors.text },
   row: { flexDirection: "row" },
   weekday: { flex: 1, textAlign: "center", color: colors.muted, fontSize: 12, fontWeight: "600", paddingVertical: 6 },
-  cell: { flex: 1, aspectRatio: 1, minHeight: 40, alignItems: "center", justifyContent: "center", borderRadius: 8, margin: 1 },
-  cellText: { fontSize: 15, color: colors.text },
-  today: { borderWidth: 2, borderColor: colors.green },
-  on: { backgroundColor: colors.green },
+  cell: { flex: 1, aspectRatio: 1, minHeight: 34, alignItems: "center", justifyContent: "center", borderRadius: 3, margin: 1 },
+  cellText: { fontSize: 14, color: colors.text },
+  today: { borderWidth: 2, borderColor: colors.primary },
+  on: { backgroundColor: colors.primary },
   foot: { flexDirection: "row", justifyContent: "space-between", marginTop: 12, paddingHorizontal: 4 },
-  link: { color: colors.green, fontWeight: "600", fontSize: 15, textDecorationLine: "underline" },
-  arrow: { width: 44, height: 44, alignItems: "center", justifyContent: "center", borderRadius: 8 },
-  arrowText: { fontSize: 24, color: colors.text },
+  link: { color: colors.primary, fontWeight: "600", fontSize: 14, textDecorationLine: "underline" },
+  arrow: { width: 44, height: 44, alignItems: "center", justifyContent: "center", borderRadius: 3 },
+  arrowText: { fontSize: 20, color: colors.text },
   focusRing: { outlineColor: colors.focus, outlineWidth: 2, outlineStyle: "solid" } as object,
 });

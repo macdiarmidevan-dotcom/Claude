@@ -8,19 +8,20 @@ import { Header } from "./Header";
 import { ImportScreen } from "./ImportScreen";
 import { ChangePassword, StaffScreen } from "./StaffScreen";
 import { GolfersScreen } from "./Golfers";
+import { ScheduleScreen } from "./ScheduleScreen";
 import { colors, type WebPress } from "./theme";
 
 type Section = "tee-sheet" | "import" | "staff" | "customers" | "reports" | "schedule" | "inventory" | "settings";
 
-const SECTIONS: { id: Section; label: string; icon: string; soon?: string; managers?: boolean }[] = [
-  { id: "tee-sheet", label: "Tee sheet", icon: "▦" },
-  { id: "import", label: "Sync tee sheet", icon: "⇅", managers: true },
-  { id: "staff", label: "Staff accounts", icon: "☺", managers: true },
-  { id: "customers", label: "Golfers", icon: "◉" },
-  { id: "reports", label: "Reports", icon: "▤", soon: "Daily sales, rounds played, occupancy and payment types. Managers can already ask the AI assistant for these." },
-  { id: "schedule", label: "Staff schedule", icon: "◷", soon: "Shifts, time clock and shift swaps that the other employee accepts." },
-  { id: "inventory", label: "Pro shop", icon: "▣", soon: "Products, stock counts, reorder alerts and the point of sale." },
-  { id: "settings", label: "Settings", icon: "⚙" },
+const SECTIONS: { id: Section; label: string; soon?: string; managers?: boolean }[] = [
+  { id: "tee-sheet", label: "Tee sheet" },
+  { id: "import", label: "Sync tee sheet", managers: true },
+  { id: "staff", label: "Staff accounts", managers: true },
+  { id: "customers", label: "Golfers" },
+  { id: "reports", label: "Reports", soon: "Daily sales, rounds played, occupancy and payment types. Managers can already ask the AI assistant for these." },
+  { id: "schedule", label: "Staff schedule" },
+  { id: "inventory", label: "Pro shop", soon: "Products, stock counts, reorder alerts and the point of sale." },
+  { id: "settings", label: "Settings" },
 ];
 
 // Below this width the menu folds away behind a button, as on phones and iPads held upright.
@@ -125,6 +126,11 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
             <Header title="Staff accounts" onOpenMenu={openMenu} />
             <StaffScreen client={client} me={me?.user ?? null} />
           </>
+        ) : section === "schedule" ? (
+          <>
+            <Header title="Staff schedule" onOpenMenu={openMenu} />
+            {course && <ScheduleScreen client={client} me={me} timeZone={course.timeZone} />}
+          </>
         ) : section === "settings" ? (
           <>
             <Header title="Settings" onOpenMenu={openMenu} />
@@ -226,7 +232,6 @@ function SideMenu(props: {
                 focused && styles.focusRing,
               ]}
             >
-              <Text style={styles.navIcon} aria-hidden>{s.icon}</Text>
               <Text style={[styles.navText, on && { fontWeight: "700", color: "#fff" }]}>{s.label}</Text>
               {s.soon && <Text style={styles.soonTag}>Soon</Text>}
             </Pressable>
@@ -250,28 +255,28 @@ const styles = StyleSheet.create({
   page: { flex: 1, flexDirection: "row", backgroundColor: colors.bg },
   main: { flex: 1, minWidth: 0 },
   rail: { width: 240, backgroundColor: colors.rail, paddingTop: 16, height: "100%" },
-  railTop: { flexDirection: "row", alignItems: "flex-start", paddingHorizontal: 16, marginBottom: 14 },
+  railTop: { flexDirection: "row", alignItems: "flex-start", paddingHorizontal: 12, marginBottom: 14 },
   brand: { color: colors.railMuted, fontSize: 12, fontWeight: "700", letterSpacing: 1, textTransform: "uppercase" },
-  course: { color: colors.railText, fontSize: 17, fontWeight: "700", marginTop: 2 },
-  navItem: { flexDirection: "row", alignItems: "center", gap: 12, minHeight: 44, paddingHorizontal: 16, marginHorizontal: 8, borderRadius: 8 },
+  course: { color: colors.railText, fontSize: 15, fontWeight: "700", marginTop: 2 },
+  navItem: { flexDirection: "row", alignItems: "center", gap: 12, minHeight: 36, paddingHorizontal: 12, marginHorizontal: 8, borderRadius: 3 },
   navItemOn: { backgroundColor: colors.railActive },
-  navIcon: { color: colors.railText, fontSize: 16, width: 20, textAlign: "center" },
-  navText: { color: colors.railText, fontSize: 15, flex: 1 },
+  navIcon: { color: colors.railText, fontSize: 14, width: 20, textAlign: "center" },
+  navText: { color: colors.railText, fontSize: 14, flex: 1 },
   soonTag: { color: colors.railMuted, fontSize: 11, fontWeight: "600" },
   railFoot: { borderTopWidth: 1, borderColor: "#2a4433", padding: 16, flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  railMuted: { color: colors.railMuted, fontSize: 13 },
-  railName: { color: colors.railText, fontSize: 14, fontWeight: "700" },
-  railLink: { color: colors.railText, fontSize: 14, fontWeight: "600", textDecorationLine: "underline" },
+  railMuted: { color: colors.railMuted, fontSize: 12 },
+  railName: { color: colors.railText, fontSize: 13, fontWeight: "700" },
+  railLink: { color: colors.railText, fontSize: 13, fontWeight: "600", textDecorationLine: "underline" },
   focusRing: { outlineColor: colors.focus, outlineWidth: 2, outlineStyle: "solid" } as object,
   drawerWrap: { flex: 1, flexDirection: "row" },
   backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.45)" },
-  menuButton: { width: 44, height: 44, alignItems: "center", justifyContent: "center", borderRadius: 8 },
-  menuIcon: { fontSize: 22, color: colors.text },
-  content: { padding: 24, maxWidth: 640 },
-  label: { fontSize: 13, fontWeight: "700", color: colors.muted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 },
-  help: { color: colors.muted, fontSize: 15, lineHeight: 22 },
-  soonTitle: { fontSize: 20, fontWeight: "700", color: colors.text, marginBottom: 8 },
-  button: { backgroundColor: colors.green, borderRadius: 10, paddingHorizontal: 18, minHeight: 44, justifyContent: "center", alignSelf: "flex-start", marginTop: 4 },
+  menuButton: { width: 44, height: 44, alignItems: "center", justifyContent: "center", borderRadius: 3 },
+  menuIcon: { fontSize: 18, color: colors.text },
+  content: { padding: 16, maxWidth: 640 },
+  label: { fontSize: 12, fontWeight: "700", color: colors.muted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 },
+  help: { color: colors.muted, fontSize: 14, lineHeight: 22 },
+  soonTitle: { fontSize: 17, fontWeight: "700", color: colors.text, marginBottom: 8 },
+  button: { backgroundColor: colors.primary, borderRadius: 3, paddingHorizontal: 12, minHeight: 36, justifyContent: "center", alignSelf: "flex-start", marginTop: 4 },
   buttonQuiet: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, marginTop: 12 },
-  buttonText: { color: "#fff", fontSize: 15, fontWeight: "600" },
+  buttonText: { color: "#fff", fontSize: 14, fontWeight: "600" },
 });
