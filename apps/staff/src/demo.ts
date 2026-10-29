@@ -1277,10 +1277,31 @@ export function createDemoClient(apiKey: string): Client {
         log("Marked a no-show", find(bookingId).customerName);
         return Object.assign(find(bookingId), { status: "no_show" as const });
       }),
+    undoNoShow: (bookingId: string) =>
+      reply(() => {
+        const b = find(bookingId);
+        if (b.status !== "no_show") throw conflict("invalid_status", "This group isn't marked as a no-show");
+        log("Undid a no-show", b.customerName);
+        return Object.assign(b, { status: "confirmed" as const });
+      }),
     cancel: (bookingId: string) =>
       reply(() => {
+        if (find(bookingId).status !== "confirmed" && find(bookingId).status !== "no_show") throw conflict("invalid_status", "Only groups that haven't checked in can be removed");
         log("Cancelled a booking", find(bookingId).customerName);
         return Object.assign(find(bookingId), { status: "cancelled" as const });
+      }),
+    removePlayers: (bookingId: string, count: number) =>
+      reply(() => {
+        const b = find(bookingId);
+        if (b.status !== "confirmed" && b.status !== "no_show") throw conflict("invalid_status", "Only groups that haven't checked in can lose players");
+        if (count >= b.players) throw new ApiError(400, "whole_group", "To take everyone off, remove the whole group");
+        const total = Math.round((b.totalCents * (b.players - count)) / b.players);
+        if (b.payment.paidCents > total) throw conflict("already_paid", "They've already paid for those players. Refund them first");
+        b.players -= count;
+        b.totalCents = total;
+        b.payment = payment(b);
+        log(`Removed ${count} player${count === 1 ? "" : "s"}`, b.customerName);
+        return b;
       }),
     addGuests: (bookingId: string, g: { count: number; riding: boolean; residency?: "resident" | "nonresident" }) =>
       reply(() => {

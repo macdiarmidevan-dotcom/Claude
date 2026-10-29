@@ -150,4 +150,32 @@ describe("golfer accounts", () => {
     expect(profile.stats.paidCents - before.stats.paidCents).toBe(Math.round(after.totalCents / 3));
     expect(profile.history.find((h: { bookingId: string }) => h.bookingId === booking)).toMatchObject({ guests: 2, players: 3 });
   });
+
+  it("takes players off a group that hasn't paid, guests and their carts first", async () => {
+    const booking = await walkIn("13:10", "Pat");
+    const single = (await call("GET", `/bookings/${booking}`)).json().totalCents;
+    await call("POST", `/bookings/${booking}/guests`, { count: 3, riding: true });
+
+    const res = await call("POST", `/bookings/${booking}/remove-players`, { count: 2 });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ players: 2, totalCents: single * 2 + 1300 });
+    // The spots open up again.
+    const time = (await call("GET", `/tee-sheet?date=${date}`)).json().teeTimes.find((t: { localTime: string }) => t.localTime === "13:10");
+    expect(time.bookedPlayers).toBe(2);
+
+    expect((await call("POST", `/bookings/${booking}/remove-players`, { count: 2 })).json().error.code).toBe("whole_group");
+    await call("POST", `/bookings/${booking}/payments`, { amountCents: single * 2, method: "cash" });
+    expect((await call("POST", `/bookings/${booking}/remove-players`, { count: 1 })).json().error.code).toBe("already_paid");
+
+    // Removing the whole group works for no-shows too.
+    const other = await walkIn("13:18", "Lou");
+    await call("POST", `/bookings/${other}/no-show`);
+    expect((await call("POST", `/bookings/${other}/cancel`)).json().status).toBe("cancelled");
+
+    // A no-show who turns up late goes back to booked.
+    const late = await walkIn("13:26", "Sam");
+    await call("POST", `/bookings/${late}/no-show`);
+    expect((await call("POST", `/bookings/${late}/undo-no-show`)).json().status).toBe("confirmed");
+    expect((await call("POST", `/bookings/${late}/undo-no-show`)).json().error.code).toBe("invalid_status");
+  });
 });
