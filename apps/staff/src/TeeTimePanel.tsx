@@ -42,7 +42,7 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, station, onC
   }
 
   return (
-    <ScrollView style={styles.panel} contentContainerStyle={{ padding: 20, paddingBottom: 48 }}>
+    <ScrollView style={styles.panel} contentContainerStyle={{ padding: 16, paddingBottom: 48 }}>
       <View style={styles.header}>
         <View>
           <Text style={styles.time}>{formatTime(teeTime.localTime)}</Text>
@@ -51,7 +51,7 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, station, onC
           </Text>
         </View>
         <Pressable accessibilityRole="button" onPress={onClose} style={styles.close}>
-          <Text style={{ fontSize: 16, color: colors.muted }}>Close</Text>
+          <Text style={{ fontSize: 14, color: colors.muted }}>Close</Text>
         </Pressable>
       </View>
 
@@ -269,7 +269,7 @@ function Action({ label, onPress, primary, danger }: { label: string; onPress: (
       style={({ pressed, focused }: WebPress) => [
         styles.action,
         focused && { outlineColor: colors.focus, outlineWidth: 2, outlineStyle: "solid" } as object,
-        primary && { backgroundColor: colors.green, borderColor: colors.green },
+        primary && { backgroundColor: colors.primary, borderColor: colors.primary },
         danger && { borderColor: colors.noShow },
         pressed && { opacity: 0.7 },
       ]}
@@ -289,7 +289,7 @@ function MovePicker({ sheet, booking, onPick, onCancel }: { sheet: SheetTeeTime[
       <ScrollView horizontal style={{ marginVertical: 8 }}>
         {options.map((t) => (
           <Pressable key={t.id} accessibilityRole="button" onPress={() => onPick(t.id)} style={styles.chip}>
-            <Text style={{ color: colors.greenText, fontWeight: "600" }}>{formatTime(t.localTime)}</Text>
+            <Text style={{ color: colors.primaryText, fontWeight: "600" }}>{formatTime(t.localTime)}</Text>
           </Pressable>
         ))}
       </ScrollView>
@@ -421,25 +421,25 @@ function Toggle({ label, on, onPress }: { label: string; on: boolean; onPress: (
 const styles = StyleSheet.create({
   panel: { flex: 1, backgroundColor: colors.card },
   header: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 },
-  time: { fontSize: 30, fontWeight: "700", color: colors.text },
+  time: { fontSize: 24, fontWeight: "700", color: colors.text },
   close: { padding: 8 },
-  muted: { color: colors.muted, fontSize: 14 },
-  error: { color: colors.noShow, backgroundColor: "#fbebeb", padding: 10, borderRadius: 8, marginBottom: 10 },
-  section: { fontSize: 13, fontWeight: "700", color: colors.muted, textTransform: "uppercase", letterSpacing: 0.5, marginTop: 18, marginBottom: 8 },
-  booking: { borderWidth: 1, borderColor: colors.border, borderRadius: 10, padding: 12, marginBottom: 10 },
-  name: { fontSize: 17, fontWeight: "600", color: colors.text },
-  badge: { fontSize: 12, fontWeight: "700", borderWidth: 1, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2, overflow: "hidden" },
+  muted: { color: colors.muted, fontSize: 13 },
+  error: { color: colors.noShow, backgroundColor: "#fbebeb", padding: 10, borderRadius: 3, marginBottom: 10 },
+  section: { fontSize: 12, fontWeight: "700", color: colors.muted, textTransform: "uppercase", letterSpacing: 0.5, marginTop: 18, marginBottom: 8 },
+  booking: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, padding: 12, marginBottom: 10 },
+  name: { fontSize: 15, fontWeight: "600", color: colors.text },
+  badge: { fontSize: 12, fontWeight: "700", borderWidth: 1, borderRadius: 3, paddingHorizontal: 8, paddingVertical: 2, overflow: "hidden" },
   actions: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 },
-  action: { borderWidth: 1, borderColor: colors.border, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 10, minHeight: 44, justifyContent: "center" },
-  actionText: { fontSize: 15, fontWeight: "600", color: colors.text },
-  chip: { borderWidth: 1, borderColor: colors.green, borderRadius: 16, paddingHorizontal: 12, paddingVertical: 8, marginRight: 6 },
+  action: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, paddingHorizontal: 14, paddingVertical: 10, minHeight: 36, justifyContent: "center" },
+  actionText: { fontSize: 14, fontWeight: "600", color: colors.text },
+  chip: { borderWidth: 1, borderColor: colors.primary, borderRadius: 3, paddingHorizontal: 12, paddingVertical: 8, marginRight: 6 },
   walkIn: { marginTop: 4 },
-  carts: { color: colors.greenText, fontWeight: "700", fontSize: 14, marginTop: 4 },
-  payment: { fontWeight: "700", fontSize: 14, marginTop: 4 },
-  warning: { color: colors.warn, fontSize: 14, marginTop: 4 },
-  account: { color: colors.greenText, fontSize: 14, marginTop: 4, fontWeight: "600" },
-  skip: { color: colors.muted, fontSize: 14, textDecorationLine: "underline" },
-  input: { borderWidth: 1, borderColor: colors.border, borderRadius: 8, padding: 12, fontSize: 16, marginBottom: 10, color: colors.text },
-  toggle: { borderWidth: 1, borderColor: colors.border, borderRadius: 8, minWidth: 44, minHeight: 40, paddingHorizontal: 12, alignItems: "center", justifyContent: "center", marginRight: 6, marginBottom: 4 },
-  toggleOn: { backgroundColor: colors.green, borderColor: colors.green },
+  carts: { color: colors.primaryText, fontWeight: "700", fontSize: 13, marginTop: 4 },
+  payment: { fontWeight: "700", fontSize: 13, marginTop: 4 },
+  warning: { color: colors.warn, fontSize: 13, marginTop: 4 },
+  account: { color: colors.primaryText, fontSize: 13, marginTop: 4, fontWeight: "600" },
+  skip: { color: colors.muted, fontSize: 13, textDecorationLine: "underline" },
+  input: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, padding: 12, fontSize: 14, marginBottom: 10, color: colors.text },
+  toggle: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, minWidth: 44, minHeight: 34, paddingHorizontal: 12, alignItems: "center", justifyContent: "center", marginRight: 6, marginBottom: 4 },
+  toggleOn: { backgroundColor: colors.primary, borderColor: colors.primary },
 });

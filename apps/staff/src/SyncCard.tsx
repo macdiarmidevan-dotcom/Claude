@@ -51,7 +51,7 @@ export function SyncCard({ client, onSynced }: { client: Client; onSynced: () =>
   }
 
   if (conn === undefined) {
-    return <View style={styles.card}>{error ? <Text role="alert" style={styles.error}>{error}</Text> : <ActivityIndicator color={colors.green} />}</View>;
+    return <View style={styles.card}>{error ? <Text role="alert" style={styles.error}>{error}</Text> : <ActivityIndicator color={colors.primary} />}</View>;
   }
 
   if (!conn || editing) {
@@ -238,22 +238,22 @@ function Button(props: { label: string; onPress: () => void; primary?: boolean; 
 }
 
 const styles = StyleSheet.create({
-  card: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: 12, padding: 18, marginBottom: 28 },
+  card: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: 3, padding: 14, marginBottom: 28 },
   row: { flexDirection: "row", alignItems: "center", gap: 10 },
-  title: { fontSize: 18, fontWeight: "700", color: colors.text, marginBottom: 6 },
-  pill: { fontSize: 13, fontWeight: "700", color: colors.muted, borderWidth: 1, borderColor: colors.border, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 3 },
+  title: { fontSize: 16, fontWeight: "700", color: colors.text, marginBottom: 6 },
+  pill: { fontSize: 12, fontWeight: "700", color: colors.muted, borderWidth: 1, borderColor: colors.border, borderRadius: 3, paddingHorizontal: 10, paddingVertical: 3 },
   pillOn: { color: "#fff", backgroundColor: colors.checkedIn, borderColor: colors.checkedIn },
-  text: { color: colors.text, fontSize: 15, lineHeight: 22, marginTop: 4 },
-  muted: { color: colors.muted, fontSize: 14, marginTop: 6 },
-  label: { fontSize: 13, fontWeight: "700", color: colors.muted, textTransform: "uppercase", letterSpacing: 0.5, marginTop: 14, marginBottom: 6 },
+  text: { color: colors.text, fontSize: 14, lineHeight: 22, marginTop: 4 },
+  muted: { color: colors.muted, fontSize: 13, marginTop: 6 },
+  label: { fontSize: 12, fontWeight: "700", color: colors.muted, textTransform: "uppercase", letterSpacing: 0.5, marginTop: 14, marginBottom: 6 },
   status: { borderLeftWidth: 4, paddingLeft: 12, paddingVertical: 4, marginTop: 14 },
-  statusTitle: { fontWeight: "700", fontSize: 15 },
-  notice: { backgroundColor: colors.greenLight, borderRadius: 8, padding: 12, marginTop: 10 },
+  statusTitle: { fontWeight: "700", fontSize: 14 },
+  notice: { backgroundColor: colors.primaryLight, borderRadius: 3, padding: 12, marginTop: 10 },
   error: { color: colors.noShow, marginTop: 10 },
   actions: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 },
-  button: { borderWidth: 1, borderColor: colors.border, borderRadius: 8, paddingHorizontal: 14, minHeight: 44, justifyContent: "center", backgroundColor: colors.card },
-  buttonOn: { backgroundColor: colors.green, borderColor: colors.green },
-  buttonText: { fontSize: 15, fontWeight: "600", color: colors.text },
-  input: { borderWidth: 1, borderColor: colors.border, borderRadius: 8, padding: 11, fontSize: 15, color: colors.text, backgroundColor: "#fff" },
+  button: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, paddingHorizontal: 14, minHeight: 36, justifyContent: "center", backgroundColor: colors.card },
+  buttonOn: { backgroundColor: colors.primary, borderColor: colors.primary },
+  buttonText: { fontSize: 14, fontWeight: "600", color: colors.text },
+  input: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, padding: 11, fontSize: 14, color: colors.text, backgroundColor: "#fff" },
   focus: { outlineColor: colors.focus, outlineWidth: 2, outlineStyle: "solid" } as object,
 });

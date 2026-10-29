@@ -20,9 +20,9 @@ export function Header({ title, subtitle, onOpenMenu, children }: { title: strin
 }
 
 const styles = StyleSheet.create({
-  header: { flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: colors.card, borderBottomWidth: 1, borderColor: colors.border, paddingHorizontal: 16, minHeight: 60, paddingVertical: 8 },
-  menuButton: { width: 44, height: 44, alignItems: "center", justifyContent: "center", borderRadius: 8 },
-  menuIcon: { fontSize: 22, color: colors.text },
-  headerTitle: { fontSize: 20, fontWeight: "700", color: colors.text },
-  headerSub: { fontSize: 13, color: colors.muted, marginTop: 1 },
+  header: { flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: colors.card, borderBottomWidth: 1, borderColor: colors.border, paddingHorizontal: 12, minHeight: 48, paddingVertical: 8 },
+  menuButton: { width: 44, height: 44, alignItems: "center", justifyContent: "center", borderRadius: 3 },
+  menuIcon: { fontSize: 18, color: colors.text },
+  headerTitle: { fontSize: 17, fontWeight: "700", color: colors.text },
+  headerSub: { fontSize: 12, color: colors.muted, marginTop: 1 },
 });
