@@ -9,6 +9,7 @@ import { earnPoints } from "./loyalty.ts";
 import { redeemPass, redeemPoints } from "./passes.ts";
 import { redeemRainCheck } from "./rainchecks.ts";
 import { chargeAccount, spendGiftCard } from "./accounts.ts";
+import { checkCartsUsable } from "./fleet.ts";
 
 export type BookingSource = "staff" | "phone" | "teeitup" | "golfnow" | "import" | "standing";
 
@@ -669,11 +670,13 @@ async function updateCarts(
   cartNumbers: string[],
   waivers: WaiverSignature[] = [],
 ) {
-  const { rowCount } = await client.query(
-    "SELECT 1 FROM bookings WHERE id = $1 AND course_id = $2 AND status <> 'cancelled' FOR UPDATE",
+  const { rows: found } = await client.query<{ cart_numbers: string[] }>(
+    "SELECT cart_numbers FROM bookings WHERE id = $1 AND course_id = $2 AND status <> 'cancelled' FOR UPDATE",
     [id, course.id],
   );
-  if (!rowCount) throw notFound("Booking");
+  if (!found[0]) throw notFound("Booking");
+  // Only carts being handed out now: one that broke down after the group took it can stay listed.
+  await checkCartsUsable(client, course, cartNumbers.filter((c) => !found[0]!.cart_numbers.includes(c)));
 
   if (cartNumbers.length > 0) {
     const waiver = await getActiveWaiver(client, course);
@@ -729,7 +732,7 @@ export async function updateTeeTime(
 
 export async function listBookingsForDay(db: DbClient, course: Course, start: DateTime, end: DateTime) {
   const { rows } = await db.query(
-    `SELECT b.id, b.tee_time_id, b.players, b.holes, b.status, b.source, b.total_cents, b.cart_numbers, c.name, c.phone,
+    `SELECT b.id, b.tee_time_id, b.players, b.holes, b.status, b.source, b.total_cents, b.cart_numbers, b.carts_in_at, c.name, c.phone,
             CASE WHEN c.account_created_at IS NOT NULL THEN c.id END AS golfer_id,
             ${PAYMENT_COLUMNS},
             (SELECT array_agg(cart_number) FROM cart_waivers WHERE booking_id = b.id) AS signed_carts,
@@ -759,6 +762,8 @@ export async function listBookingsForDay(db: DbClient, course: Course, start: Da
     payment: paymentSummary(r.total_cents, r.paid_cents, r.payment_methods),
     // Carts whose driver has signed the waiver for this booking.
     signedCarts: (r.signed_carts ?? []) as string[],
+    /** The starter has marked the group's carts back in. */
+    cartsIn: !!r.carts_in_at,
     /** Riding when the group paid for carts or has carts assigned; otherwise walking. */
     riding: r.riding as boolean,
     /** Paying resident rates. */

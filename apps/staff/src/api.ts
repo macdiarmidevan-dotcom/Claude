@@ -50,6 +50,8 @@ export interface SheetBooking {
   cartNumbers: string[];
   /** Carts whose driver has signed the waiver for this booking. */
   signedCarts: string[];
+  /** The starter has marked the group's carts back in. */
+  cartsIn?: boolean;
   /** Riding in carts, or walking. */
   riding: boolean;
   /** Paying resident rates. */
@@ -719,6 +721,86 @@ export interface DayClose {
   close: { expectedCashCents: number; countedCashCents: number; overShortCents: number; note: string | null; closedBy: string | null; closedAt: string } | null;
 }
 
+export type AssetKind = "cart" | "equipment";
+export type AssetStatus = "in_service" | "out_of_service" | "retired";
+export type AssetPower = "gas" | "electric" | "diesel" | "other";
+export type WorkOrderStatus = "open" | "in_progress" | "on_hold" | "done" | "cancelled";
+export type WorkOrderArea = "carts" | "equipment" | "course" | "clubhouse" | "other";
+export type Priority = "low" | "normal" | "high" | "urgent";
+
+/** A cart or piece of equipment in the fleet. */
+export interface Asset {
+  id: string;
+  kind: AssetKind;
+  number: string;
+  model: string | null;
+  power: AssetPower | null;
+  serial: string | null;
+  status: AssetStatus;
+  statusNote: string | null;
+  statusChangedAt: string;
+  /** Rounds (carts) or hours (equipment) between services. */
+  serviceEvery: number | null;
+  hours: number | null;
+  lastServiceAt: string | null;
+  sinceService: number;
+  serviceDue: boolean;
+  openWorkOrders: number;
+  out: { bookingId: string; name: string; teedOffAt: string } | null;
+  notes: string | null;
+}
+
+export interface AssetDetail extends Asset {
+  service: { id: string; kind: "service" | "repair" | "inspection"; note: string | null; costCents: number; hours: number | null; workOrderNumber: number | null; staff: string | null; at: string }[];
+  workOrders: WorkOrder[];
+}
+
+export interface AssetInput {
+  number?: string;
+  model?: string | null;
+  power?: AssetPower | null;
+  serial?: string | null;
+  serviceEvery?: number | null;
+  hours?: number | null;
+  notes?: string | null;
+}
+
+export interface WorkOrder {
+  id: string;
+  number: number;
+  title: string;
+  details: string | null;
+  area: WorkOrderArea;
+  location: string | null;
+  asset: { id: string; kind: AssetKind; number: string } | null;
+  priority: Priority;
+  status: WorkOrderStatus;
+  assignedTo: { id: string; name: string } | null;
+  reportedBy: string | null;
+  dueDate: string | null;
+  overdue: boolean;
+  costCents: number;
+  completedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkOrderDetail extends WorkOrder {
+  notes: { id: string; note: string | null; status: WorkOrderStatus | null; staff: string | null; at: string }[];
+}
+
+export interface WorkOrderInput {
+  title: string;
+  details?: string | null;
+  area: WorkOrderArea;
+  location?: string | null;
+  assetId?: string | null;
+  priority?: Priority;
+  assignedTo?: string | null;
+  dueDate?: string | null;
+  outOfService?: boolean;
+}
+
 export interface Coworker {
   id: string;
   name: string;
@@ -884,6 +966,27 @@ function createHttpClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "ap
     journal: (from: string, to: string) => request<Journal>(`/accounting/journal?from=${from}&to=${to}`),
     exportJournal: (from: string, to: string, format?: AccountingFormat) =>
       request<{ fileName: string; csv: string; days: number }>("/accounting/export", { method: "POST", body: { from, to, ...(format ? { format } : {}) } }),
+    fleet: (kind?: AssetKind, retired = false) => request<Asset[]>(`/fleet?${kind ? `kind=${kind}&` : ""}${retired ? "retired=true" : ""}`),
+    asset: (id: string) => request<AssetDetail>(`/fleet/${id}`),
+    addAsset: (input: AssetInput & { kind: AssetKind; number: string }) => request<Asset>("/fleet", { method: "POST", body: input }),
+    addCarts: (input: { from: number; to: number; model?: string | null; power?: AssetPower | null; serviceEvery?: number | null }) =>
+      request<{ added: number; carts: Asset[] }>("/fleet/carts", { method: "POST", body: input }),
+    updateAsset: (id: string, input: AssetInput & { retired?: boolean }) => request<Asset>(`/fleet/${id}`, { method: "PATCH", body: input }),
+    setAssetStatus: (id: string, status: "in_service" | "out_of_service", note?: string | null) =>
+      request<Asset>(`/fleet/${id}/status`, { method: "POST", body: { status, note } }),
+    logService: (id: string, input: { kind: "service" | "repair" | "inspection"; note?: string | null; costCents?: number; hours?: number | null }) =>
+      request<AssetDetail>(`/fleet/${id}/service`, { method: "POST", body: input }),
+    setHours: (id: string, hours: number) => request<Asset>(`/fleet/${id}/hours`, { method: "PUT", body: { hours } }),
+    cartsIn: (bookingId: string) => request<Asset[]>(`/bookings/${bookingId}/carts-in`, { method: "POST" }),
+    workOrders: (filter: { status?: "open" | "closed" | "all"; assetId?: string; assignedTo?: string; area?: WorkOrderArea } = {}) =>
+      request<WorkOrder[]>(`/work-orders?${new URLSearchParams(Object.entries(filter).filter(([, v]) => v) as [string, string][]).toString()}`),
+    workOrder: (id: string) => request<WorkOrderDetail>(`/work-orders/${id}`),
+    createWorkOrder: (input: WorkOrderInput) => request<WorkOrderDetail>("/work-orders", { method: "POST", body: input }),
+    updateWorkOrder: (id: string, input: Partial<Omit<WorkOrderInput, "area" | "assetId" | "outOfService">> & { costCents?: number }) =>
+      request<WorkOrderDetail>(`/work-orders/${id}`, { method: "PATCH", body: input }),
+    setWorkOrderStatus: (id: string, input: { status: WorkOrderStatus; note?: string | null; backInService?: boolean; costCents?: number }) =>
+      request<WorkOrderDetail>(`/work-orders/${id}/status`, { method: "POST", body: input }),
+    addWorkOrderNote: (id: string, note: string) => request<WorkOrderDetail>(`/work-orders/${id}/notes`, { method: "POST", body: { note } }),
     voidTab: (id: string, reason: string) => request<Tab>(`/tabs/${id}/void`, { method: "POST", body: { reason } }),
     prep: (station: PrepStation) => request<PrepTicket[]>(`/prep/${station}`),
     setPrepStatus: (itemIds: string[], status: "sent" | "ready" | "served") => request<{ updated: number }>("/prep/items", { method: "POST", body: { itemIds, status } }),

@@ -14,10 +14,11 @@ import { CardPaymentSettings, CardReaderProvider } from "./CardReader";
 import { AccountsScreen } from "./AccountsScreen";
 import { EventsScreen } from "./EventsScreen";
 import { FoodBarScreen } from "./FoodBarScreen";
+import { FleetScreen } from "./FleetScreen";
 import { ReportsScreen } from "./ReportsScreen";
 import { colors, type WebPress } from "./theme";
 
-type Section = "tee-sheet" | "import" | "staff" | "customers" | "events" | "food" | "accounts" | "reports" | "schedule" | "inventory" | "settings";
+type Section = "tee-sheet" | "import" | "staff" | "customers" | "events" | "food" | "accounts" | "fleet" | "reports" | "schedule" | "inventory" | "settings";
 
 const SECTIONS: { id: Section; label: string; soon?: string; managers?: boolean }[] = [
   { id: "tee-sheet", label: "Tee sheet" },
@@ -27,6 +28,7 @@ const SECTIONS: { id: Section; label: string; soon?: string; managers?: boolean 
   { id: "events", label: "Leagues & events" },
   { id: "food", label: "Food & bar" },
   { id: "accounts", label: "Gift cards & accounts" },
+  { id: "fleet", label: "Carts & maintenance" },
   { id: "reports", label: "Reports" },
   { id: "schedule", label: "Staff schedule" },
   { id: "inventory", label: "Pro shop" },
@@ -156,6 +158,11 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
           <>
             <Header title="Gift cards & accounts" onOpenMenu={openMenu} />
             <AccountsScreen client={client} isManager={isManager} />
+          </>
+        ) : section === "fleet" ? (
+          <>
+            <Header title="Carts & maintenance" onOpenMenu={openMenu} />
+            <FleetScreen client={client} isManager={isManager} meId={me?.user?.id} />
           </>
         ) : section === "reports" ? (
           <>
