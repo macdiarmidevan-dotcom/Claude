@@ -504,6 +504,7 @@ export async function updateTeeTime(
 export async function listBookingsForDay(db: DbClient, course: Course, start: DateTime, end: DateTime) {
   const { rows } = await db.query(
     `SELECT b.id, b.tee_time_id, b.players, b.holes, b.status, b.source, b.total_cents, b.cart_numbers, c.name, c.phone,
+            CASE WHEN c.account_created_at IS NOT NULL THEN c.id END AS golfer_id,
             ${PAYMENT_COLUMNS},
             (SELECT array_agg(cart_number) FROM cart_waivers WHERE booking_id = b.id) AS signed_carts
        FROM bookings b JOIN customers c ON c.id = b.customer_id JOIN tee_times t ON t.id = b.tee_time_id
@@ -516,6 +517,8 @@ export async function listBookingsForDay(db: DbClient, course: Course, start: Da
     teeTimeId: r.tee_time_id,
     customerName: r.name,
     customerPhone: r.phone,
+    /** The golfer account this booking counts toward, once the pro shop has linked one. */
+    golferId: (r.golfer_id ?? null) as string | null,
     players: r.players,
     holes: r.holes,
     status: r.status,

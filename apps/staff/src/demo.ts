@@ -5,6 +5,8 @@ import {
   ApiError,
   type ActivityEntry,
   type Client,
+  type GolferAccount,
+  type GolferProfile,
   type Role,
   type StaffUser,
   type ImportResult,
@@ -75,6 +77,15 @@ export function createDemoClient(apiKey: string): Client {
       "4. I release River Bend Golf Club and the Lisle Park District from claims arising from my use of the cart, except where caused by their negligence.",
   };
   const runs: ImportRun[] = [];
+  // Golfer accounts, some with rounds from before today so their history isn't empty.
+  type DemoGolfer = Omit<GolferAccount, "roundsPlayed" | "lastPlayed"> & { createdBy: string | null; past: GolferProfile["history"] };
+  const golfers: DemoGolfer[] = [];
+  const pastRounds = (n: number, holes: number) =>
+    Array.from({ length: n }, (_, i) => {
+      const d = new Date(Date.now() - (i + 1) * 6 * 86_400_000);
+      d.setHours(7 + (i % 4), 10, 0, 0);
+      return { bookingId: `past-${nextId++}`, startsAt: d.toISOString(), course: riverBend.name, players: 2 + (i % 3), holes, status: "teed_off" as const, source: "teeitup", totalCents: 4200, paidCents: 4200 };
+    });
   let nextId = 1;
   const id = () => `demo-${nextId++}`;
 
@@ -106,6 +117,16 @@ export function createDemoClient(apiKey: string): Client {
   const at = (date: string, localTime: string) => [...teeTimes.values()].find((t) => t.date === date && t.localTime === localTime)!;
 
   function seedToday(date: string) {
+    const accounts: Record<string, [string, string, number, number]> = {
+      "Mike Sullivan": ["mike.sullivan@example.com", "(630) 555-0141", 23, 18],
+      "Dana Kowalski": ["dana.k@example.com", "(630) 555-0177", 8, 9],
+      "Chris Patel": ["chris.patel@example.com", "(331) 555-0112", 41, 18],
+      "Linda Hart": ["linda.hart@example.com", "(630) 555-0190", 12, 9],
+      "Sam Lee": ["sam.lee@example.com", "(331) 555-0123", 5, 9],
+    };
+    for (const [name, [email, phone, rounds, holes]] of Object.entries(accounts)) {
+      golfers.push({ id: id(), name, email, phone, createdAt: new Date(Date.now() - 200 * 86_400_000).toISOString(), createdBy: "Jordan Price", past: pastRounds(rounds, holes) });
+    }
     const groups: [string, string, number, number, boolean, string?][] = [
       ["07:02", "Mike Sullivan", 4, 18, true, "teed_off"],
       ["07:10", "Dana Kowalski", 2, 9, false, "teed_off"],
@@ -132,12 +153,64 @@ export function createDemoClient(apiKey: string): Client {
       if (state === "prepaid") b.paid.push({ amountCents: b.totalCents, method: "prepaid" });
       if (state === "checked_in" || state === "teed_off") b.status = state;
       if (state === "no_show") b.status = "no_show";
+      b.golferId = golfers.find((g) => g.name === name)?.id ?? null;
       if (state === "teed_off" && cart) {
         b.cartNumbers = Array.from({ length: Math.ceil(players / 2) }, (_, i) => String(10 + i));
         b.signedCarts = [...b.cartNumbers];
       }
     }
     for (const time of ["08:30", "08:38", "08:46"]) Object.assign(at(date, time), { status: "blocked", note: "Senior league shotgun" });
+  }
+
+  const played = (status: string) => status === "checked_in" || status === "teed_off";
+
+  function profile(g: DemoGolfer): GolferProfile {
+    const today = bookings
+      .filter((b) => b.golferId === g.id)
+      .map((b) => {
+        const t = teeTimes.get(b.teeTimeId)!;
+        return { bookingId: b.id, startsAt: t.startsAt, course: riverBend.name, players: b.players, holes: b.holes, status: b.status, source: b.source, totalCents: b.totalCents, paidCents: payment(b).paidCents };
+      });
+    const history = [...today, ...g.past].sort((a, b) => b.startsAt.localeCompare(a.startsAt));
+    const rounds = history.filter((h) => played(h.status));
+    const { past: _, ...account } = g;
+    return {
+      ...account,
+      roundsPlayed: rounds.length,
+      lastPlayed: rounds[0]?.startsAt ?? null,
+      stats: {
+        roundsPlayed: rounds.length,
+        holesPlayed: rounds.reduce((s, h) => s + h.holes, 0),
+        noShows: history.filter((h) => h.status === "no_show").length,
+        cancelled: history.filter((h) => h.status === "cancelled").length,
+        upcoming: history.filter((h) => h.status === "confirmed" && h.startsAt > new Date().toISOString()).length,
+        paidCents: history.reduce((s, h) => s + h.paidCents, 0),
+      },
+      history,
+    };
+  }
+
+  function golfer(golferId: string) {
+    const g = golfers.find((x) => x.id === golferId);
+    if (!g) throw new ApiError(404, "not_found", "Golfer account not found");
+    return g;
+  }
+
+  const digits = (phone: string) => phone.replace(/\D/g, "");
+  function checkGolfer(input: { name?: string; email?: string; phone?: string }, except?: string) {
+    if (input.name !== undefined && !input.name.trim()) throw new ApiError(400, "name_required", "Enter the golfer's name");
+    if (input.email !== undefined && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.email.trim())) throw new ApiError(400, "invalid_email", "Enter a real email address");
+    if (input.phone !== undefined && digits(input.phone).length < 10) throw new ApiError(400, "invalid_phone", "Enter a phone number with area code");
+    const others = golfers.filter((g) => g.id !== except);
+    const sameEmail = input.email && others.find((g) => g.email === input.email!.trim().toLowerCase());
+    if (sameEmail) throw conflict("account_exists", `${sameEmail.name} already has an account with that email. Search for them instead`);
+    const samePhone = input.phone && others.find((g) => digits(g.phone) === digits(input.phone!));
+    if (samePhone) throw conflict("phone_taken", `${samePhone.name} already has an account with that phone number. Search for them instead`);
+  }
+
+  function linkBooking(bookingId: string, g: DemoGolfer) {
+    const b = find(bookingId);
+    Object.assign(b, { golferId: g.id, customerName: g.name, customerPhone: g.phone });
   }
 
   function find(bookingId: string) {
@@ -161,6 +234,7 @@ export function createDemoClient(apiKey: string): Client {
       teeTimeId: t.id,
       customerName: walkIn.customer.name,
       customerPhone: null,
+      golferId: null,
       players: walkIn.players.length,
       holes: walkIn.holes,
       status: "confirmed",
@@ -228,7 +302,7 @@ export function createDemoClient(apiKey: string): Client {
         row.players * quotePlayer(riverBendRates, { residency: "nonresident", ageGroup: "adult" }, { startsAt: t.startsAt, timeZone: riverBend.timeZone }, loops).totalCents;
       if (!existing) {
         bookings.push({
-          id: id(), teeTimeId: t.id, customerName: row.name, customerPhone: row.phone ?? null, players: row.players, holes,
+          id: id(), teeTimeId: t.id, customerName: row.name, customerPhone: row.phone ?? null, golferId: null, players: row.players, holes,
           status: row.status === "no_show" ? "no_show" : "confirmed", source: input.source, totalCents: total, cartNumbers: [], signedCarts: [],
           payment: { status: "unpaid", paidCents: 0, balanceCents: total, methods: [] },
           paid: row.paidCents ? [{ amountCents: Math.min(row.paidCents, total), method: "prepaid" }] : [], externalId: row.externalId,
@@ -353,6 +427,52 @@ export function createDemoClient(apiKey: string): Client {
         Object.assign(a, Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)));
         log("Changed a staff account");
         return publicUser(a);
+      }),
+    searchGolfers: (q: string) =>
+      reply(() => {
+        const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+        if (!words.length) return [];
+        const phone = digits(q);
+        return golfers
+          .filter((g) => words.every((w) => g.name.toLowerCase().includes(w)) || (phone.length >= 4 && digits(g.phone).includes(phone)) || g.email === q.trim().toLowerCase())
+          .map((g) => profile(g))
+          .map(({ stats: _, history: __, createdBy: ___, ...a }) => a)
+          .sort((a, b) => b.roundsPlayed - a.roundsPlayed || a.name.localeCompare(b.name));
+      }),
+    golfer: (golferId: string) => reply(() => profile(golfer(golferId))),
+    createGolfer: (input: { name: string; email: string; phone: string; bookingId?: string }) =>
+      reply(() => {
+        checkGolfer(input);
+        const g: DemoGolfer = {
+          id: id(),
+          name: input.name.trim(),
+          email: input.email.trim().toLowerCase(),
+          phone: input.phone.trim(),
+          createdAt: new Date().toISOString(),
+          createdBy: account()?.name ?? null,
+          past: [],
+        };
+        golfers.push(g);
+        if (input.bookingId) linkBooking(input.bookingId, g);
+        log("Created a golfer account", g.name);
+        return profile(g);
+      }),
+    updateGolfer: (golferId: string, patch: { name?: string; email?: string; phone?: string }) =>
+      reply(() => {
+        const g = golfer(golferId);
+        checkGolfer(patch, g.id);
+        if (patch.name) g.name = patch.name.trim();
+        if (patch.email) g.email = patch.email.trim().toLowerCase();
+        if (patch.phone) g.phone = patch.phone.trim();
+        log("Changed a golfer account", g.name);
+        return profile(g);
+      }),
+    linkGolfer: (bookingId: string, golferId: string) =>
+      reply(() => {
+        const g = golfer(golferId);
+        linkBooking(bookingId, g);
+        log("Linked a golfer account", g.name);
+        return profile(g);
       }),
     activity: () =>
       reply(() => {

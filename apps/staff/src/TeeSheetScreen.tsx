@@ -3,6 +3,7 @@ import { ActivityIndicator, FlatList, Modal, Pressable, StyleSheet, Text, useWin
 import { findRate } from "@golf/core";
 import { ApiError, type Client, type Course, type SheetBooking, type SheetTeeTime, type Station } from "./api";
 import { addDays, dayParts, nowIn, todayIn, weekStart } from "./dates";
+import { CalendarPicker } from "./CalendarPicker";
 import { TeeTimePanel } from "./TeeTimePanel";
 import { Header } from "./Header";
 import { colors, type WebPress, formatTime, money, slotColor, slotLabel, slotMark, type SlotState } from "./theme";
@@ -185,8 +186,10 @@ export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu 
 function WeekStrip({ date, today, compact, onPick }: { date: string; today: string; compact: boolean; onPick: (d: string) => void }) {
   const monday = weekStart(date);
   const days = Array.from({ length: 7 }, (_, i) => addDays(monday, i));
+  const [calendar, setCalendar] = useState(false);
   return (
     <View style={styles.week}>
+      {calendar && <CalendarPicker date={date} today={today} onPick={onPick} onClose={() => setCalendar(false)} />}
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Go to today"
@@ -195,6 +198,14 @@ function WeekStrip({ date, today, compact, onPick }: { date: string; today: stri
         style={({ focused }: WebPress) => [styles.todayButton, date === today && { opacity: 0.5 }, focused && styles.focusRing]}
       >
         <Text style={styles.todayText}>Today</Text>
+      </Pressable>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Pick a date from the calendar. Showing ${dayParts(date).long}`}
+        onPress={() => setCalendar(true)}
+        style={({ focused }: WebPress) => [styles.todayButton, { marginLeft: 6 }, focused && styles.focusRing]}
+      >
+        <Text style={styles.todayText}>{compact ? "📅" : `📅 ${new Date(`${date}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", year: "numeric", timeZone: "UTC" })}`}</Text>
       </Pressable>
       <WeekArrow label="‹" name="Previous week" onPress={() => onPick(addDays(date, -7))} />
       <View style={styles.days}>

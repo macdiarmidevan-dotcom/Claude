@@ -38,6 +38,8 @@ export interface SheetBooking {
   teeTimeId: string;
   customerName: string;
   customerPhone: string | null;
+  /** The golfer account this booking counts toward. Empty until the pro shop links or creates one. */
+  golferId: string | null;
   players: number;
   holes: number;
   status: BookingStatus;
@@ -127,6 +129,22 @@ export interface ActivityEntry {
   at: string;
 }
 
+export interface GolferAccount {
+  id: string;
+  name: string;
+  email: string;
+  phone: string;
+  roundsPlayed: number;
+  lastPlayed: string | null;
+  createdAt: string;
+}
+
+export interface GolferProfile extends GolferAccount {
+  createdBy: string | null;
+  stats: { roundsPlayed: number; holesPlayed: number; noShows: number; cancelled: number; upcoming: number; paidCents: number };
+  history: { bookingId: string; startsAt: string; course: string; players: number; holes: number; status: BookingStatus; source: string; totalCents: number; paidCents: number }[];
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -193,6 +211,15 @@ function createHttpClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "ap
     updateStaff: (id: string, patch: { name?: string; role?: Role; active?: boolean; password?: string }) =>
       request<StaffUser>(`/staff/${id}`, { method: "PATCH", body: patch }),
     activity: () => request<ActivityEntry[]>("/activity"),
+    searchGolfers: (q: string) => request<GolferAccount[]>(`/golfers?q=${encodeURIComponent(q)}`),
+    golfer: (id: string) => request<GolferProfile>(`/golfers/${id}`),
+    /** Creates a golfer's account, usually at their first check-in, and links that booking. */
+    createGolfer: (input: { name: string; email: string; phone: string; bookingId?: string }) =>
+      request<GolferProfile>("/golfers", { method: "POST", body: input }),
+    updateGolfer: (id: string, patch: { name?: string; email?: string; phone?: string }) =>
+      request<GolferProfile>(`/golfers/${id}`, { method: "PATCH", body: patch }),
+    linkGolfer: (bookingId: string, golferId: string) =>
+      request<GolferProfile>(`/bookings/${bookingId}/golfer`, { method: "PUT", body: { golferId } }),
     saveWaiver: (waiver: { title: string; body: string }) => request<Waiver>("/waiver", { method: "PUT", body: waiver }),
     importTeeSheet: (body: { source: ImportSource; csv: string; fileName?: string; dryRun?: boolean }) =>
       request<ImportResult>("/imports", { method: "POST", body }),

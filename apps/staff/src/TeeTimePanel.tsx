@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import type { Client, PaymentMethod, SheetBooking, SheetTeeTime, Station, Waiver } from "./api";
 import { WaiverModal } from "./WaiverModal";
+import { GolferPicker } from "./Golfers";
 import { colors, type WebPress, formatTime, money, paymentMethodLabel, statusColor, statusLabel } from "./theme";
 
 interface Props {
@@ -20,6 +21,8 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, station, onC
   // sendOff: the starter is sending the group off the tee; otherwise just editing carts.
   const [cartsFor, setCartsFor] = useState<{ booking: SheetBooking; sendOff: boolean }>();
   const [payingFor, setPayingFor] = useState<SheetBooking>();
+  // Finding or creating the golfer's account. With checkIn, check-in carries on once it's linked.
+  const [accountFor, setAccountFor] = useState<{ id: string; checkIn: boolean }>();
   // Asked on the page rather than in a pop-up dialog, which some browsers and screen readers block.
   const [cancelling, setCancelling] = useState<string>();
   // Carts waiting on their drivers' waiver signatures before they're saved.
@@ -69,6 +72,11 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, station, onC
             {b.customerPhone ? ` · ${b.customerPhone}` : ""}
           </Text>
           <PaymentLine booking={b} />
+          {station === "proshop" && (
+            <Text style={[styles.account, !b.golferId && { color: colors.warn }]}>
+              {b.golferId ? "✓ On golfer account" : "No golfer account linked yet"}
+            </Text>
+          )}
           {b.cartNumbers.length > 0 && (
             <Text style={styles.carts}>
               {b.cartNumbers.length === 1 ? "Cart" : "Carts"} {b.cartNumbers.join(", ")}
@@ -77,14 +85,20 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, station, onC
           {station === "starter" && b.status === "confirmed" && (
             <Text style={styles.warning}>Not checked in at the pro shop yet</Text>
           )}
-          {cartsFor?.booking.id !== b.id && moving?.id !== b.id && payingFor?.id !== b.id && cancelling !== b.id && (
+          {cartsFor?.booking.id !== b.id && moving?.id !== b.id && payingFor?.id !== b.id && cancelling !== b.id && accountFor?.id !== b.id && (
             <View style={styles.actions}>
               {station === "proshop" && (b.status === "confirmed" || b.status === "no_show") && (
                 <Action
                   label={b.payment.balanceCents > 0 ? `Take ${money(b.payment.balanceCents)} & check in` : "Check in"}
                   primary
-                  onPress={() => (b.payment.balanceCents > 0 ? setPayingFor(b) : run(() => client.checkIn(b.id)))}
+                  onPress={() =>
+                    // The first check-in creates the golfer's account; after that it's a name search.
+                    !b.golferId ? setAccountFor({ id: b.id, checkIn: true }) : b.payment.balanceCents > 0 ? setPayingFor(b) : run(() => client.checkIn(b.id))
+                  }
                 />
+              )}
+              {station === "proshop" && b.status !== "no_show" && (
+                <Action label={b.golferId ? "Change golfer" : "Link golfer"} onPress={() => setAccountFor({ id: b.id, checkIn: false })} />
               )}
               {station === "starter" && b.status === "checked_in" && (
                 <Action label="Send off the tee" primary onPress={() => setCartsFor({ booking: b, sendOff: true })} />
@@ -116,6 +130,34 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, station, onC
                 <Action label="Keep booking" onPress={() => setCancelling(undefined)} />
               </View>
             </View>
+          )}
+          {accountFor?.id === b.id && (
+            <>
+              <GolferPicker
+                client={client}
+                booking={b}
+                onLinked={() => {
+                  const { checkIn } = accountFor;
+                  setAccountFor(undefined);
+                  onChanged();
+                  if (checkIn) b.payment.balanceCents > 0 ? setPayingFor(b) : run(() => client.checkIn(b.id));
+                }}
+                onCancel={() => setAccountFor(undefined)}
+              />
+              {accountFor.checkIn && (
+                <Pressable
+                  accessibilityRole="button"
+                  hitSlop={8}
+                  style={{ marginTop: 8 }}
+                  onPress={() => {
+                    setAccountFor(undefined);
+                    b.payment.balanceCents > 0 ? setPayingFor(b) : run(() => client.checkIn(b.id));
+                  }}
+                >
+                  <Text style={styles.skip}>Golfer won't give details? Check in without an account</Text>
+                </Pressable>
+              )}
+            </>
           )}
           {payingFor?.id === b.id && (
             <PaymentForm
@@ -395,6 +437,8 @@ const styles = StyleSheet.create({
   carts: { color: colors.greenText, fontWeight: "700", fontSize: 14, marginTop: 4 },
   payment: { fontWeight: "700", fontSize: 14, marginTop: 4 },
   warning: { color: colors.warn, fontSize: 14, marginTop: 4 },
+  account: { color: colors.greenText, fontSize: 14, marginTop: 4, fontWeight: "600" },
+  skip: { color: colors.muted, fontSize: 14, textDecorationLine: "underline" },
   input: { borderWidth: 1, borderColor: colors.border, borderRadius: 8, padding: 12, fontSize: 16, marginBottom: 10, color: colors.text },
   toggle: { borderWidth: 1, borderColor: colors.border, borderRadius: 8, minWidth: 44, minHeight: 40, paddingHorizontal: 12, alignItems: "center", justifyContent: "center", marginRight: 6, marginBottom: 4 },
   toggleOn: { backgroundColor: colors.green, borderColor: colors.green },

@@ -114,6 +114,12 @@ Each row shows the time, filled spots, the groups (✓ checked in at the shop, �
 
 ![Staff accounts](docs/screenshots/staff-accounts.png)
 
+**Golfer accounts.** The first time a golfer is checked in, the pro shop creates their account with their own phone and email (each can only belong to one golfer). After that, **Check in** asks which golfer it is and staff find them by name, phone or email, so every round lands on the same account. If the golfer booked online before with the same email, that record becomes the account and the earlier bookings count too. **Golfers** in the menu shows each account's rounds played, holes, upcoming bookings, no-shows, payments and full history. A golfer who won't give details can still be checked in without an account.
+
+![Golfer account at check-in](docs/screenshots/golfer-check-in.png)
+
+**Calendar.** The 📅 button next to Today opens a month calendar to jump the tee sheet to any date.
+
 **Manager tools.** Signed in as a manager, the app shows a **Waiver** button where the manager can change the wording. Each save is a new version; drivers who already signed stay tied to the version they read.
 
 **Starter station.** The starter doesn't choose resident or nonresident for walk-ins; the pro shop does that when it takes payment.
