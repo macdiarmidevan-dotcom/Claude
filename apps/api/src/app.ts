@@ -50,6 +50,7 @@ import {
   getActiveWaiver,
   updateWaiver,
   moveBooking,
+  addGuests,
   recordPayment,
   setCartNumbers,
   teeOff,
@@ -74,6 +75,7 @@ const ACTIONS: Record<string, string> = {
   "POST /v1/courses/:slug/bookings/:id/payments": "Took a payment",
   "PUT /v1/courses/:slug/bookings/:id/carts": "Changed carts",
   "POST /v1/courses/:slug/bookings/:id/move": "Moved a booking",
+  "POST /v1/courses/:slug/bookings/:id/guests": "Added guests to a group",
   "POST /v1/courses/:slug/bookings/:id/cancel": "Cancelled a booking",
   "POST /v1/courses/:slug/bookings/:id/no-show": "Marked a no-show",
   "PATCH /v1/courses/:slug/tee-times/:id": "Changed a tee time",
@@ -106,6 +108,11 @@ const player = z.object({
   ageGroup: z.enum(["adult", "senior", "junior"]).default("adult"),
 });
 const addOn = z.object({ code: z.string(), quantity: z.number().int().min(0).max(8) });
+const guestsBody = z.object({
+  count: z.number().int().min(1).max(7),
+  riding: z.boolean().default(false),
+  residency: z.enum(["resident", "nonresident"]).optional(),
+});
 const quoteBody = z.object({
   teeTimeId: z.uuid(),
   holes: z.number().int().positive(),
@@ -549,6 +556,12 @@ export function buildApp(db: Db, opts: { fetchReport?: FetchReport } = {}): Fast
     const course = await courseFor(req);
     const { id } = idParams.parse(req.params);
     return moveBooking(db, course, id, moveBody.parse(req.body).teeTimeId);
+  });
+
+  app.post("/v1/courses/:slug/bookings/:id/guests", async (req) => {
+    const course = await courseFor(req);
+    const { id } = idParams.parse(req.params);
+    return addGuests(db, course, id, guestsBody.parse(req.body));
   });
 
   // Pro shop check-in: takes any balance due, then marks the group checked in.

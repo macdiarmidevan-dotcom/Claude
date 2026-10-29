@@ -401,6 +401,56 @@ export async function moveBooking(db: Db, course: Course, id: string, toTeeTimeI
   return getBooking(db, course, id);
 }
 
+/**
+ * Adds guests to a golfer's group, e.g. when staff drag the golfer's name across open spots on
+ * the tee sheet. Each guest is priced like a walk-in at this time (nonresident unless the pro
+ * shop says otherwise), with a gas cart each when they're riding. The booking's total grows by
+ * that amount, so it counts toward the course's revenue; the golfer's own account only lists
+ * them as guests.
+ */
+export async function addGuests(
+  db: Db,
+  course: Course,
+  id: string,
+  input: { count: number; riding: boolean; residency?: "resident" | "nonresident" },
+): Promise<Booking> {
+  await withTransaction(db, async (client) => {
+    const { rows } = await client.query(
+      "SELECT tee_time_id, holes, status FROM bookings WHERE id = $1 AND course_id = $2 FOR UPDATE",
+      [id, course.id],
+    );
+    const booking = rows[0];
+    if (!booking) throw notFound("Booking");
+    if (["cancelled", "no_show"].includes(booking.status)) throw conflict("invalid_status", "Can't add guests to a cancelled or no-show booking");
+    const teeTime = await lockTeeTime(client, course, booking.tee_time_id, true);
+    const spotsLeft = teeTime.maxPlayers - teeTime.bookedPlayers;
+    if (input.count > spotsLeft) {
+      throw conflict("not_enough_spots", `Only ${spotsLeft} spot${spotsLeft === 1 ? "" : "s"} left at this time`);
+    }
+    const player: PlayerProfile = { residency: input.residency ?? "nonresident", ageGroup: "adult" };
+    const q = await buildQuote(
+      client,
+      course,
+      {
+        teeTimeId: teeTime.id,
+        holes: booking.holes,
+        players: Array.from({ length: input.count }, () => player),
+        addOns: input.riding ? [{ code: "gas_cart", quantity: input.count }] : [],
+      },
+      teeTime,
+    );
+    for (const line of q.lines) {
+      await client.query(
+        `INSERT INTO booking_lines (booking_id, kind, code, description, quantity, unit_cents, total_cents)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [id, line.kind, line.code, `Guest: ${line.description}`, line.quantity, line.unitCents, line.totalCents],
+      );
+    }
+    await client.query("UPDATE bookings SET players = players + $2, total_cents = total_cents + $3 WHERE id = $1", [id, input.count, q.totalCents]);
+  });
+  return getBooking(db, course, id);
+}
+
 export async function getActiveWaiver(db: DbClient, course: Course) {
   const { rows } = await db.query(
     "SELECT id, version, title, body FROM course_waivers WHERE course_id = $1 AND active",
@@ -506,7 +556,8 @@ export async function listBookingsForDay(db: DbClient, course: Course, start: Da
     `SELECT b.id, b.tee_time_id, b.players, b.holes, b.status, b.source, b.total_cents, b.cart_numbers, c.name, c.phone,
             CASE WHEN c.account_created_at IS NOT NULL THEN c.id END AS golfer_id,
             ${PAYMENT_COLUMNS},
-            (SELECT array_agg(cart_number) FROM cart_waivers WHERE booking_id = b.id) AS signed_carts
+            (SELECT array_agg(cart_number) FROM cart_waivers WHERE booking_id = b.id) AS signed_carts,
+            (cardinality(b.cart_numbers) > 0 OR EXISTS (SELECT 1 FROM booking_lines l WHERE l.booking_id = b.id AND l.code = 'gas_cart')) AS riding
        FROM bookings b JOIN customers c ON c.id = b.customer_id JOIN tee_times t ON t.id = b.tee_time_id
       WHERE b.course_id = $1 AND t.starts_at >= $2 AND t.starts_at < $3 AND b.status <> 'cancelled'
       ORDER BY b.created_at`,
@@ -528,5 +579,7 @@ export async function listBookingsForDay(db: DbClient, course: Course, start: Da
     payment: paymentSummary(r.total_cents, r.paid_cents, r.payment_methods),
     // Carts whose driver has signed the waiver for this booking.
     signedCarts: (r.signed_carts ?? []) as string[],
+    /** Riding when the group paid for carts or has carts assigned; otherwise walking. */
+    riding: r.riding as boolean,
   }));
 }

@@ -136,6 +136,12 @@ Each row shows the time, filled spots, the groups (✓ checked in at the shop, �
 
 ![Staff schedule](docs/screenshots/staff-schedule.png)
 
+**Guests.** To add guests to a golfer's group, slide the golfer's name to the right across the open spots on the tee sheet: each spot it covers becomes a guest (shown as "+ Guest" while dragging). Letting go opens the tee time with the guests ready to confirm, where staff choose walking or riding (and, at the pro shop, the rate) before adding them. **Add guests** in the tee time panel does the same without dragging. Guests are priced like walk-ins and added to the group's bill, so they count toward the course's revenue. On the golfer's account they're listed (how many guests each round, and guests brought in total) but their fees aren't counted as the golfer's own spending: **Own spend** is the golfer's share of each group's payments, split evenly across the players.
+
+**Walking or riding.** Walk-ins and guests are booked as walking or riding (riding adds a gas cart per player), and each group in the panel shows which.
+
+![Dragging a golfer's name to add two guests](docs/screenshots/add-guests-drag.png)
+
 **Calendar.** The 📅 button next to Today opens a month calendar to jump the tee sheet to any date.
 
 **Manager tools.** Signed in as a manager, the app shows a **Waiver** button where the manager can change the wording. Each save is a new version; drivers who already signed stay tied to the version they read.
