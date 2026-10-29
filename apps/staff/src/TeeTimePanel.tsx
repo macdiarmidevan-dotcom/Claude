@@ -148,8 +148,8 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, course, stat
               {spotsLeft > 0 && b.status !== "no_show" && <Action label="Add guests" onPress={() => setGuestsFor({ id: b.id, count: 1 })} />}
               {b.status === "confirmed" && <Action label="No-show" onPress={() => run(() => client.noShow(b.id))} />}
               {(b.status === "confirmed" || b.status === "checked_in") && <Action label="Move" onPress={() => setMoving(b)} />}
-              {b.status === "confirmed" && (
-                <Action label="Cancel" danger onPress={() => setCancelling(b.id)} />
+              {(b.status === "confirmed" || b.status === "no_show") && (
+                <Action label="Remove" danger onPress={() => setCancelling(b.id)} />
               )}
             </View>
           )}
@@ -168,22 +168,14 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, course, stat
             />
           )}
           {cancelling === b.id && (
-            <View style={{ marginTop: 10 }} accessibilityLiveRegion="polite">
-              <Text style={styles.muted}>
-                Cancel {b.customerName}'s booking for {b.players} {b.players === 1 ? "player" : "players"}? Their spots open up again.
-              </Text>
-              <View style={styles.actions}>
-                <Action
-                  label="Cancel booking"
-                  danger
-                  onPress={() => {
-                    setCancelling(undefined);
-                    run(() => client.cancel(b.id));
-                  }}
-                />
-                <Action label="Keep booking" onPress={() => setCancelling(undefined)} />
-              </View>
-            </View>
+            <RemoveForm
+              booking={b}
+              onCancel={() => setCancelling(undefined)}
+              onRemove={(count) => {
+                setCancelling(undefined);
+                run(() => (count >= b.players ? client.cancel(b.id) : client.removePlayers(b.id, count)));
+              }}
+            />
           )}
           {accountFor?.id === b.id && (
             <>
@@ -737,6 +729,38 @@ function WalkInForm(props: {
 }
 
 /** Adds guests to a golfer's group. They're priced into the group's booking, not the golfer's own account. */
+/** Takes the whole group off the tee sheet, or just the players who aren't coming. */
+function RemoveForm({ booking, onRemove, onCancel }: { booking: SheetBooking; onRemove: (count: number) => void; onCancel: () => void }) {
+  const [count, setCount] = useState(booking.players);
+  const whole = count >= booking.players;
+  const label = whole ? (booking.players === 1 ? "Remove" : "Remove whole group") : `Remove ${count} ${count === 1 ? "player" : "players"}`;
+  return (
+    <View style={{ marginTop: 10 }} accessibilityLiveRegion="polite">
+      <Text style={[styles.name, { marginBottom: 8 }]}>Remove from the tee sheet</Text>
+      {booking.players > 1 && (
+        <Row label="Remove">
+          {Array.from({ length: booking.players - 1 }, (_, i) => i + 1).map((n) => (
+            <Toggle key={n} label={`${n} ${n === 1 ? "player" : "players"}`} on={count === n} onPress={() => setCount(n)} />
+          ))}
+          <Toggle label="Whole group" on={whole} onPress={() => setCount(booking.players)} />
+        </Row>
+      )}
+      <Text style={styles.muted}>
+        {whole
+          ? `${booking.customerName}'s booking for ${booking.players} ${booking.players === 1 ? "player" : "players"} is cancelled and the spots open up again.`
+          : `${booking.customerName} stays booked with ${booking.players - count} ${booking.players - count === 1 ? "player" : "players"}. Guests come off first, with their carts, and the bill drops to match.`}
+      </Text>
+      {booking.payment.paidCents > 0 && (
+        <Text style={styles.warning}>They've already paid {money(booking.payment.paidCents)}. Anything they're owed back has to be refunded separately.</Text>
+      )}
+      <View style={styles.actions}>
+        <Action label={label} danger onPress={() => onRemove(count)} />
+        <Action label="Keep them" onPress={onCancel} />
+      </View>
+    </View>
+  );
+}
+
 function GuestForm(props: {
   booking: SheetBooking;
   initialCount: number;

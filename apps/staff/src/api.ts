@@ -538,6 +538,7 @@ function createHttpClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "ap
     noShow: (id: string) => request(`/bookings/${id}/no-show`, { method: "POST" }),
     cancel: (id: string) => request(`/bookings/${id}/cancel`, { method: "POST" }),
     move: (id: string, teeTimeId: string) => request(`/bookings/${id}/move`, { method: "POST", body: { teeTimeId } }),
+    removePlayers: (id: string, count: number) => request(`/bookings/${id}/remove-players`, { method: "POST", body: { count } }),
     addGuests: (id: string, guests: { count: number; riding: boolean; residency?: "resident" | "nonresident" }) =>
       request(`/bookings/${id}/guests`, { method: "POST", body: guests }),
   };

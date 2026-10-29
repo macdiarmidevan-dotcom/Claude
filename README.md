@@ -161,6 +161,10 @@ Each row shows the time, filled spots, the groups (âœ“ checked in at the shop, â
 
 **Moving a group.** Drag a golfer's name up or down the tee sheet to move their whole group to another time. The time under the name is outlined: blue with "Move here" when the group fits, red with "No room" when it doesn't (or it's blocked). Letting go moves them (nothing else opens), and a bar at the top says where they went with an **Undo** button. Holding the name near the top or bottom of the list scrolls it, so earlier or later times can be reached. On iPads and phones, a finger on a name drags it; scroll the sheet by the times or open spots. Groups that are booked or checked in can be moved; ones already on the course can't. **Move** in the tee time panel does the same by picking a time.
 
+**Removing golfers.** Tap a time and press **Remove** on the group. Pick **Whole group** to cancel the booking and open its spots, or pick how many players aren't coming (2 of a foursome, say) to keep the rest booked. Taking players off drops the bill by their green fees, replay fees and carts, guests first. Groups that haven't checked in can be removed, including no-shows. A group that has already paid more than its new total is refused, since that would need a refund.
+
+![Removing one player from a foursome](docs/screenshots/remove-players.png)
+
 **Check in.** Tapping a golfer's name opens their tee time with their group outlined and a large **Check in** button showing what's due. At the pro shop it takes payment (and any items) and checks them in. Until a group has paid anything, the checkout also has **Rate** (nonresident/resident) and **Walk/ride** choices for the whole group: changing them re-prices the round, and the **Take $X & check in** amount updates with them and with each item added. On the starter screen, groups the pro shop has checked in get **Check in at the tee**, which asks for cart numbers and waivers and sends them off.
 
 ![Dragging a group to another tee time](docs/screenshots/move-group-drag.png)
