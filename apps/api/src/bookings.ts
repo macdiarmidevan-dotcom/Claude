@@ -342,6 +342,11 @@ export async function checkIn(
     payment?: { method: PaymentMethod } | undefined;
     cartNumbers?: string[] | undefined;
     waivers?: WaiverSignature[] | undefined;
+    /**
+     * The pro shop's call on the round, made at the counter: every player's rate (resident or
+     * nonresident) and whether the group walks or rides. Re-prices the round before payment.
+     */
+    round?: { residency: PlayerProfile["residency"]; riding: boolean } | undefined;
     /** Pro shop items bought at check-in (water, snacks, balls), rung up as one sale. */
     items?: { lines: SaleLineInput[]; paymentMethod: SalePaymentMethod } | undefined;
     staffId?: string | undefined;
@@ -353,6 +358,7 @@ export async function checkIn(
          FROM bookings b JOIN customers c ON c.id = b.customer_id WHERE b.id = $1 AND b.course_id = $2 FOR UPDATE OF b`,
       [id, course.id],
     );
+    if (opts.round) await repriceRound(client, course, id, opts.round);
     if (opts.items?.lines.length) {
       await insertSale(client, course, opts.staffId, { ...opts.items, golferId: locked[0]?.golfer_id ?? null });
     }
@@ -366,6 +372,36 @@ export async function checkIn(
     await changeStatus(client, course, id, "checked_in");
   });
   return getBooking(db, course, id);
+}
+
+/**
+ * Prices the whole group again at one rate, walking or riding, e.g. when the pro shop confirms
+ * they're residents. Green fees and carts are replaced; other extras stay. Only for groups that
+ * haven't paid anything yet, so a payment never ends up against a different price.
+ */
+async function repriceRound(client: DbClient, course: Course, id: string, round: { residency: PlayerProfile["residency"]; riding: boolean }) {
+  const booking = await getBooking(client, course, id);
+  if (booking.payment.paidCents > 0) throw conflict("already_paid", "This group has already paid, so its price can't change here");
+  const q = await buildQuote(
+    client,
+    course,
+    {
+      teeTimeId: booking.teeTime.id,
+      holes: booking.holes,
+      players: Array.from({ length: booking.players }, () => ({ residency: round.residency, ageGroup: "adult" as const })),
+      addOns: round.riding ? [{ code: "gas_cart", quantity: booking.players }] : [],
+    },
+    booking.teeTime,
+  );
+  await client.query("DELETE FROM booking_lines WHERE booking_id = $1 AND (kind = 'green_fee' OR code = 'gas_cart')", [id]);
+  for (const line of q.lines) {
+    await client.query(
+      `INSERT INTO booking_lines (booking_id, kind, code, description, quantity, unit_cents, total_cents)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [id, line.kind, line.code, line.description, line.quantity, line.unitCents, line.totalCents],
+    );
+  }
+  await client.query("UPDATE bookings SET total_cents = (SELECT COALESCE(sum(total_cents), 0) FROM booking_lines WHERE booking_id = $1) WHERE id = $1", [id]);
 }
 
 /** Starter check-in at the first tee. Only groups the pro shop has checked in can go. */
@@ -568,7 +604,9 @@ export async function listBookingsForDay(db: DbClient, course: Course, start: Da
             CASE WHEN c.account_created_at IS NOT NULL THEN c.id END AS golfer_id,
             ${PAYMENT_COLUMNS},
             (SELECT array_agg(cart_number) FROM cart_waivers WHERE booking_id = b.id) AS signed_carts,
-            (cardinality(b.cart_numbers) > 0 OR EXISTS (SELECT 1 FROM booking_lines l WHERE l.booking_id = b.id AND l.code = 'gas_cart')) AS riding
+            (cardinality(b.cart_numbers) > 0 OR EXISTS (SELECT 1 FROM booking_lines l WHERE l.booking_id = b.id AND l.code = 'gas_cart')) AS riding,
+            EXISTS (SELECT 1 FROM booking_lines l JOIN rate_rules r ON r.course_id = b.course_id AND r.code = l.code
+                     WHERE l.booking_id = b.id AND l.kind = 'green_fee' AND r.residency = 'resident') AS resident
        FROM bookings b JOIN customers c ON c.id = b.customer_id JOIN tee_times t ON t.id = b.tee_time_id
       WHERE b.course_id = $1 AND t.starts_at >= $2 AND t.starts_at < $3 AND b.status <> 'cancelled'
       ORDER BY b.created_at`,
@@ -592,5 +630,7 @@ export async function listBookingsForDay(db: DbClient, course: Course, start: Da
     signedCarts: (r.signed_carts ?? []) as string[],
     /** Riding when the group paid for carts or has carts assigned; otherwise walking. */
     riding: r.riding as boolean,
+    /** Paying resident rates. */
+    resident: r.resident as boolean,
   }));
 }

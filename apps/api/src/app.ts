@@ -178,6 +178,7 @@ const checkInBody = z.object({
   waivers,
   payment: z.object({ method: paymentMethod }).optional(),
   items: z.object({ lines: z.array(saleLine).max(100), paymentMethod: salePaymentMethod }).optional(),
+  round: z.object({ residency: z.enum(["resident", "nonresident"]), riding: z.boolean() }).optional(),
 });
 const teeOffBody = z.object({ cartNumbers: cartNumbers.optional(), waivers });
 const cartsBody = z.object({ cartNumbers, waivers });

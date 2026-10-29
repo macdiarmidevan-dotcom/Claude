@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { quotePlayer } from "@golf/core";
 import type { ScrollViewInstance } from "react-native";
-import type { Client, Course, GolferAccount, PaymentMethod, Product, SalePaymentMethod, SheetBooking, SheetTeeTime, Station, Waiver } from "./api";
+import type { Client, Course, RoundChoice, GolferAccount, PaymentMethod, Product, SalePaymentMethod, SheetBooking, SheetTeeTime, Station, Waiver } from "./api";
 import { WaiverModal } from "./WaiverModal";
 import { GolferPicker, useSearch } from "./Golfers";
 import { colors, type WebPress, formatTime, money, paymentMethodLabel, statusColor, statusLabel } from "./theme";
@@ -216,9 +216,10 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, course, stat
             <CheckoutForm
               client={client}
               booking={b}
-              onPay={(method, items) => {
+              price={price}
+              onPay={(method, items, round) => {
                 setPayingFor(undefined);
-                run(() => client.checkIn(b.id, method, items));
+                run(() => client.checkIn(b.id, method, items, round));
               }}
               onCancel={() => setPayingFor(undefined)}
             />
@@ -460,12 +461,14 @@ const ITEM_METHODS: { method: SalePaymentMethod; label: string }[] = [
 function CheckoutForm({
   client,
   booking,
+  price,
   onPay,
   onCancel,
 }: {
   client: Client;
   booking: SheetBooking;
-  onPay: (m: PaymentMethod | undefined, items?: { lines: { productId: string; quantity: number }[]; paymentMethod: SalePaymentMethod }) => void;
+  price: PriceFn;
+  onPay: (m: PaymentMethod | undefined, items?: { lines: { productId: string; quantity: number }[]; paymentMethod: SalePaymentMethod }, round?: RoundChoice) => void;
   onCancel: () => void;
 }) {
   const [products, setProducts] = useState<Product[]>();
@@ -481,7 +484,14 @@ function CheckoutForm({
     client.posSettings().then((x) => setTaxBps(x.salesTaxBps)).catch(() => undefined);
   }, [client]);
 
-  const owed = booking.payment.balanceCents;
+  // The rate and walking/riding can be changed at the counter until the group has paid anything.
+  const canReprice = booking.payment.paidCents === 0;
+  const [resident, setResident] = useState(booking.resident);
+  const [riding, setRiding] = useState(booking.riding);
+  const changed = canReprice && (resident !== booking.resident || riding !== booking.riding);
+  const repriced = changed ? price({ players: booking.players, holes: booking.holes, resident, riding }) : undefined;
+  const round: RoundChoice | undefined = changed && repriced !== undefined ? { residency: resident ? "resident" : "nonresident", riding } : undefined;
+  const owed = round ? repriced! : booking.payment.balanceCents;
   const add = (p: Product) =>
     setCart((c) => (c.some((x) => x.product.id === p.id) ? c.map((x) => (x.product.id === p.id ? { ...x, quantity: x.quantity + 1 } : x)) : [...c, { product: p, quantity: 1 }]));
   const setQty = (id: string, n: number) => setCart((c) => (n < 1 ? c.filter((x) => x.product.id !== id) : c.map((x) => (x.product.id === id ? { ...x, quantity: n } : x))));
@@ -500,9 +510,23 @@ function CheckoutForm({
   return (
     <View style={{ marginTop: 10 }}>
       <Text style={styles.section}>Check in {booking.customerName}</Text>
+      {canReprice && (
+        <>
+          <Row label="Rate">
+            <Toggle label="Nonresident" on={!resident} onPress={() => setResident(false)} />
+            <Toggle label="Resident" on={resident} onPress={() => setResident(true)} />
+          </Row>
+          <Row label="Walk/ride">
+            <Toggle label="Walking" on={!riding} onPress={() => setRiding(false)} />
+            <Toggle label="Riding" on={riding} onPress={() => setRiding(true)} />
+          </Row>
+          {changed && repriced === undefined && <Text style={styles.warning}>No rate is set for that, so the round stays at its booked price.</Text>}
+        </>
+      )}
       <View style={styles.billRow}>
         <Text style={styles.muted}>
-          Round: {booking.players} {booking.players === 1 ? "player" : "players"}, {booking.holes} holes, {booking.riding ? "riding" : "walking"}
+          Round: {booking.players} {booking.players === 1 ? "player" : "players"}, {booking.holes} holes, {(round ? riding : booking.riding) ? "riding" : "walking"}
+          {round ? `, ${resident ? "resident" : "nonresident"}` : ""}
         </Text>
         <Text style={styles.name}>{owed > 0 ? money(owed) : "Paid"}</Text>
       </View>
@@ -577,7 +601,11 @@ function CheckoutForm({
           label={total > 0 ? `Take ${money(total)} & check in` : "Check in"}
           primary
           onPress={() =>
-            onPay(owed > 0 ? method : undefined, cart.length ? { lines: cart.map((x) => ({ productId: x.product.id, quantity: x.quantity })), paymentMethod: owed > 0 ? payItemsWith : itemMethod } : undefined)
+            onPay(
+              owed > 0 ? method : undefined,
+              cart.length ? { lines: cart.map((x) => ({ productId: x.product.id, quantity: x.quantity })), paymentMethod: owed > 0 ? payItemsWith : itemMethod } : undefined,
+              round,
+            )
           }
         />
         <Action label="Back" onPress={onCancel} />

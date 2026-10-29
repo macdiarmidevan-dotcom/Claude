@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, FlatList, Modal, PanResponder, Pressable, StyleSheet, Text, useWindowDimensions, View, type StyleProp, type ViewStyle } from "react-native";
+import type { HostInstance } from "react-native";
 import { findRate } from "@golf/core";
 import { ApiError, type Client, type Course, type SheetBooking, type SheetTeeTime, type Station } from "./api";
 import { addDays, dayParts, nowIn, todayIn, weekStart } from "./dates";
@@ -153,8 +154,6 @@ export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu,
     const from = sheet?.find((t) => t.id === b.teeTimeId);
     try {
       await client.move(b.id, to.id);
-      setSelectedId(to.id);
-      setFocusId(b.id);
       setNotice({
         text: `Moved ${b.customerName} to ${formatTime(to.localTime)}`,
         undo: from
@@ -162,7 +161,6 @@ export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu,
               setNotice(undefined);
               try {
                 await client.move(b.id, from.id);
-                setSelectedId(from.id);
               } catch (e) {
                 setNotice({ text: e instanceof Error ? e.message : "Couldn't move them back", key: Date.now() });
               }
@@ -175,6 +173,86 @@ export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu,
       setNotice({ text: e instanceof Error ? e.message : "Couldn't move the group", key: Date.now() });
     }
     load();
+  }
+
+  // Dragging a group near the top or bottom edge of the list scrolls it, so any time of day can
+  // be reached. dy is measured from where the drag started, so scrolling is added back in.
+  const scrollY = useRef(0);
+  const listWrap = useRef<HostInstance>(null);
+  const listBox = useRef({ top: 0, height: 0 });
+  const moving = useRef<{ booking: SheetBooking; lineIndex: number; dy: number; pageY: number; scroll0: number; timer?: ReturnType<typeof setInterval> }>(undefined);
+  const contentHeight = (offsets.at(-1) ?? 0) + ROW_HEIGHT;
+  const targetOf = (m: NonNullable<typeof moving.current>) => {
+    const t = teeTimeAt(m.lineIndex, m.dy + scrollY.current - m.scroll0);
+    return t && t.id !== m.booking.teeTimeId ? t : undefined;
+  };
+  const latest = useRef({ targetOf, hasRoom, contentHeight });
+  latest.current = { targetOf, hasRoom, contentHeight };
+  const showTarget = () => {
+    const m = moving.current;
+    if (!m) return;
+    const t = latest.current.targetOf(m);
+    setMoveDrag({ booking: m.booking, targetId: t?.id, ok: !!t && latest.current.hasRoom(t, m.booking) });
+  };
+  const edge = (pageY: number) => {
+    const { top, height } = listBox.current;
+    if (!height) return 0;
+    if (pageY < top + 48) return -1;
+    if (pageY > top + height - 48) return 1;
+    return 0;
+  };
+  const stopMoving = () => {
+    if (moving.current?.timer) clearInterval(moving.current.timer);
+    moving.current = undefined;
+    setMoveDrag(undefined);
+  };
+  useEffect(() => stopMoving, []);
+
+  function onMoveDrag(b: SheetBooking, lineIndex: number, dy: number, pageY: number) {
+    if (!moving.current) {
+      moving.current = { booking: b, lineIndex, dy, pageY, scroll0: scrollY.current };
+      listWrap.current?.measureInWindow((_x, top, _w, height) => (listBox.current = { top, height }));
+    }
+    const m = moving.current;
+    m.dy = dy;
+    m.pageY = pageY;
+    if (edge(pageY) && !m.timer) {
+      m.timer = setInterval(() => {
+        const cur = moving.current;
+        const dir = cur ? edge(cur.pageY) : 0;
+        if (!cur || !dir) {
+          if (cur?.timer) clearInterval(cur.timer);
+          if (cur) cur.timer = undefined;
+          return;
+        }
+        const max = Math.max(0, latest.current.contentHeight - listBox.current.height);
+        const next = Math.max(0, Math.min(max, scrollY.current + dir * 10));
+        if (next === scrollY.current) return;
+        scrollY.current = next;
+        listRef.current?.scrollToOffset({ offset: next, animated: false });
+        showTarget();
+      }, 16);
+    }
+    showTarget();
+  }
+
+  function onMoveDrop(b: SheetBooking, dy: number) {
+    const m = moving.current;
+    if (m) m.dy = dy;
+    const t = m && targetOf(m);
+    stopMoving();
+    if (!t) return;
+    if (!hasRoom(t, b)) {
+      setNotice({
+        text:
+          t.status === "blocked"
+            ? `${formatTime(t.localTime)} is blocked`
+            : `${formatTime(t.localTime)} doesn't have room for ${b.players} ${b.players === 1 ? "player" : "players"}`,
+        key: Date.now(),
+      });
+      return;
+    }
+    moveGroup(b, t);
   }
 
   const selected = sheet?.find((t) => t.id === selectedId);
@@ -217,7 +295,7 @@ export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu,
       )}
 
       <View style={{ flex: 1, flexDirection: "row" }}>
-        <View style={{ flex: 1, minWidth: 0 }}>
+        <View ref={listWrap} style={{ flex: 1, minWidth: 0 }}>
           {!sheet ? (
             <ActivityIndicator style={{ marginTop: 40 }} color={colors.primary} />
           ) : sheet.length === 0 ? (
@@ -225,6 +303,8 @@ export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu,
           ) : (
             <FlatList
               ref={listRef}
+              onScroll={(e) => (scrollY.current = e.nativeEvent.contentOffset.y)}
+              scrollEventThrottle={16}
               data={lines}
               extraData={[selectedId, moveDrag]}
               keyExtractor={(l) => l.key}
@@ -257,28 +337,9 @@ export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu,
                     }}
                     movingId={moveDrag?.booking.id}
                     moveTarget={moveDrag?.targetId === item.teeTime.id ? (moveDrag.ok ? "ok" : "full") : undefined}
-                    onMoveDrag={(b, dy) => {
-                      const t = teeTimeAt(lineIndex, dy);
-                      const target = t && t.id !== b.teeTimeId ? t : undefined;
-                      setMoveDrag({ booking: b, targetId: target?.id, ok: !!target && hasRoom(target, b) });
-                    }}
-                    onMoveDrop={(b, dy) => {
-                      setMoveDrag(undefined);
-                      const t = teeTimeAt(lineIndex, dy);
-                      if (!t || t.id === b.teeTimeId) return;
-                      if (!hasRoom(t, b)) {
-                        setNotice({
-                          text:
-                            t.status === "blocked"
-                              ? `${formatTime(t.localTime)} is blocked`
-                              : `${formatTime(t.localTime)} doesn't have room for ${b.players} ${b.players === 1 ? "player" : "players"}`,
-                          key: Date.now(),
-                        });
-                        return;
-                      }
-                      moveGroup(b, t);
-                    }}
-                    onMoveCancel={() => setMoveDrag(undefined)}
+                    onMoveDrag={(b, dy, pageY) => onMoveDrag(b, lineIndex, dy, pageY)}
+                    onMoveDrop={onMoveDrop}
+                    onMoveCancel={stopMoving}
                   />
                 )
               }
@@ -393,7 +454,7 @@ interface RowProps {
   /** This row is under a group being dragged: "ok" if it has room for them. */
   moveTarget?: "ok" | "full";
   /** A golfer's name is being dragged dy pixels up or down, to move their group. */
-  onMoveDrag: (booking: SheetBooking, dy: number) => void;
+  onMoveDrag: (booking: SheetBooking, dy: number, pageY: number) => void;
   onMoveDrop: (booking: SheetBooking, dy: number) => void;
   onMoveCancel: () => void;
   /** A golfer's name was dragged right across open spots: add that many guests to their group. */
@@ -432,7 +493,7 @@ function TeeTimeRow({ teeTime, priceCents, compact, selected, isNext, past, onPr
       setDrag(undefined);
       if (count > 0) onAddGuests(b.id, count);
     },
-    onMoveDrag: (dy: number) => onMoveDrag(b, dy),
+    onMoveDrag: (dy: number, pageY: number) => onMoveDrag(b, dy, pageY),
     onMoveDrop: (dy: number) => onMoveDrop(b, dy),
     onCancel: () => {
       setDrag(undefined);
@@ -559,7 +620,7 @@ function DragName(props: {
   onTap: () => void;
   onGuestDrag: (count: number) => void;
   onGuestDrop: (count: number) => void;
-  onMoveDrag: (dy: number) => void;
+  onMoveDrag: (dy: number, pageY: number) => void;
   onMoveDrop: (dy: number) => void;
   onCancel: () => void;
   style: StyleProp<ViewStyle>;
@@ -583,7 +644,7 @@ function DragName(props: {
           else if (canMove && Math.abs(g.dy) > 8 && Math.abs(g.dy) > Math.abs(g.dx) * 1.5) mode.current = "move";
         }
         if (mode.current === "guest") onGuestDrag(guests(g.dx));
-        if (mode.current === "move") onMoveDrag(g.dy);
+        if (mode.current === "move") onMoveDrag(g.dy, g.moveY);
       },
       // Let the list scroll unless the name is already being dragged.
       onPanResponderTerminationRequest: () => mode.current === "none",
@@ -609,7 +670,8 @@ function DragName(props: {
 }
 
 const styles = StyleSheet.create({
-  draggable: { cursor: "grab", userSelect: "none" } as object,
+  // touchAction: on iPads and phones a finger on a name drags it rather than scrolling the page.
+  draggable: { cursor: "grab", userSelect: "none", touchAction: "none" } as object,
   tappable: { cursor: "pointer", userSelect: "none" } as object,
   rowDropOk: { backgroundColor: colors.primaryLight, outlineColor: colors.primary, outlineWidth: 2, outlineStyle: "dashed", outlineOffset: -2 } as object,
   rowDropFull: { backgroundColor: "#fbeceb", outlineColor: colors.noShow, outlineWidth: 2, outlineStyle: "dashed", outlineOffset: -2 } as object,
