@@ -138,21 +138,33 @@ async function expectedFor(db: DbClient, course: Course, date: string) {
 
 export async function getDayClose(db: DbClient, course: Course, date: string) {
   const expected = await expectedFor(db, course, date);
+  const { rows: opens } = await db.query(
+    `SELECT d.*, u.name AS opened_by_name FROM day_opens d LEFT JOIN staff_users u ON u.id = d.opened_by
+      WHERE d.course_id = $1 AND d.date = $2`,
+    [course.id, date],
+  );
   const { rows } = await db.query(
     `SELECT d.*, u.name AS closed_by_name FROM day_closes d LEFT JOIN staff_users u ON u.id = d.closed_by
       WHERE d.course_id = $1 AND d.date = $2`,
     [course.id, date],
   );
+  const o = opens[0];
   const r = rows[0];
   return {
     date,
     expected,
+    open: o
+      ? { startingCashCents: o.starting_cash_cents, openedBy: o.opened_by_name ?? null, openedAt: o.opened_at.toISOString() }
+      : null,
     close: r
       ? {
           // As counted at the time. Sales after the close show up in expected but not here.
-          expectedCashCents: r.expected_cash_cents,
+          startingCashCents: r.starting_cash_cents,
+          cashTakenCents: r.expected_cash_cents,
+          // What should have been in the drawer: the starting cash plus the cash taken.
+          expectedCashCents: r.starting_cash_cents + r.expected_cash_cents,
           countedCashCents: r.counted_cash_cents,
-          overShortCents: r.counted_cash_cents - r.expected_cash_cents,
+          overShortCents: r.counted_cash_cents - r.starting_cash_cents - r.expected_cash_cents,
           note: r.note,
           closedBy: r.closed_by_name ?? null,
           closedAt: r.closed_at.toISOString(),
@@ -162,8 +174,28 @@ export async function getDayClose(db: DbClient, course: Course, date: string) {
 }
 
 /**
- * Closes a day: staff count the cash drawer and the difference from expected is kept. Once a
- * day is closed only a manager can close it again (say, after a recount).
+ * Starts a day: the pro shop counts the starting cash into the drawer. Once it's entered only a
+ * manager can change it, and not after the day is closed.
+ */
+export async function openDay(db: DbClient, course: Course, staff: { id?: string; isManager: boolean }, date: string, input: { startingCashCents: number }) {
+  dayRange(course, date);
+  const { rows: closed } = await db.query("SELECT 1 FROM day_closes WHERE course_id = $1 AND date = $2", [course.id, date]);
+  if (closed.length) throw conflict("already_closed", "This day is already closed");
+  const { rowCount } = await db.query(
+    `INSERT INTO day_opens (course_id, date, starting_cash_cents, opened_by)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (course_id, date) DO UPDATE SET starting_cash_cents = EXCLUDED.starting_cash_cents, opened_by = EXCLUDED.opened_by, opened_at = now()
+     WHERE $5`,
+    [course.id, date, input.startingCashCents, staff.id ?? null, staff.isManager],
+  );
+  if (!rowCount) throw conflict("already_opened", "The starting cash is already in. Ask a manager to change it");
+  return getDayClose(db, course, date);
+}
+
+/**
+ * Closes a day: staff count everything in the cash drawer, starting cash included, and the
+ * difference from the starting cash plus the cash taken is kept. Once a day is closed only a
+ * manager can close it again (say, after a recount).
  */
 export async function closeDay(
   db: DbClient,
@@ -173,16 +205,20 @@ export async function closeDay(
   input: { countedCashCents: number; note?: string | null },
 ) {
   dayRange(course, date);
+  const { rows: opens } = await db.query("SELECT starting_cash_cents FROM day_opens WHERE course_id = $1 AND date = $2", [course.id, date]);
+  if (!opens[0]) throw conflict("not_opened", "Enter the starting cash for this day first");
+  const starting = opens[0].starting_cash_cents;
   const expected = await expectedFor(db, course, date);
-  const diff = input.countedCashCents - expected.cash;
+  const diff = input.countedCashCents - starting - expected.cash;
   if (diff !== 0 && !input.note?.trim()) throw badRequest("note_required", "The drawer is over or short. Add a note saying why");
   const { rowCount } = await db.query(
-    `INSERT INTO day_closes (course_id, date, expected, expected_cash_cents, counted_cash_cents, note, closed_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `INSERT INTO day_closes (course_id, date, expected, expected_cash_cents, starting_cash_cents, counted_cash_cents, note, closed_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
      ON CONFLICT (course_id, date) DO UPDATE SET expected = EXCLUDED.expected, expected_cash_cents = EXCLUDED.expected_cash_cents,
-       counted_cash_cents = EXCLUDED.counted_cash_cents, note = EXCLUDED.note, closed_by = EXCLUDED.closed_by, closed_at = now()
-     WHERE $8`,
-    [course.id, date, JSON.stringify(expected), expected.cash, input.countedCashCents, input.note?.trim() || null, staff.id ?? null, staff.isManager],
+       starting_cash_cents = EXCLUDED.starting_cash_cents, counted_cash_cents = EXCLUDED.counted_cash_cents, note = EXCLUDED.note,
+       closed_by = EXCLUDED.closed_by, closed_at = now()
+     WHERE $9`,
+    [course.id, date, JSON.stringify(expected), expected.cash, starting, input.countedCashCents, input.note?.trim() || null, staff.id ?? null, staff.isManager],
   );
   if (!rowCount) throw conflict("already_closed", "This day is already closed. Ask a manager to close it again");
   return getDayClose(db, course, date);

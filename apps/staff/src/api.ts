@@ -381,7 +381,18 @@ export interface Report {
 export interface DayClose {
   date: string;
   expected: Record<MoneyMethod, number>;
-  close: { expectedCashCents: number; countedCashCents: number; overShortCents: number; note: string | null; closedBy: string | null; closedAt: string } | null;
+  open: { startingCashCents: number; openedBy: string | null; openedAt: string } | null;
+  /** expectedCashCents is the starting cash plus the cash taken; countedCashCents is the whole drawer. */
+  close: {
+    startingCashCents: number;
+    cashTakenCents: number;
+    expectedCashCents: number;
+    countedCashCents: number;
+    overShortCents: number;
+    note: string | null;
+    closedBy: string | null;
+    closedAt: string;
+  } | null;
 }
 
 export interface Coworker {
@@ -512,6 +523,7 @@ function createHttpClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "ap
     savePosSettings: (settings: { salesTaxBps: number }) => request<{ salesTaxBps: number }>("/settings/pos", { method: "PUT", body: settings }),
     report: (from: string, to: string) => request<Report>(`/reports?from=${from}&to=${to}`),
     dayClose: (date: string) => request<DayClose>(`/closes/${date}`),
+    openDay: (date: string, open: { startingCashCents: number }) => request<DayClose>(`/opens/${date}`, { method: "PUT", body: open }),
     closeDay: (date: string, close: { countedCashCents: number; note?: string | null }) =>
       request<DayClose>(`/closes/${date}`, { method: "PUT", body: close }),
     searchGolfers: (q: string) => request<GolferAccount[]>(`/golfers?q=${encodeURIComponent(q)}`),

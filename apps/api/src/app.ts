@@ -37,7 +37,7 @@ import {
   savePosSettings,
   updateProduct,
 } from "./pos.ts";
-import { closeDay, getDayClose, report } from "./reports.ts";
+import { closeDay, getDayClose, openDay, report } from "./reports.ts";
 import {
   cancelCardPayment,
   createTerminal,
@@ -139,6 +139,7 @@ const ACTIONS: Record<string, string> = {
   "POST /v1/courses/:slug/sales": "Made a sale",
   "POST /v1/courses/:slug/sales/:id/refund": "Refunded a sale",
   "PUT /v1/courses/:slug/settings/pos": "Changed sales tax",
+  "PUT /v1/courses/:slug/opens/:date": "Entered the starting cash",
   "PUT /v1/courses/:slug/closes/:date": "Closed the day",
   "PUT /v1/courses/:slug/settings/payments": "Changed card payment settings",
   "POST /v1/courses/:slug/terminals": "Added a card reader",
@@ -591,6 +592,11 @@ export function buildApp(db: Db, opts: { fetchReport?: FetchReport; paymentsFetc
   });
   const dateParams = z.object({ date: z.iso.date() });
   app.get("/v1/courses/:slug/closes/:date", async (req) => getDayClose(db, await courseFor(req), dateParams.parse(req.params).date));
+  app.put("/v1/courses/:slug/opens/:date", async (req) => {
+    const course = await courseFor(req);
+    const body = z.object({ startingCashCents: z.number().int().min(0).max(10_000_000) }).parse(req.body);
+    return openDay(db, course, { id: req.staff?.user.id, isManager: req.apiKey!.role === "manager" }, dateParams.parse(req.params).date, body);
+  });
   app.put("/v1/courses/:slug/closes/:date", async (req) => {
     const course = await courseFor(req);
     const body = z.object({ countedCashCents: z.number().int().min(0).max(100_000_000), note: z.string().max(500).nullish() }).parse(req.body);

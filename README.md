@@ -179,7 +179,11 @@ If a group marked as a no-show turns up late, **Undo no-show** puts them back to
 
 ![Pro shop register](docs/screenshots/pro-shop-register.png)
 
-**Reports and closing the day.** **Reports** starts with **Close the day**: it shows what the tee sheet and register took today by payment type, and staff count the cash drawer against it. If the drawer is over or short they must say why. Once a day is closed only a manager can count it again. Managers also see reports for today, yesterday, this or last week, or this or last month: revenue before tax (green fees, carts and extras, pro shop), money taken by payment type (prepaid online is shown apart, since the booking provider collected it), sales tax collected, pro shop sales by category, rounds played, occupancy, no-shows, players by booking source and staff hours, plus a day-by-day table. **Download CSV** saves the day-by-day table for the bookkeeper. Revenue counts on the day of the round; money taken counts on the day it was paid.
+**Starting the day.** On the pro shop station, the tee sheet and register stay closed each morning until someone counts the starting cash into the drawer and enters it under **Start the day**. Once it's in, only a manager can change it (until the day is closed).
+
+![Start the day](docs/screenshots/start-day.png)
+
+**Reports and closing the day.** **Reports** starts with the **Cash drawer**: the starting cash, what the tee sheet and register took today by payment type, and the cash that should be in the drawer. At the end of the day staff count the whole drawer, starting cash included, and enter the final amount. If it's over or short they must say why. Once a day is closed only a manager can count it again. Reports is hidden on the starter station; pro shop staff see only the cash drawer. Managers also see reports for today, yesterday, this or last week, or this or last month: revenue before tax (green fees, carts and extras, pro shop), money taken by payment type (prepaid online is shown apart, since the booking provider collected it), sales tax collected, pro shop sales by category, rounds played, occupancy, no-shows, players by booking source and staff hours, plus a day-by-day table. **Download CSV** saves the day-by-day table for the bookkeeper. Revenue counts on the day of the round; money taken counts on the day it was paid.
 
 ![Reports](docs/screenshots/reports.png)
 
