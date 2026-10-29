@@ -181,6 +181,66 @@ export interface GolferProfile extends GolferAccount {
   history: { bookingId: string; startsAt: string; course: string; players: number; holes: number; status: BookingStatus; source: string; totalCents: number; paidCents: number }[];
 }
 
+export interface Shift {
+  id: string;
+  staff: { id: string; name: string } | null;
+  employeeType: { id: string; name: string } | null;
+  date: string;
+  start: string;
+  end: string;
+  startsAt: string;
+  endsAt: string;
+  hours: number;
+  note: string | null;
+}
+
+export interface ShiftInput {
+  staffUserId?: string | null;
+  employeeTypeId?: string | null;
+  date: string;
+  start: string;
+  end: string;
+  note?: string | null;
+}
+
+export interface Punch {
+  id: string;
+  staff: { id: string; name: string };
+  shiftId: string | null;
+  clockIn: string;
+  clockOut: string | null;
+  hours: number | null;
+  edited: boolean;
+}
+
+export interface Timesheet {
+  staff: { id: string; name: string };
+  scheduledHours: number;
+  workedHours: number;
+  open: boolean;
+  punches: Punch[];
+}
+
+export type SwapStatus = "awaiting_coworker" | "awaiting_manager" | "approved" | "declined" | "rejected" | "cancelled";
+export type SwapAction = "accept" | "decline" | "approve" | "reject" | "cancel";
+
+export interface Swap {
+  id: string;
+  status: SwapStatus;
+  from: { id: string; name: string };
+  to: { id: string; name: string };
+  offered: Shift;
+  requested: Shift | null;
+  message: string | null;
+  createdAt: string;
+}
+
+export interface Coworker {
+  id: string;
+  name: string;
+  employeeType: string | null;
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -251,6 +311,23 @@ function createHttpClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "ap
     updateEmployeeType: (id: string, patch: { name?: string; active?: boolean }) =>
       request<EmployeeType>(`/employee-types/${id}`, { method: "PATCH", body: patch }),
     activity: () => request<ActivityEntry[]>("/activity"),
+    shifts: (from: string, to: string) => request<Shift[]>(`/shifts?from=${from}&to=${to}`),
+    addShift: (input: ShiftInput) => request<Shift>("/shifts", { method: "POST", body: input }),
+    updateShift: (id: string, patch: Partial<ShiftInput>) => request<Shift>(`/shifts/${id}`, { method: "PATCH", body: patch }),
+    deleteShift: (id: string) => request(`/shifts/${id}`, { method: "DELETE" }),
+    copyWeek: (from: string, to: string) => request<{ copied: number; skipped: number }>("/shifts/copy-week", { method: "POST", body: { from, to } }),
+    clock: () => request<{ open: Punch | null; nextShift: Shift | null }>("/clock"),
+    clockIn: () => request<{ open: Punch | null; nextShift: Shift | null }>("/clock/in", { method: "POST" }),
+    clockOut: () => request<{ open: Punch | null; nextShift: Shift | null }>("/clock/out", { method: "POST" }),
+    timesheets: (from: string, to: string) => request<Timesheet[]>(`/timesheets?from=${from}&to=${to}`),
+    swaps: () => request<Swap[]>("/swaps"),
+    askSwap: (input: { offeredShiftId: string; toUserId: string; requestedShiftId?: string | null; message?: string | null }) =>
+      request<Swap>("/swaps", { method: "POST", body: input }),
+    answerSwap: (id: string, action: SwapAction) => request<Swap>(`/swaps/${id}/${action}`, { method: "POST" }),
+    coworkers: () => request<Coworker[]>("/coworkers"),
+    schedulingSettings: () => request<{ swapsNeedApproval: boolean }>("/settings/scheduling"),
+    saveSchedulingSettings: (settings: { swapsNeedApproval: boolean }) =>
+      request<{ swapsNeedApproval: boolean }>("/settings/scheduling", { method: "PUT", body: settings }),
     searchGolfers: (q: string) => request<GolferAccount[]>(`/golfers?q=${encodeURIComponent(q)}`),
     golfer: (id: string) => request<GolferProfile>(`/golfers/${id}`),
     /** Creates a golfer's account, usually at their first check-in, and links that booking. */

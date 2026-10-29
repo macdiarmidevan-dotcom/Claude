@@ -9,6 +9,11 @@ import {
   type GolferProfile,
   type Role,
   type EmployeeType,
+  type Punch,
+  type Shift,
+  type ShiftInput,
+  type Swap,
+  type SwapAction,
   type StaffUser,
   type ImportResult,
   type ImportRun,
@@ -22,10 +27,18 @@ import {
   type WaiverSignature,
   type WalkIn,
 } from "./api";
-import { todayIn } from "./dates";
+import { addDays, todayIn, weekStart } from "./dates";
 
 export const DEMO = process.env.EXPO_PUBLIC_DEMO === "1";
 export const DEMO_URL = "demo";
+
+/** The UTC offset River Bend (Chicago) is on for a date, e.g. "-05:00". */
+function chicagoOffset(date: string) {
+  const name = new Intl.DateTimeFormat("en-US", { timeZone: "America/Chicago", timeZoneName: "longOffset" })
+    .formatToParts(new Date(`${date}T12:00:00Z`))
+    .find((p) => p.type === "timeZoneName")!.value;
+  return name.replace("GMT", "") || "+00:00";
+}
 
 interface DemoBooking extends SheetBooking {
   paid: { amountCents: number; method: PaymentMethod }[];
@@ -56,6 +69,42 @@ const accounts: (StaffUser & { password: string })[] = [
 const activity: ActivityEntry[] = [];
 const publicUser = ({ password: _, ...u }: StaffUser & { password: string }): StaffUser => u;
 
+// The demo schedule lives outside the client too, so a swap one person asks for is there when
+// the coworker signs in to answer it.
+interface DemoShift {
+  id: string;
+  staffId: string | null;
+  typeId: string | null;
+  date: string;
+  start: string;
+  end: string;
+  note: string | null;
+}
+const shifts: DemoShift[] = [];
+const punches: (Omit<Punch, "staff" | "hours"> & { staffId: string })[] = [];
+const swaps: { id: string; status: Swap["status"]; fromId: string; toId: string; offeredId: string; requestedId: string | null; message: string | null; createdAt: string }[] = [];
+const scheduling = { swapsNeedApproval: true };
+let shiftSeq = 1;
+
+function seedSchedule() {
+  if (shifts.length) return;
+  const monday = weekStart(todayIn(riverBend.timeZone));
+  // Who usually works when: [staff id, type id, start, end, weekdays (0 = Monday)].
+  const pattern: [string, string, string, string, number[]][] = [
+    ["u-2", "et-1", "06:00", "14:00", [0, 1, 2, 3, 4]],
+    ["u-3", "et-2", "06:30", "13:30", [0, 2, 4, 5, 6]],
+    ["u-4", "et-3", "07:00", "15:00", [1, 2, 3, 5, 6]],
+    ["u-5", "et-4", "15:00", "22:00", [2, 3, 4, 5]],
+    ["u-1", "et-1", "09:00", "17:00", [0, 1, 3, 4]],
+  ];
+  for (const week of [0, 7]) {
+    for (const [staffId, typeId, start, end, days] of pattern) {
+      for (const d of days) shifts.push({ id: `sh-${shiftSeq++}`, staffId, typeId, date: addDays(monday, week + d), start, end, note: null });
+    }
+    shifts.push({ id: `sh-${shiftSeq++}`, staffId: null, typeId: "et-4", date: addDays(monday, week + 6), start: "11:00", end: "18:00", note: "Open: Sunday bar" });
+  }
+}
+
 export async function demoSignIn(email: string, password: string) {
   await new Promise((r) => setTimeout(r, 200));
   const a = accounts.find((x) => x.email === email.trim().toLowerCase());
@@ -72,6 +121,72 @@ export function createDemoClient(apiKey: string): Client {
   const managerOnly = () => {
     if (role() !== "manager") throw new ApiError(403, "manager_only", "Only a manager can change this");
   };
+  const needAccount = () => {
+    const a = account();
+    if (!a) throw new ApiError(400, "no_account", "Sign in with your own account to use the time clock and swaps");
+    return a;
+  };
+  const instant = (date: string, time: string) => new Date(`${date}T${time}:00${chicagoOffset(date)}`).toISOString();
+  function shiftOut(sh: DemoShift): Shift {
+    const staff = sh.staffId ? accounts.find((a) => a.id === sh.staffId) : undefined;
+    const type = sh.typeId ? employeeTypes.find((t) => t.id === sh.typeId) : undefined;
+    const startsAt = instant(sh.date, sh.start);
+    let endsAt = instant(sh.date, sh.end);
+    if (endsAt <= startsAt) endsAt = new Date(Date.parse(endsAt) + 86_400_000).toISOString();
+    return {
+      id: sh.id,
+      staff: staff ? { id: staff.id, name: staff.name } : null,
+      employeeType: type ? { id: type.id, name: type.name } : null,
+      date: sh.date,
+      start: sh.start,
+      end: sh.end,
+      startsAt,
+      endsAt,
+      hours: Math.round((Date.parse(endsAt) - Date.parse(startsAt)) / 360_000) / 10,
+      note: sh.note,
+    };
+  }
+  function checkClash(sh: DemoShift, except: string[] = []) {
+    if (!sh.staffId) return;
+    const a = shiftOut(sh);
+    const clash = shifts.some((x) => x.id !== sh.id && !except.includes(x.id) && x.staffId === sh.staffId && (() => {
+      const b = shiftOut(x);
+      return b.startsAt < a.endsAt && b.endsAt > a.startsAt;
+    })());
+    if (clash) throw conflict("overlap", "That person already has a shift at that time");
+  }
+  function clockState() {
+    const me = needAccount();
+    seedSchedule();
+    const open = punches.find((p) => p.staffId === me.id && !p.clockOut);
+    const now = new Date().toISOString();
+    const next = shifts.filter((x) => x.staffId === me.id).map(shiftOut).filter((x) => x.endsAt > now).sort((a, b) => a.startsAt.localeCompare(b.startsAt))[0];
+    return { open: open ? { ...open, staff: { id: me.id, name: me.name }, hours: null } : null, nextShift: next ?? null };
+  }
+  function swapOut(w: (typeof swaps)[number]): Swap {
+    const person = (pid: string) => ({ id: pid, name: accounts.find((a) => a.id === pid)?.name ?? "Someone" });
+    const requested = w.requestedId ? shifts.find((x) => x.id === w.requestedId) : undefined;
+    return {
+      id: w.id,
+      status: w.status,
+      from: person(w.fromId),
+      to: person(w.toId),
+      offered: shiftOut(shifts.find((x) => x.id === w.offeredId)!),
+      requested: requested ? shiftOut(requested) : null,
+      message: w.message,
+      createdAt: w.createdAt,
+    };
+  }
+  function applySwap(w: (typeof swaps)[number]) {
+    const offered = shifts.find((x) => x.id === w.offeredId)!;
+    const requested = w.requestedId ? shifts.find((x) => x.id === w.requestedId) : undefined;
+    const ids = [offered.id, ...(requested ? [requested.id] : [])];
+    checkClash({ ...offered, staffId: w.toId }, ids);
+    if (requested) checkClash({ ...requested, staffId: w.fromId }, ids);
+    offered.staffId = w.toId;
+    if (requested) requested.staffId = w.fromId;
+    w.status = "approved";
+  }
   const log = (action: string, golfer?: string) =>
     activity.unshift({ actor: account()?.name ?? "Shared device key", action, golfer: golfer ?? null, bookingId: null, detail: {}, at: new Date().toISOString() });
   const teeTimes = new Map<string, DemoTeeTime>();
@@ -537,6 +652,157 @@ export function createDemoClient(apiKey: string): Client {
         linkBooking(bookingId, g);
         log("Linked a golfer account", g.name);
         return profile(g);
+      }),
+    shifts: (from: string, to: string) =>
+      reply(() => {
+        seedSchedule();
+        return shifts.filter((x) => x.date >= from && x.date <= to).map(shiftOut).sort((a, b) => a.startsAt.localeCompare(b.startsAt));
+      }),
+    addShift: (input: ShiftInput) =>
+      reply(() => {
+        managerOnly();
+        const sh: DemoShift = { id: `sh-${shiftSeq++}`, staffId: input.staffUserId ?? null, typeId: input.employeeTypeId ?? null, date: input.date, start: input.start, end: input.end, note: input.note ?? null };
+        checkClash(sh);
+        shifts.push(sh);
+        log("Added a shift");
+        return shiftOut(sh);
+      }),
+    updateShift: (shiftId: string, patch: Partial<ShiftInput>) =>
+      reply(() => {
+        managerOnly();
+        const sh = shifts.find((x) => x.id === shiftId)!;
+        const next = {
+          ...sh,
+          staffId: patch.staffUserId !== undefined ? patch.staffUserId : sh.staffId,
+          typeId: patch.employeeTypeId !== undefined ? patch.employeeTypeId : sh.typeId,
+          date: patch.date ?? sh.date,
+          start: patch.start ?? sh.start,
+          end: patch.end ?? sh.end,
+          note: patch.note !== undefined ? patch.note : sh.note,
+        };
+        checkClash(next);
+        Object.assign(sh, next);
+        for (const w of swaps) if ((w.offeredId === sh.id || w.requestedId === sh.id) && w.status.startsWith("awaiting")) w.status = "cancelled";
+        log("Changed a shift");
+        return shiftOut(sh);
+      }),
+    deleteShift: (shiftId: string) =>
+      reply(() => {
+        managerOnly();
+        shifts.splice(shifts.findIndex((x) => x.id === shiftId), 1);
+        log("Removed a shift");
+        return { ok: true };
+      }),
+    copyWeek: (from: string, to: string) =>
+      reply(() => {
+        managerOnly();
+        const days = Math.round((Date.parse(to) - Date.parse(from)) / 86_400_000);
+        let copied = 0;
+        let skipped = 0;
+        for (const sh of shifts.filter((x) => x.date >= from && x.date <= addDays(from, 6))) {
+          const copy = { ...sh, id: `sh-${shiftSeq++}`, date: addDays(sh.date, days) };
+          try {
+            checkClash(copy);
+            shifts.push(copy);
+            copied++;
+          } catch {
+            skipped++;
+          }
+        }
+        log("Copied a week of shifts");
+        return { copied, skipped };
+      }),
+    clock: () => reply(() => clockState()),
+    clockIn: () =>
+      reply(() => {
+        const me = needAccount();
+        if (punches.some((x) => x.staffId === me.id && !x.clockOut)) throw conflict("already_clocked_in", "You're already clocked in");
+        punches.push({ id: id(), staffId: me.id, shiftId: clockState().nextShift?.id ?? null, clockIn: new Date().toISOString(), clockOut: null, edited: false });
+        log("Clocked in");
+        return clockState();
+      }),
+    clockOut: () =>
+      reply(() => {
+        const me = needAccount();
+        const open = punches.find((x) => x.staffId === me.id && !x.clockOut);
+        if (!open) throw conflict("not_clocked_in", "You aren't clocked in");
+        open.clockOut = new Date().toISOString();
+        log("Clocked out");
+        return clockState();
+      }),
+    timesheets: (from: string, to: string) =>
+      reply(() => {
+        managerOnly();
+        seedSchedule();
+        return accounts
+          .filter((a) => a.active)
+          .map((a) => {
+            const scheduled = shifts.filter((x) => x.staffId === a.id && x.date >= from && x.date <= to).map(shiftOut);
+            // Pretend everyone worked their past shifts, so the demo timesheet has numbers in it.
+            const worked: Punch[] = scheduled
+              .filter((x) => x.endsAt < new Date().toISOString())
+              .map((x) => ({ id: `p-${x.id}`, staff: { id: a.id, name: a.name }, shiftId: x.id, clockIn: x.startsAt, clockOut: x.endsAt, hours: x.hours, edited: false }));
+            const live = punches
+              .filter((p) => p.staffId === a.id)
+              .map((p) => ({ ...p, staff: { id: a.id, name: a.name }, hours: p.clockOut ? Math.round((Date.parse(p.clockOut) - Date.parse(p.clockIn)) / 360_000) / 10 : null }));
+            const all = [...worked, ...live];
+            return {
+              staff: { id: a.id, name: a.name },
+              scheduledHours: Math.round(scheduled.reduce((t, x) => t + x.hours, 0) * 10) / 10,
+              workedHours: Math.round(all.reduce((t, p) => t + (p.hours ?? 0), 0) * 10) / 10,
+              open: live.some((p) => !p.clockOut),
+              punches: all,
+            };
+          })
+          .filter((t) => t.punches.length || t.scheduledHours);
+      }),
+    swaps: () =>
+      reply(() => {
+        const me = account();
+        return swaps.filter((w) => w.fromId === me?.id || w.toId === me?.id || (role() === "manager" && w.status === "awaiting_manager")).map(swapOut);
+      }),
+    askSwap: (input: { offeredShiftId: string; toUserId: string; requestedShiftId?: string | null; message?: string | null }) =>
+      reply(() => {
+        const me = needAccount();
+        const offered = shifts.find((x) => x.id === input.offeredShiftId)!;
+        if (offered.staffId !== me.id) throw new ApiError(400, "not_your_shift", "You can only swap your own shifts");
+        if (swaps.some((w) => w.offeredId === offered.id && w.status.startsWith("awaiting"))) throw conflict("swap_pending", "There's already a request open for this shift");
+        const w = { id: id(), status: "awaiting_coworker" as const, fromId: me.id, toId: input.toUserId, offeredId: offered.id, requestedId: input.requestedShiftId ?? null, message: input.message ?? null, createdAt: new Date().toISOString() };
+        swaps.unshift(w);
+        log("Asked to swap a shift");
+        return swapOut(w);
+      }),
+    answerSwap: (swapId: string, action: SwapAction) =>
+      reply(() => {
+        const w = swaps.find((x) => x.id === swapId)!;
+        const me = account();
+        if (!w.status.startsWith("awaiting")) throw conflict("swap_closed", "This request has already been answered");
+        if (action === "cancel") {
+          if (w.fromId !== me?.id) throw new ApiError(403, "not_yours", "Only the person who asked can cancel");
+          w.status = "cancelled";
+        } else if (action === "accept" || action === "decline") {
+          if (w.toId !== me?.id) throw new ApiError(403, "not_yours", "Only the coworker who was asked can answer");
+          if (action === "decline") w.status = "declined";
+          else if (scheduling.swapsNeedApproval) w.status = "awaiting_manager";
+          else applySwap(w);
+        } else {
+          managerOnly();
+          if (w.status !== "awaiting_manager") throw conflict("awaiting_coworker", "The coworker hasn't accepted yet");
+          if (action === "reject") w.status = "rejected";
+          else applySwap(w);
+        }
+        log("Answered a shift swap");
+        return swapOut(w);
+      }),
+    coworkers: () =>
+      reply(() => accounts.filter((a) => a.active).map((a) => ({ id: a.id, name: a.name, employeeType: a.employeeType?.name ?? null }))),
+    schedulingSettings: () => reply(() => ({ ...scheduling })),
+    saveSchedulingSettings: (next: { swapsNeedApproval: boolean }) =>
+      reply(() => {
+        managerOnly();
+        scheduling.swapsNeedApproval = next.swapsNeedApproval;
+        log("Changed scheduling settings");
+        return { ...scheduling };
       }),
     activity: () =>
       reply(() => {
