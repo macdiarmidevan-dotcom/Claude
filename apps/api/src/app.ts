@@ -2,10 +2,23 @@ import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import cors from "@fastify/cors";
 import { z, ZodError } from "zod";
 import type { Db } from "./db.ts";
-import { AppError, notFound } from "./errors.ts";
+import { AppError, badRequest, notFound } from "./errors.ts";
 import { lookupApiKey, type ApiKeyContext } from "./keys.ts";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { buildMcpServer } from "./mcp.ts";
+import { importTeeSheet, listImports } from "./imports.ts";
+import {
+  changeOwnPassword,
+  createStaff,
+  listActivity,
+  listStaff,
+  logActivity,
+  login,
+  logout,
+  lookupSession,
+  updateStaff,
+  type StaffUser,
+} from "./staff.ts";
 import { dayRange, getAddOns, getCourseBySlug, getRates, getTeeSheet, type Course } from "./courses.ts";
 import {
   createBooking,
@@ -26,8 +39,27 @@ import {
 declare module "fastify" {
   interface FastifyRequest {
     apiKey?: ApiKeyContext;
+    /** The signed-in employee or manager, when the request uses a session rather than a device key. */
+    staff?: { user: StaffUser; sessionId: string };
   }
 }
+
+// What the activity log calls each change, by route.
+const ACTIONS: Record<string, string> = {
+  "POST /v1/courses/:slug/bookings": "Added a booking",
+  "POST /v1/courses/:slug/bookings/:id/check-in": "Checked in at the pro shop",
+  "POST /v1/courses/:slug/bookings/:id/tee-off": "Sent off the first tee",
+  "POST /v1/courses/:slug/bookings/:id/payments": "Took a payment",
+  "PUT /v1/courses/:slug/bookings/:id/carts": "Changed carts",
+  "POST /v1/courses/:slug/bookings/:id/move": "Moved a booking",
+  "POST /v1/courses/:slug/bookings/:id/cancel": "Cancelled a booking",
+  "POST /v1/courses/:slug/bookings/:id/no-show": "Marked a no-show",
+  "PATCH /v1/courses/:slug/tee-times/:id": "Changed a tee time",
+  "PUT /v1/courses/:slug/waiver": "Changed the cart waiver",
+  "POST /v1/courses/:slug/imports": "Imported the tee sheet",
+  "POST /v1/courses/:slug/staff": "Added a staff account",
+  "PATCH /v1/courses/:slug/staff/:id": "Changed a staff account",
+};
 
 const player = z.object({
   residency: z.enum(["resident", "nonresident"]).default("nonresident"),
@@ -79,6 +111,27 @@ const waiverBody = z.object({
   title: z.string().trim().min(1).max(200),
   body: z.string().trim().min(20).max(50_000),
 });
+const importBody = z.object({
+  source: z.enum(["teeitup", "golfnow", "import"]),
+  csv: z.string().min(1).max(5_000_000),
+  fileName: z.string().max(200).optional(),
+  dryRun: z.boolean().optional(),
+});
+const loginBody = z.object({ email: z.string().trim().min(3).max(200), password: z.string().min(1).max(200) });
+const role = z.enum(["staff", "manager"]);
+const newStaffBody = z.object({
+  name: z.string().trim().min(1).max(200),
+  email: z.email(),
+  role,
+  password: z.string().max(200),
+});
+const staffPatch = z.object({
+  name: z.string().trim().min(1).max(200).optional(),
+  role: role.optional(),
+  active: z.boolean().optional(),
+  password: z.string().max(200).optional(),
+});
+const passwordBody = z.object({ current: z.string().max(200), next: z.string().max(200) });
 const paymentBody = z.object({ amountCents: z.number().int().positive(), method: paymentMethod });
 const idParams = z.object({ slug: z.string(), id: z.uuid() });
 const slugParams = z.object({ slug: z.string() });
@@ -107,15 +160,47 @@ export function buildApp(db: Db): FastifyInstance {
 
   app.get("/health", async () => ({ ok: true }));
 
-  // Every /v1 route needs a staff (sk_) API key. Golfers don't book through this API:
-  // they book with the course's existing provider and those bookings are imported.
+  // Every /v1 route needs a signed-in employee (st_ session) or a staff device key (sk_), apart
+  // from signing in. Golfers don't book through this API: they book with the course's
+  // existing provider and those bookings are imported.
   app.addHook("onRequest", async (req) => {
-    if (!req.url.startsWith("/v1/")) return;
+    if (!req.url.startsWith("/v1/") || req.routeOptions.url === "/v1/courses/:slug/login") return;
     const header = req.headers.authorization;
-    const key = header?.startsWith("Bearer ") ? header.slice(7) : undefined;
-    const ctx = key ? await lookupApiKey(db, key) : undefined;
+    const token = header?.startsWith("Bearer ") ? header.slice(7) : undefined;
+    if (token?.startsWith("st_")) {
+      const session = await lookupSession(db, token);
+      if (!session) throw new AppError(401, "unauthorized", "Your sign-in has expired. Please sign in again");
+      req.staff = { user: session.user, sessionId: session.sessionId };
+      req.apiKey = { keyId: session.sessionId, courseId: session.courseId, kind: "secret", role: session.user.role };
+      return;
+    }
+    const ctx = token ? await lookupApiKey(db, token) : undefined;
     if (!ctx) throw new AppError(401, "unauthorized", "A valid API key is required");
     req.apiKey = ctx;
+  });
+
+  // Record who made each change. Signatures, files and passwords are never copied into the log.
+  app.addHook("onResponse", async (req, reply) => {
+    const action = ACTIONS[`${req.method} ${req.routeOptions.url}`];
+    if (!action || reply.statusCode >= 300 || !req.apiKey) return;
+    const body = (req.body ?? {}) as Record<string, any>;
+    if (action === "Imported the tee sheet" && body.dryRun) return;
+    const params = req.params as { id?: string };
+    const detail: Record<string, unknown> = {};
+    for (const k of ["method", "amountCents", "cartNumbers", "status", "note", "teeTimeId", "source", "fileName", "name", "role", "active"]) {
+      if (body[k] !== undefined) detail[k] = body[k];
+    }
+    if (body.payment?.method) detail.method = body.payment.method;
+    if (body.password !== undefined && req.routeOptions.url?.includes("/staff")) detail.passwordReset = true;
+    const bookingId = req.routeOptions.url?.includes("/bookings/:id") ? params.id : undefined;
+    await logActivity(db, {
+      courseId: req.apiKey.courseId,
+      userId: req.staff?.user.id,
+      actor: req.staff?.user.name ?? "Shared device key",
+      action,
+      bookingId,
+      detail,
+    }).catch((err) => app.log.error(err));
   });
 
   /** Loads the course in the URL and checks the API key is a staff key for it. */
@@ -135,11 +220,48 @@ export function buildApp(db: Db): FastifyInstance {
     return course;
   }
 
-  // What this device's key is allowed to do, so the app only shows manager tools to managers.
+  // Signing in. A device key isn't needed: the email and password are the credentials.
+  app.post("/v1/courses/:slug/login", async (req) => {
+    const { slug } = slugParams.parse(req.params);
+    const course = await getCourseBySlug(db, slug).catch(() => undefined);
+    if (!course) throw notFound("Course");
+    const { email, password } = loginBody.parse(req.body);
+    return login(db, course.id, email, password);
+  });
+
+  app.post("/v1/courses/:slug/logout", async (req) => {
+    await courseFor(req);
+    if (req.staff) await logout(db, req.staff.sessionId);
+    return { ok: true };
+  });
+
+  // Who is signed in and what they may do, so the app only shows manager tools to managers.
   app.get("/v1/courses/:slug/me", async (req) => {
     await courseFor(req);
-    return { role: req.apiKey!.role };
+    return { role: req.apiKey!.role, user: req.staff?.user ?? null };
   });
+
+  app.put("/v1/courses/:slug/me/password", async (req) => {
+    await courseFor(req);
+    if (!req.staff) throw badRequest("no_account", "Device keys don't have a password");
+    const { current, next } = passwordBody.parse(req.body);
+    await changeOwnPassword(db, req.staff.user, req.staff.sessionId, current, next);
+    return { ok: true };
+  });
+
+  // Staff accounts: managers add people, change roles, reset passwords and turn accounts off.
+  app.get("/v1/courses/:slug/staff", async (req) => listStaff(db, (await managedCourseFor(req)).id));
+  app.post("/v1/courses/:slug/staff", async (req, reply) => {
+    const course = await managedCourseFor(req);
+    return reply.status(201).send(await createStaff(db, course.id, newStaffBody.parse(req.body)));
+  });
+  app.patch("/v1/courses/:slug/staff/:id", async (req) => {
+    const course = await managedCourseFor(req);
+    const { id } = idParams.parse(req.params);
+    return updateStaff(db, course.id, req.staff?.user.id, id, staffPatch.parse(req.body));
+  });
+
+  app.get("/v1/courses/:slug/activity", async (req) => listActivity(db, (await managedCourseFor(req)).id));
 
   // The AI assistant connector (MCP over streamable HTTP). Managers only, since it shows revenue.
   // Stateless: each request gets its own server, so nothing is held between calls.
@@ -158,6 +280,13 @@ export function buildApp(db: Db): FastifyInstance {
   app.get("/v1/courses/:slug/mcp", async (_req, reply) =>
     reply.status(405).send({ error: { code: "method_not_allowed", message: "Use POST" } }),
   );
+
+  // A manager uploads the booking provider's tee sheet export. dryRun previews the changes.
+  app.post("/v1/courses/:slug/imports", { bodyLimit: 6 * 1024 * 1024 }, async (req) => {
+    const course = await managedCourseFor(req);
+    return importTeeSheet(db, course, importBody.parse(req.body));
+  });
+  app.get("/v1/courses/:slug/imports", async (req) => listImports(db, await managedCourseFor(req)));
 
   // The liability waiver each cart driver signs.
   app.get("/v1/courses/:slug/waiver", async (req) => {

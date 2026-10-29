@@ -66,6 +66,23 @@ POST /v1/courses/river-bend/bookings
 - **No double-booking.** A booking locks its tee time row for the transaction, so simultaneous requests for the last spots can't overbook.
 - **Rates.** The most specific matching rule wins (residency, age group, time window), and ties go to the lower price. Holidays use weekend rates. 18 holes on a 9-hole course is the 9-hole rate plus the replay rate.
 
+## Tee sheet import
+
+Golfers keep booking on the course's booking provider (TeeItUp or GolfNow). A manager exports that tee sheet as a CSV file and imports it from **Import tee sheet** in the app. The app first shows what would change, and then applies it.
+
+- **Columns:** headers are matched loosely ("Tee Time", "Time", "Start Time" all work). The file needs a date, a tee time and a golfer name. It also uses players, holes, price, amount paid online, status and confirmation number when they're there.
+- **Re-importing** matches bookings on the provider's confirmation number, so nothing is duplicated:
+  - New bookings are added.
+  - Changed ones are updated (a moved time, more players, a new price).
+  - Bookings cancelled on the provider, or missing from a day the file covers, are cancelled here.
+  - Groups already checked in or on the course are never touched.
+- **Money paid online** is recorded as a prepaid payment, so the pro shop sees "Paid".
+- **Pricing:** with no price in the file, our own rates price the booking.
+- **Times we don't have:** a tee time the provider has and our sheet doesn't (a shotgun start) is added. Overbooked times are flagged.
+- **API:** `POST /v1/courses/:slug/imports` with `{ "source": "teeitup" | "golfnow" | "import", "csv": "…", "dryRun": true }`. Manager keys only. `GET …/imports` lists recent runs.
+
+Live sync: TeeItUp's API is only open to approved partners. Once River Bend (or we) get access, a sync job will feed the same import every few minutes, and the file import stays as a backup.
+
 ## AI assistant
 
 Managers can ask Claude, ChatGPT or another MCP client about the course: "how many rounds today?", "who still owes?", "is Mike Sullivan booked this week?", "what did we take last week?". Add a custom connector with the address `https://<your server>/v1/courses/<course>/mcp` and the manager key as a Bearer token.
@@ -93,7 +110,11 @@ Each row shows the time, filled spots, the groups (✓ checked in at the shop, �
 
 **Cart waivers.** When carts are assigned, the app pops up the course's cart waiver for each cart's driver in turn: they read it, enter their name, tick that they agree, and sign with a finger. A cart can't be assigned until its driver has signed (the API enforces this too, on every route that sets carts). Each signature is stored with the driver's name, the cart, the exact waiver version and the time. The seeded River Bend waiver is sample text: the course must supply its own reviewed wording.
 
-**Manager tools.** `pnpm db:seed` prints a staff key and a manager key. Signed in with the manager key, the app shows a **Waiver** button where the manager can change the wording. Each save is a new version; drivers who already signed stay tied to the version they read.
+**Staff sign-in.** Each employee and manager signs in with their own email and password. `pnpm db:seed` creates a first manager account (manager@riverbend.example) and prints its one-time password. Managers add everyone else under **Staff accounts**, where they can also make someone a manager, reset a forgotten password and turn off the account of someone who leaves (that signs them out everywhere). Every change on the tee sheet is logged with who made it, shown under **Recent activity**. After 5 wrong passwords an email is locked for 15 minutes. Sessions last 14 days from last use, so a busy iPad stays signed in. A shared device key (sk_) still works for a kiosk nobody signs in to.
+
+![Staff accounts](docs/screenshots/staff-accounts.png)
+
+**Manager tools.** Signed in as a manager, the app shows a **Waiver** button where the manager can change the wording. Each save is a new version; drivers who already signed stay tied to the version they read.
 
 **Starter station.** The starter doesn't choose resident or nonresident for walk-ins; the pro shop does that when it takes payment.
 

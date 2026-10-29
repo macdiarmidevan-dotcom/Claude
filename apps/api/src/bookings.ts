@@ -4,7 +4,7 @@ import { withTransaction, type Db, type DbClient } from "./db.ts";
 import { badRequest, conflict, notFound } from "./errors.ts";
 import { getAddOns, getHolidays, getRates, toTeeTime, type Course, type TeeTime } from "./courses.ts";
 
-export type BookingSource = "staff" | "phone" | "teeitup" | "golfnow";
+export type BookingSource = "staff" | "phone" | "teeitup" | "golfnow" | "import";
 
 export interface QuoteRequest {
   teeTimeId: string;
@@ -89,19 +89,21 @@ const PAYMENT_COLUMNS = `
   (SELECT array_agg(DISTINCT method) FROM booking_payments WHERE booking_id = b.id) AS payment_methods`;
 
 async function lockTeeTime(client: DbClient, course: Course, teeTimeId: string, forUpdate: boolean) {
+  // Take the lock in its own statement first. Counting in the locking statement would use the
+  // snapshot from before the wait, so a booking made by whoever held the lock would be missed.
+  if (forUpdate) await client.query("SELECT 1 FROM tee_times WHERE id = $1 AND course_id = $2 FOR UPDATE", [teeTimeId, course.id]);
   const { rows } = await client.query(
     `SELECT t.id, t.starts_at, t.max_players, t.status, t.note,
             (SELECT COALESCE(SUM(players), 0)::int FROM bookings
               WHERE tee_time_id = t.id AND status <> 'cancelled') AS booked
-       FROM tee_times t WHERE t.id = $1 AND t.course_id = $2
-       ${forUpdate ? "FOR UPDATE OF t" : ""}`,
+       FROM tee_times t WHERE t.id = $1 AND t.course_id = $2`,
     [teeTimeId, course.id],
   );
   if (!rows[0]) throw notFound("Tee time");
   return toTeeTime(rows[0], course.timeZone);
 }
 
-async function buildQuote(client: DbClient, course: Course, req: QuoteRequest, teeTime: TeeTime): Promise<Quote> {
+export async function buildQuote(client: DbClient, course: Course, req: QuoteRequest, teeTime: TeeTime): Promise<Quote> {
   if (req.holes % course.holes !== 0) {
     throw badRequest("invalid_holes", `${course.name} has ${course.holes} holes; book a multiple of ${course.holes}`);
   }

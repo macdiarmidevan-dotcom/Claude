@@ -1,9 +1,15 @@
 // A pretend course that runs entirely in the browser, for showing the app without a server.
 // Only built in when EXPO_PUBLIC_DEMO=1. Nothing is saved: reloading the page starts over.
-import { generateTeeTimes, quotePlayer, riverBend, riverBendAddOns, riverBendRates, riverBendTeeSheet } from "@golf/core";
+import { generateTeeTimes, parseTeeSheetCsv, quotePlayer, riverBend, riverBendAddOns, riverBendRates, riverBendTeeSheet } from "@golf/core";
 import {
   ApiError,
+  type ActivityEntry,
   type Client,
+  type Role,
+  type StaffUser,
+  type ImportResult,
+  type ImportRun,
+  type ImportSource,
   type PaymentMethod,
   type SheetBooking,
   type SheetTeeTime,
@@ -18,6 +24,7 @@ export const DEMO_URL = "demo";
 
 interface DemoBooking extends SheetBooking {
   paid: { amountCents: number; method: PaymentMethod }[];
+  externalId?: string;
 }
 interface DemoTeeTime extends Omit<SheetTeeTime, "bookings" | "bookedPlayers"> {
   date: string;
@@ -25,7 +32,34 @@ interface DemoTeeTime extends Omit<SheetTeeTime, "bookings" | "bookedPlayers"> {
 
 const conflict = (code: string, message: string) => new ApiError(409, code, message);
 
+// Pretend staff accounts. They live outside the client so signing in and the signed-in app share them.
+export const DEMO_PASSWORD = "riverbend";
+const accounts: (StaffUser & { password: string })[] = [
+  { id: "u-1", name: "Morgan Ellis", email: "manager@riverbend.example", role: "manager", active: true, lastLoginAt: null, password: DEMO_PASSWORD },
+  { id: "u-2", name: "Jordan Price", email: "proshop@riverbend.example", role: "staff", active: true, lastLoginAt: null, password: DEMO_PASSWORD },
+  { id: "u-3", name: "Sam Torres", email: "starter@riverbend.example", role: "staff", active: true, lastLoginAt: null, password: DEMO_PASSWORD },
+];
+const activity: ActivityEntry[] = [];
+const publicUser = ({ password: _, ...u }: StaffUser & { password: string }): StaffUser => u;
+
+export async function demoSignIn(email: string, password: string) {
+  await new Promise((r) => setTimeout(r, 200));
+  const a = accounts.find((x) => x.email === email.trim().toLowerCase());
+  if (!a || a.password !== password) throw new ApiError(401, "wrong_login", "Wrong email or password");
+  if (!a.active) throw new ApiError(401, "wrong_login", "This account has been turned off. Ask a manager");
+  a.lastLoginAt = new Date().toISOString();
+  return { token: `demo-session:${a.id}`, user: publicUser(a) };
+}
+
 export function createDemoClient(apiKey: string): Client {
+  // A demo sign-in carries the account id; the older demo-manager / demo-staff keys act as shared device keys.
+  const account = () => accounts.find((a) => apiKey === `demo-session:${a.id}` && a.active);
+  const role = (): Role => account()?.role ?? (apiKey.includes("manager") ? "manager" : "staff");
+  const managerOnly = () => {
+    if (role() !== "manager") throw new ApiError(403, "manager_only", "Only a manager can change this");
+  };
+  const log = (action: string, golfer?: string) =>
+    activity.unshift({ actor: account()?.name ?? "Shared device key", action, golfer: golfer ?? null, bookingId: null, detail: {}, at: new Date().toISOString() });
   const teeTimes = new Map<string, DemoTeeTime>();
   const days = new Set<string>();
   const bookings: DemoBooking[] = [];
@@ -40,6 +74,7 @@ export function createDemoClient(apiKey: string): Client {
       "3. I accept responsibility for damage to the cart caused by misuse, and for my passengers' safety.\n" +
       "4. I release River Bend Golf Club and the Lisle Park District from claims arising from my use of the cart, except where caused by their negligence.",
   };
+  const runs: ImportRun[] = [];
   let nextId = 1;
   const id = () => `demo-${nextId++}`;
 
@@ -148,6 +183,94 @@ export function createDemoClient(apiKey: string): Client {
     b.cartNumbers = carts;
   }
 
+  // The same rules as the server's import, on the pretend tee sheet.
+  function importFile(input: { source: ImportSource; csv: string; fileName?: string; dryRun?: boolean }): ImportResult {
+    const parsed = parseTeeSheetCsv(input.csv);
+    const dates = [...new Set(parsed.bookings.map((b) => b.date))].sort();
+    const result: ImportResult = {
+      dryRun: input.dryRun ?? false,
+      dates,
+      counts: { created: 0, updated: 0, cancelled: 0, unchanged: 0, problems: parsed.problems.length },
+      changes: [],
+      problems: parsed.problems,
+      overbooked: [],
+    };
+    const before = JSON.stringify([...bookings]);
+    const snapshot = bookings.map((b) => ({ ...b }));
+    const teeSnapshot = new Map([...teeTimes].map(([k, v]) => [k, { ...v }]));
+    dates.forEach(ensureDay);
+    for (const row of parsed.bookings) {
+      const base = { externalId: row.externalId, date: row.date, time: row.time, name: row.name, players: row.players };
+      const existing = bookings.find((b) => b.source === input.source && b.externalId === row.externalId);
+      if (row.status === "cancelled") {
+        if (existing?.status === "confirmed") {
+          existing.status = "cancelled";
+          result.changes.push({ ...base, action: "cancel", detail: "Cancelled in the provider's tee sheet" });
+          result.counts.cancelled++;
+        } else result.changes.push({ ...base, action: existing ? "unchanged" : "skip" });
+        continue;
+      }
+      if (existing && existing.status !== "confirmed" && existing.status !== "cancelled") {
+        result.changes.push({ ...base, action: "unchanged", detail: "Already checked in, left as it is" });
+        result.counts.unchanged++;
+        continue;
+      }
+      let t = [...teeTimes.values()].find((x) => x.date === row.date && x.localTime === row.time);
+      if (!t) {
+        const tid = id();
+        t = { id: tid, date: row.date, localTime: row.time, startsAt: `${row.date}T${row.time}:00`, maxPlayers: Math.max(4, row.players), status: "open", note: null };
+        teeTimes.set(tid, t);
+      }
+      const holes = row.holes ?? riverBend.holes;
+      const loops = Math.max(1, Math.round(holes / riverBend.holes));
+      const total =
+        row.totalCents ??
+        row.players * quotePlayer(riverBendRates, { residency: "nonresident", ageGroup: "adult" }, { startsAt: t.startsAt, timeZone: riverBend.timeZone }, loops).totalCents;
+      if (!existing) {
+        bookings.push({
+          id: id(), teeTimeId: t.id, customerName: row.name, customerPhone: row.phone ?? null, players: row.players, holes,
+          status: row.status === "no_show" ? "no_show" : "confirmed", source: input.source, totalCents: total, cartNumbers: [], signedCarts: [],
+          payment: { status: "unpaid", paidCents: 0, balanceCents: total, methods: [] },
+          paid: row.paidCents ? [{ amountCents: Math.min(row.paidCents, total), method: "prepaid" }] : [], externalId: row.externalId,
+        });
+        result.changes.push({ ...base, action: "create" });
+        result.counts.created++;
+        continue;
+      }
+      const diffs = [
+        existing.status === "cancelled" && "rebooked",
+        existing.teeTimeId !== t.id && "moved",
+        existing.players !== row.players && `players ${existing.players} → ${row.players}`,
+        existing.totalCents !== total && "price",
+      ].filter(Boolean);
+      if (diffs.length === 0) {
+        result.changes.push({ ...base, action: "unchanged" });
+        result.counts.unchanged++;
+        continue;
+      }
+      Object.assign(existing, { teeTimeId: t.id, players: row.players, holes, totalCents: total, status: "confirmed", customerName: row.name });
+      result.changes.push({ ...base, action: "update", detail: diffs.join(", ") });
+      result.counts.updated++;
+    }
+    const inFile = new Set(parsed.bookings.map((b) => b.externalId));
+    for (const b of bookings) {
+      const t = teeTimes.get(b.teeTimeId);
+      if (b.source === input.source && b.externalId && b.status === "confirmed" && t && dates.includes(t.date) && !inFile.has(b.externalId)) {
+        b.status = "cancelled";
+        result.changes.push({ action: "cancel", externalId: b.externalId, date: t.date, time: t.localTime, name: b.customerName, players: b.players, detail: "No longer in the provider's tee sheet" });
+        result.counts.cancelled++;
+      }
+    }
+    if (result.dryRun) {
+      bookings.splice(0, bookings.length, ...snapshot);
+      teeTimes.clear();
+      teeSnapshot.forEach((v, k) => teeTimes.set(k, v));
+    } else if (before !== JSON.stringify(bookings) || parsed.bookings.length) {
+      runs.unshift({ id: id(), source: input.source, fileName: input.fileName ?? null, dates, counts: result.counts, createdAt: new Date().toISOString() });
+    }
+    return result;
+  }
+
   // Answers arrive a moment later, like a real server, so loading states still show.
   const reply = <T>(fn: () => T) => new Promise<T>((resolve, reject) => setTimeout(() => {
     try { resolve(fn()); } catch (e) { reject(e); }
@@ -173,7 +296,12 @@ export function createDemoClient(apiKey: string): Client {
         if (patch.status === "blocked" && live(t.id).length) throw conflict("has_bookings", "Move or cancel the groups before blocking this time");
         return Object.assign(t, patch);
       }),
-    book: (walkIn: WalkIn) => reply(() => book(walkIn)),
+    book: (walkIn: WalkIn) =>
+      reply(() => {
+        const b = book(walkIn);
+        log("Added a booking", walkIn.customer.name);
+        return b;
+      }),
     checkIn: (bookingId: string, method?: PaymentMethod) =>
       reply(() => {
         const b = find(bookingId);
@@ -182,27 +310,89 @@ export function createDemoClient(apiKey: string): Client {
         if (balance > 0 && !method) throw conflict("payment_required", "Take payment before checking in");
         if (balance > 0 && method) b.paid.push({ amountCents: balance, method });
         b.status = "checked_in";
+        log("Checked in at the pro shop", b.customerName);
         return b;
       }),
     waiver: () => reply(() => waiver),
-    me: () => reply(() => ({ role: apiKey.includes("manager") ? ("manager" as const) : ("staff" as const) })),
+    me: () => reply(() => ({ role: role(), user: account() ? publicUser(account()!) : null })),
+    logout: () => reply(() => ({ ok: true })),
+    changePassword: (current: string, next: string) =>
+      reply(() => {
+        const a = account();
+        if (!a) throw new ApiError(400, "no_account", "Device keys don't have a password");
+        if (a.password !== current) throw new ApiError(400, "wrong_password", "Your current password isn't right");
+        if (next.length < 8) throw new ApiError(400, "weak_password", "Passwords need at least 8 characters");
+        a.password = next;
+        return { ok: true };
+      }),
+    staff: () =>
+      reply(() => {
+        managerOnly();
+        return accounts.map(publicUser).sort((a, b) => Number(b.active) - Number(a.active) || a.name.localeCompare(b.name));
+      }),
+    addStaff: (input: { name: string; email: string; role: Role; password: string }) =>
+      reply(() => {
+        managerOnly();
+        const email = input.email.trim().toLowerCase();
+        if (accounts.some((a) => a.email === email)) throw conflict("email_taken", "Someone here already uses that email");
+        if (input.password.length < 8) throw new ApiError(400, "weak_password", "Passwords need at least 8 characters");
+        const a = { id: id(), name: input.name.trim(), email, role: input.role, active: true, lastLoginAt: null, password: input.password };
+        accounts.push(a);
+        log("Added a staff account");
+        return publicUser(a);
+      }),
+    updateStaff: (userId: string, patch: { name?: string; role?: Role; active?: boolean; password?: string }) =>
+      reply(() => {
+        managerOnly();
+        const a = accounts.find((x) => x.id === userId)!;
+        if (a.role === "manager" && a.active && (patch.role === "staff" || patch.active === false)) {
+          if (a.id === account()?.id) throw conflict("self_demote", "You can't remove your own manager access. Ask another manager");
+          if (!accounts.some((x) => x.id !== a.id && x.role === "manager" && x.active)) throw conflict("last_manager", "The course needs at least one active manager");
+        }
+        if (patch.password !== undefined && patch.password.length < 8) throw new ApiError(400, "weak_password", "Passwords need at least 8 characters");
+        Object.assign(a, Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)));
+        log("Changed a staff account");
+        return publicUser(a);
+      }),
+    activity: () =>
+      reply(() => {
+        managerOnly();
+        return activity.slice(0, 100);
+      }),
     saveWaiver: (w: { title: string; body: string }) =>
       reply(() => {
-        if (!apiKey.includes("manager")) throw new ApiError(403, "manager_only", "Only a manager can change this");
+        managerOnly();
+        log("Changed the cart waiver");
         waiver = { id: `waiver-${waiver.version + 1}`, version: waiver.version + 1, ...w };
         return waiver;
       }),
+    importTeeSheet: (input: { source: ImportSource; csv: string; fileName?: string; dryRun?: boolean }) =>
+      reply(() => {
+        managerOnly();
+        if (!input.dryRun) log("Imported the tee sheet");
+        return importFile(input);
+      }),
+    imports: () => reply(() => runs),
     teeOff: (bookingId: string, carts: string[], signatures: WaiverSignature[]) =>
       reply(() => {
         const b = find(bookingId);
         if (b.status !== "checked_in") throw conflict("not_checked_in", "Check this group in at the pro shop first");
         assignCarts(b, carts, signatures);
         b.status = "teed_off";
+        log("Sent off the first tee", b.customerName);
         return b;
       }),
     setCarts: (bookingId: string, carts: string[], signatures: WaiverSignature[]) => reply(() => assignCarts(find(bookingId), carts, signatures)),
-    noShow: (bookingId: string) => reply(() => Object.assign(find(bookingId), { status: "no_show" as const })),
-    cancel: (bookingId: string) => reply(() => Object.assign(find(bookingId), { status: "cancelled" as const })),
+    noShow: (bookingId: string) =>
+      reply(() => {
+        log("Marked a no-show", find(bookingId).customerName);
+        return Object.assign(find(bookingId), { status: "no_show" as const });
+      }),
+    cancel: (bookingId: string) =>
+      reply(() => {
+        log("Cancelled a booking", find(bookingId).customerName);
+        return Object.assign(find(bookingId), { status: "cancelled" as const });
+      }),
     move: (bookingId: string, teeTimeId: string) =>
       reply(() => {
         const b = find(bookingId);

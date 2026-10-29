@@ -1,16 +1,20 @@
 import { useEffect, useMemo, useState } from "react";
 import { Modal, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
-import { createClient, type Course, type Settings } from "./api";
+import { ApiError, createClient, type Course, type Me, type Settings } from "./api";
 import { StationPicker } from "./SetupScreen";
 import { TeeSheetScreen } from "./TeeSheetScreen";
 import { WaiverEditor } from "./WaiverEditor";
 import { Header } from "./Header";
+import { ImportScreen } from "./ImportScreen";
+import { ChangePassword, StaffScreen } from "./StaffScreen";
 import { colors, type WebPress } from "./theme";
 
-type Section = "tee-sheet" | "customers" | "reports" | "schedule" | "inventory" | "settings";
+type Section = "tee-sheet" | "import" | "staff" | "customers" | "reports" | "schedule" | "inventory" | "settings";
 
-const SECTIONS: { id: Section; label: string; icon: string; soon?: string }[] = [
+const SECTIONS: { id: Section; label: string; icon: string; soon?: string; managers?: boolean }[] = [
   { id: "tee-sheet", label: "Tee sheet", icon: "▦" },
+  { id: "import", label: "Import tee sheet", icon: "⇩", managers: true },
+  { id: "staff", label: "Staff accounts", icon: "☺", managers: true },
   { id: "customers", label: "Customers", icon: "◉", soon: "Golfer profiles, punch cards, memberships and loyalty points." },
   { id: "reports", label: "Reports", icon: "▤", soon: "Daily sales, rounds played, occupancy and payment types. Managers can already ask the AI assistant for these." },
   { id: "schedule", label: "Staff schedule", icon: "◷", soon: "Shifts, time clock and shift swaps that the other employee accepts." },
@@ -32,16 +36,26 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
   const [menuOpen, setMenuOpen] = useState(false);
   const [course, setCourse] = useState<Course>();
   const [error, setError] = useState<string>();
-  const [isManager, setIsManager] = useState(false);
+  const [me, setMe] = useState<Me>();
+  const isManager = me?.role === "manager";
   const [editingWaiver, setEditingWaiver] = useState(false);
 
   useEffect(() => {
     client.course().then(setCourse).catch((e) => setError(e.message));
     client
       .me()
-      .then((me) => setIsManager(me.role === "manager"))
-      .catch(() => setIsManager(false));
+      .then(setMe)
+      .catch((e) => {
+        // An expired sign-in or a turned-off account goes back to the sign-in screen.
+        if (e instanceof ApiError && e.status === 401) onSignOut();
+      });
   }, [client]);
+
+  // Ends the session on the server too, so the token can't be used again.
+  const signOut = () => {
+    client.logout().catch(() => undefined);
+    onSignOut();
+  };
 
   const go = (s: Section) => {
     setSection(s);
@@ -56,7 +70,8 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
       settings={settings}
       onChangeSettings={onChangeSettings}
       isManager={isManager}
-      onSignOut={onSignOut}
+      me={me}
+      onSignOut={signOut}
       onClose={rail ? undefined : () => setMenuOpen(false)}
     />
   );
@@ -69,10 +84,20 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
       <View style={styles.main}>
         {section === "tee-sheet" ? (
           course ? (
-            <TeeSheetScreen client={client} course={course} station={settings.station} onSignOut={onSignOut} onOpenMenu={openMenu} />
+            <TeeSheetScreen client={client} course={course} station={settings.station} onSignOut={signOut} onOpenMenu={openMenu} />
           ) : (
             <Header title="Tee sheet" onOpenMenu={openMenu} subtitle={error ?? "Loading…"} />
           )
+        ) : section === "import" ? (
+          <>
+            <Header title="Import tee sheet" onOpenMenu={openMenu} />
+            <ImportScreen client={client} />
+          </>
+        ) : section === "staff" ? (
+          <>
+            <Header title="Staff accounts" onOpenMenu={openMenu} />
+            <StaffScreen client={client} me={me?.user ?? null} />
+          </>
         ) : section === "settings" ? (
           <>
             <Header title="Settings" onOpenMenu={openMenu} />
@@ -92,10 +117,16 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
               )}
               <Text style={[styles.label, { marginTop: 24 }]}>Signed in</Text>
               <Text style={styles.help}>
-                {course?.name} · {isManager ? "Manager" : "Staff"} key
+                {me?.user ? `${me.user.name} (${me.user.email})` : "Shared device key"} · {isManager ? "Manager" : "Staff"} · {course?.name}
               </Text>
-              <Pressable accessibilityRole="button" onPress={onSignOut} style={[styles.button, styles.buttonQuiet]}>
-                <Text style={[styles.buttonText, { color: colors.text }]}>Sign out of this device</Text>
+              {me?.user && (
+                <>
+                  <Text style={[styles.label, { marginTop: 24 }]}>Your password</Text>
+                  <ChangePassword client={client} />
+                </>
+              )}
+              <Pressable accessibilityRole="button" onPress={signOut} style={[styles.button, styles.buttonQuiet]}>
+                <Text style={[styles.buttonText, { color: colors.text }]}>Sign out</Text>
               </Pressable>
             </ScrollView>
           </>
@@ -130,10 +161,11 @@ function SideMenu(props: {
   settings: Settings;
   onChangeSettings: (s: Settings) => void;
   isManager: boolean;
+  me?: Me;
   onSignOut: () => void;
   onClose?: () => void;
 }) {
-  const { courseName, section, onGo, settings, onChangeSettings, isManager, onSignOut, onClose } = props;
+  const { courseName, section, onGo, settings, onChangeSettings, isManager, me, onSignOut, onClose } = props;
   return (
     <View role="navigation" aria-label="Main menu" style={styles.rail}>
       <View style={styles.railTop}>
@@ -151,7 +183,7 @@ function SideMenu(props: {
         <StationPicker dark value={settings.station} onChange={(station) => onChangeSettings({ ...settings, station })} />
       </View>
       <ScrollView style={{ flex: 1 }}>
-        {SECTIONS.map((s) => {
+        {SECTIONS.filter((s) => !s.managers || isManager).map((s) => {
           const on = s.id === section;
           return (
             <Pressable
@@ -175,7 +207,10 @@ function SideMenu(props: {
         })}
       </ScrollView>
       <View style={styles.railFoot}>
-        <Text style={styles.railMuted}>{isManager ? "Manager" : "Staff"}</Text>
+        <View style={{ flex: 1, marginRight: 8 }}>
+          <Text style={styles.railName} numberOfLines={1}>{me?.user?.name ?? "Shared device"}</Text>
+          <Text style={styles.railMuted}>{isManager ? "Manager" : "Staff"}</Text>
+        </View>
         <Pressable accessibilityRole="button" onPress={onSignOut} hitSlop={8}>
           <Text style={styles.railLink}>Sign out</Text>
         </Pressable>
@@ -198,6 +233,7 @@ const styles = StyleSheet.create({
   soonTag: { color: colors.railMuted, fontSize: 11, fontWeight: "600" },
   railFoot: { borderTopWidth: 1, borderColor: "#2a4433", padding: 16, flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   railMuted: { color: colors.railMuted, fontSize: 13 },
+  railName: { color: colors.railText, fontSize: 14, fontWeight: "700" },
   railLink: { color: colors.railText, fontSize: 14, fontWeight: "600", textDecorationLine: "underline" },
   focusRing: { outlineColor: colors.focus, outlineWidth: 2, outlineStyle: "solid" } as object,
   drawerWrap: { flex: 1, flexDirection: "row" },
