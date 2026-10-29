@@ -9,8 +9,11 @@ import {
   createBooking,
   getBooking,
   listBookingsForDay,
+  checkIn,
   moveBooking,
+  recordPayment,
   setCartNumbers,
+  teeOff,
   quote,
   setBookingStatus,
   updateTeeTime,
@@ -49,7 +52,13 @@ const teeTimePatch = z.object({
 });
 const moveBody = z.object({ teeTimeId: z.uuid() });
 const cartNumbers = z.array(z.string().trim().min(1).max(10)).max(8);
-const checkInBody = z.object({ cartNumbers: cartNumbers.optional() }).default({});
+const paymentMethod = z.enum(["card", "cash", "prepaid", "punch_card", "gift_card", "comp"]);
+const checkInBody = z.object({
+  cartNumbers: cartNumbers.optional(),
+  payment: z.object({ method: paymentMethod }).optional(),
+});
+const teeOffBody = z.object({ cartNumbers: cartNumbers.optional() });
+const paymentBody = z.object({ amountCents: z.number().int().positive(), method: paymentMethod });
 const idParams = z.object({ slug: z.string(), id: z.uuid() });
 const slugParams = z.object({ slug: z.string() });
 
@@ -147,12 +156,25 @@ export function buildApp(db: Db): FastifyInstance {
     return moveBooking(db, course, id, moveBody.parse(req.body).teeTimeId);
   });
 
+  // Pro shop check-in: takes any balance due, then marks the group checked in.
   app.post("/v1/courses/:slug/bookings/:id/check-in", async (req) => {
     const course = await courseFor(req);
     const { id } = idParams.parse(req.params);
-    const body = checkInBody.parse(req.body ?? {});
-    if (body.cartNumbers) await setCartNumbers(db, course, id, body.cartNumbers);
-    return setBookingStatus(db, course, id, "checked_in");
+    return checkIn(db, course, id, checkInBody.parse(req.body ?? {}));
+  });
+
+  // Starter check-in at the first tee.
+  app.post("/v1/courses/:slug/bookings/:id/tee-off", async (req) => {
+    const course = await courseFor(req);
+    const { id } = idParams.parse(req.params);
+    return teeOff(db, course, id, teeOffBody.parse(req.body ?? {}).cartNumbers);
+  });
+
+  app.post("/v1/courses/:slug/bookings/:id/payments", async (req, reply) => {
+    const course = await courseFor(req);
+    const { id } = idParams.parse(req.params);
+    const { amountCents, method } = paymentBody.parse(req.body);
+    return reply.status(201).send(await recordPayment(db, course, id, amountCents, method));
   });
 
   app.put("/v1/courses/:slug/bookings/:id/carts", async (req) => {
