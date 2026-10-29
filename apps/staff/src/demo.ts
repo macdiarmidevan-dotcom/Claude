@@ -12,6 +12,8 @@ import {
   type ImportResult,
   type ImportRun,
   type ImportSource,
+  type SyncConnection,
+  type SyncSettings,
   type PaymentMethod,
   type SheetBooking,
   type SheetTeeTime,
@@ -258,7 +260,22 @@ export function createDemoClient(apiKey: string): Client {
   }
 
   // The same rules as the server's import, on the pretend tee sheet.
-  function importFile(input: { source: ImportSource; csv: string; fileName?: string; dryRun?: boolean }): ImportResult {
+  // Pretend online bookings that show up one by one each time the demo syncs.
+  let sync: (SyncConnection & { pulls: number }) | null = null;
+  const ONLINE: [string, string, number, number][] = [
+    ["11:02", "Kelly Brooks", 2, 18],
+    ["11:10", "Marcus Webb", 4, 18],
+    ["11:34", "Erin Walsh", 1, 9],
+    ["12:06", "Raj Mehta", 3, 9],
+    ["12:30", "Lisa Chen", 2, 18],
+  ];
+  const publicSync = (c: typeof sync) => {
+    if (!c) return null;
+    const { pulls: _, ...rest } = c;
+    return rest;
+  };
+
+  function importFile(input: { source: ImportSource; csv: string; fileName?: string; dryRun?: boolean; via?: "upload" | "sync" }): ImportResult {
     const parsed = parseTeeSheetCsv(input.csv);
     const dates = [...new Set(parsed.bookings.map((b) => b.date))].sort();
     const result: ImportResult = {
@@ -340,7 +357,7 @@ export function createDemoClient(apiKey: string): Client {
       teeTimes.clear();
       teeSnapshot.forEach((v, k) => teeTimes.set(k, v));
     } else if (before !== JSON.stringify(bookings) || parsed.bookings.length) {
-      runs.unshift({ id: id(), source: input.source, fileName: input.fileName ?? null, dates, counts: result.counts, createdAt: new Date().toISOString() });
+      runs.unshift({ id: id(), source: input.source, fileName: input.fileName ?? null, dates, counts: result.counts, via: input.via ?? "upload", createdAt: new Date().toISOString() });
     }
     return result;
   }
@@ -493,6 +510,66 @@ export function createDemoClient(apiKey: string): Client {
         return importFile(input);
       }),
     imports: () => reply(() => runs),
+    sync: () =>
+      reply(() => {
+        managerOnly();
+        return publicSync(sync);
+      }),
+    saveSync: (settings: SyncSettings) =>
+      reply(() => {
+        managerOnly();
+        if (settings.method === "report_url") {
+          if (!settings.reportUrl) throw new ApiError(400, "url_required", "Paste the report link from your booking system");
+          if (!/^https:\/\/[^\s]+$/.test(settings.reportUrl.trim())) throw new ApiError(400, "invalid_url", "The report link must start with https://");
+        }
+        const hasCredentials = settings.credentials === undefined ? (sync?.hasCredentials ?? false) : settings.credentials !== null;
+        sync = {
+          source: settings.source,
+          method: settings.method,
+          reportUrl: settings.reportUrl?.trim() || null,
+          hasCredentials,
+          enabled: settings.enabled,
+          intervalMinutes: settings.intervalMinutes,
+          lastRunAt: sync?.lastRunAt ?? null,
+          lastStatus: null,
+          lastMessage: null,
+          pulls: sync?.pulls ?? 0,
+        };
+        log("Changed tee sheet sync");
+        return publicSync(sync)!;
+      }),
+    removeSync: () =>
+      reply(() => {
+        managerOnly();
+        sync = null;
+        log("Turned off tee sheet sync");
+        return { ok: true };
+      }),
+    syncNow: () =>
+      reply(() => {
+        managerOnly();
+        if (!sync) throw new ApiError(400, "not_connected", "Set up tee sheet sync first");
+        let result: ImportResult | undefined;
+        if (sync.method === "provider_api") {
+          sync.lastStatus = "waiting";
+          sync.lastMessage = `${sync.source === "golfnow" ? "GolfNow" : "TeeItUp"} hasn't given this course API access yet. Ask your rep for it, and use a report link or a file upload until then.`;
+        } else {
+          // The demo can't reach a real report link, so it makes one up: each sync brings in one more online booking.
+          sync.pulls = Math.min(ONLINE.length, sync.pulls + 1);
+          const date = todayIn(riverBend.timeZone);
+          const [y, m, d] = date.split("-");
+          const csv = ["Confirmation #,Tee Date,Tee Time,Golfer Name,# Players,Holes,Status"]
+            .concat(ONLINE.slice(0, sync.pulls).map(([time, name, players, holes], i) => `TIU-${900 + i},${Number(m)}/${Number(d)}/${y},${time},${name},${players},${holes},Confirmed`))
+            .join("\n");
+          result = importFile({ source: sync.source, csv, fileName: "Automatic sync", via: "sync" });
+          const c = result.counts;
+          sync.lastStatus = "ok";
+          sync.lastMessage = `${c.created} new, ${c.updated} changed, ${c.cancelled} cancelled`;
+        }
+        sync.lastRunAt = new Date().toISOString();
+        log("Synced the tee sheet");
+        return { connection: publicSync(sync)!, result };
+      }),
     teeOff: (bookingId: string, carts: string[], signatures: WaiverSignature[]) =>
       reply(() => {
         const b = find(bookingId);

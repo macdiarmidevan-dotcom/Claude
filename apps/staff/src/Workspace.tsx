@@ -14,7 +14,7 @@ type Section = "tee-sheet" | "import" | "staff" | "customers" | "reports" | "sch
 
 const SECTIONS: { id: Section; label: string; icon: string; soon?: string; managers?: boolean }[] = [
   { id: "tee-sheet", label: "Tee sheet", icon: "▦" },
-  { id: "import", label: "Import tee sheet", icon: "⇩", managers: true },
+  { id: "import", label: "Sync tee sheet", icon: "⇅", managers: true },
   { id: "staff", label: "Staff accounts", icon: "☺", managers: true },
   { id: "customers", label: "Golfers", icon: "◉" },
   { id: "reports", label: "Reports", icon: "▤", soon: "Daily sales, rounds played, occupancy and payment types. Managers can already ask the AI assistant for these." },
@@ -91,7 +91,7 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
           )
         ) : section === "import" ? (
           <>
-            <Header title="Import tee sheet" onOpenMenu={openMenu} />
+            <Header title="Sync tee sheet" onOpenMenu={openMenu} />
             <ImportScreen client={client} />
           </>
         ) : section === "customers" ? (
