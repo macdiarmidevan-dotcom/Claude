@@ -365,6 +365,90 @@ export interface Redemption {
   rainCheck?: string;
 }
 
+export interface StandingTime {
+  id: string;
+  golferId: string;
+  golferName: string;
+  /** 1 is Monday, 7 is Sunday. */
+  weekday: number;
+  localTime: string;
+  players: number;
+  holes: number;
+  riding: boolean;
+  residency: "resident" | "nonresident";
+  startsOn: string;
+  endsOn: string | null;
+  active: boolean;
+  upcoming: { date: string; bookingId: string | null; problem: string | null }[];
+}
+
+export type EventKind = "league" | "outing";
+export type EventFormat = "tee_times" | "shotgun";
+export type EventPaymentMethod = "card" | "cash" | "check" | "gift_card" | "comp";
+
+export interface EventSummary {
+  id: string;
+  name: string;
+  kind: EventKind;
+  format: EventFormat;
+  holes: number;
+  pricePerPlayerCents: number;
+  includesCart: boolean;
+  contactName: string | null;
+  contactEmail: string | null;
+  contactPhone: string | null;
+  notes: string | null;
+  active: boolean;
+  nextDate: string | null;
+  dates: number;
+  players: number;
+}
+
+export interface EventDetail extends Omit<EventSummary, "nextDate" | "dates" | "players"> {
+  dates: { id: string; date: string; startTime: string; slots: number; held: number; status: "scheduled" | "cancelled"; paired: number; chargedPlayers: number; chargeCents: number }[];
+  players: { id: string; name: string; golferId: string | null; email: string | null; phone: string | null; handicap: number | null }[];
+  billing: {
+    chargedCents: number;
+    paidCents: number;
+    balanceCents: number;
+    payments: { id: string; amountCents: number; method: EventPaymentMethod; date: string | null; note: string | null; staff: string | null; at: string }[];
+  };
+}
+
+export interface HoldConflict {
+  date: string;
+  localTime: string;
+  detail: string;
+}
+
+export interface EventDay {
+  id: string;
+  eventId: string;
+  eventName: string;
+  format: EventFormat;
+  date: string;
+  startTime: string;
+  status: "scheduled" | "cancelled";
+  heldTimes: string[];
+  groups: { groupNo: number; start: string; players: { id: string; name: string; golferId: string | null; handicap: number | null; checkedIn: boolean }[] }[];
+  unpaired: { id: string; name: string; handicap: number | null }[];
+  checkedIn: number;
+}
+
+export interface NewEvent {
+  name: string;
+  kind: EventKind;
+  format: EventFormat;
+  holes: number;
+  pricePerPlayerCents: number;
+  includesCart?: boolean;
+  contactName?: string | null;
+  contactEmail?: string | null;
+  contactPhone?: string | null;
+  notes?: string | null;
+  schedule: { startsOn: string; endsOn?: string | null; startTime: string; slots: number };
+}
+
 export interface Product {
   id: string;
   name: string;
@@ -433,7 +517,7 @@ export interface SalesDay {
   };
 }
 
-export type MoneyMethod = "cash" | "card" | "gift_card" | "punch_card" | "season_pass" | "loyalty" | "rain_check" | "prepaid" | "comp";
+export type MoneyMethod = "cash" | "card" | "check" | "gift_card" | "punch_card" | "season_pass" | "loyalty" | "rain_check" | "prepaid" | "comp";
 
 export interface Report {
   from: string;
@@ -442,7 +526,9 @@ export interface Report {
     greenFeesCents: number;
     cartsAndExtrasCents: number;
     proShopCents: number;
-    /** Green fees, carts and extras, and pro shop sales before tax. */
+    /** League and outing payments, counted when paid. */
+    eventsCents: number;
+    /** Green fees, carts and extras, pro shop sales before tax, and leagues and outings. */
     totalCents: number;
     salesTaxCents: number;
     proShopRefundsCents: number;
@@ -451,7 +537,7 @@ export interface Report {
   collected: Record<MoneyMethod, number> & { totalCents: number };
   rounds: { played: number; booked: number; noShows: number; openSpots: number; occupancy: number | null; bySource: Record<string, number> };
   labor: { hours: number; people: number };
-  days: { date: string; greenFeesCents: number; cartsAndExtrasCents: number; proShopCents: number; taxCents: number; collectedCents: number; rounds: number }[];
+  days: { date: string; greenFeesCents: number; cartsAndExtrasCents: number; proShopCents: number; eventsCents: number; taxCents: number; collectedCents: number; rounds: number }[];
 }
 
 export interface DayClose {
@@ -611,6 +697,29 @@ function createHttpClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "ap
       request(`/bookings/${bookingId}/refund`, { method: "POST", body: input }),
     rainCheckSettings: () => request<{ rainCheckDays: number }>("/settings/rain-checks"),
     saveRainCheckSettings: (s: { rainCheckDays: number }) => request<{ rainCheckDays: number }>("/settings/rain-checks", { method: "PUT", body: s }),
+    standingTimes: () => request<StandingTime[]>("/standing-times"),
+    addStandingTime: (s: Omit<StandingTime, "id" | "golferName" | "active" | "upcoming">) => request<StandingTime>("/standing-times", { method: "POST", body: s }),
+    setStandingTimeActive: (id: string, active: boolean) => request<StandingTime>(`/standing-times/${id}`, { method: "PATCH", body: { active } }),
+    bookAhead: () => request<StandingTime[]>("/standing-times/book-ahead", { method: "POST" }),
+    events: () => request<EventSummary[]>("/events"),
+    event: (id: string) => request<EventDetail>(`/events/${id}`),
+    addEvent: (e: NewEvent) => request<{ event: EventDetail; conflicts: HoldConflict[] }>("/events", { method: "POST", body: e }),
+    updateEvent: (id: string, patch: Partial<Omit<NewEvent, "kind" | "format" | "schedule">> & { active?: boolean }) =>
+      request<EventDetail>(`/events/${id}`, { method: "PATCH", body: patch }),
+    addEventDate: (id: string, d: { date: string; startTime: string; slots: number }) =>
+      request<{ event: EventDetail; conflicts: HoldConflict[] }>(`/events/${id}/dates`, { method: "POST", body: d }),
+    cancelEventDate: (dateId: string) => request<EventDetail>(`/event-dates/${dateId}/cancel`, { method: "POST" }),
+    addEventPlayer: (id: string, p: { name?: string; golferId?: string | null; email?: string | null; phone?: string | null; handicap?: number | null }) =>
+      request<EventDetail>(`/events/${id}/players`, { method: "POST", body: p }),
+    removeEventPlayer: (id: string, playerId: string) => request<EventDetail>(`/events/${id}/players/${playerId}`, { method: "DELETE" }),
+    eventDay: (dateId: string) => request<EventDay>(`/event-dates/${dateId}`),
+    autoPair: (dateId: string, opts: { groupSize: number; order: "name" | "random" | "handicap" }) =>
+      request<EventDay>(`/event-dates/${dateId}/pairings/auto`, { method: "POST", body: opts }),
+    setPairing: (dateId: string, playerId: string, groupNo: number | null) => request<EventDay>(`/event-dates/${dateId}/pairings/${playerId}`, { method: "PUT", body: { groupNo } }),
+    eventCheckIn: (dateId: string, playerIds: string[], checkedIn: boolean) =>
+      request<EventDay>(`/event-dates/${dateId}/check-in`, { method: "POST", body: { playerIds, checkedIn } }),
+    addEventPayment: (id: string, p: { amountCents: number; method: EventPaymentMethod; eventDateId?: string | null; note?: string | null; cardPaymentId?: string }) =>
+      request<EventDetail>(`/events/${id}/payments`, { method: "POST", body: p }),
     posSettings: () => request<{ salesTaxBps: number }>("/settings/pos"),
     savePosSettings: (settings: { salesTaxBps: number }) => request<{ salesTaxBps: number }>("/settings/pos", { method: "PUT", body: settings }),
     report: (from: string, to: string) => request<Report>(`/reports?from=${from}&to=${to}`),

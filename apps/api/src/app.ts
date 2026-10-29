@@ -64,6 +64,26 @@ import {
   sellPass,
   updatePassType,
 } from "./passes.ts";
+import {
+  addEventDate,
+  addEventPayment,
+  addEventPlayer,
+  autoPair,
+  bookAhead,
+  bookStandingForDate,
+  cancelEventDate,
+  createEvent,
+  createStandingTime,
+  getEvent,
+  getEventDate,
+  listEvents,
+  listStandingTimes,
+  removeEventPlayer,
+  setCheckedIn,
+  setPairing,
+  setStandingTimeActive,
+  updateEvent,
+} from "./events.ts";
 import { findRainCheck, getRainCheckDays, issueRainCheck, listRainChecks, refundRound, saveRainCheckDays, voidRainCheck } from "./rainchecks.ts";
 import { deleteSync, getSync, runSync, saveSync, type FetchReport } from "./sync.ts";
 import { createGolfer, getGolfer, linkGolfer, searchGolfers, updateGolfer } from "./golfers.ts";
@@ -166,6 +186,18 @@ const ACTIONS: Record<string, string> = {
   "POST /v1/courses/:slug/rain-checks/:id/void": "Voided a rain check",
   "POST /v1/courses/:slug/bookings/:id/refund": "Refunded a round",
   "PUT /v1/courses/:slug/settings/rain-checks": "Changed rain check settings",
+  "POST /v1/courses/:slug/standing-times": "Added a standing tee time",
+  "PATCH /v1/courses/:slug/standing-times/:id": "Changed a standing tee time",
+  "POST /v1/courses/:slug/events": "Added a league or outing",
+  "PATCH /v1/courses/:slug/events/:id": "Changed a league or outing",
+  "POST /v1/courses/:slug/events/:id/dates": "Added an event date",
+  "POST /v1/courses/:slug/event-dates/:id/cancel": "Cancelled an event date",
+  "POST /v1/courses/:slug/events/:id/players": "Added a player to an event",
+  "DELETE /v1/courses/:slug/events/:id/players/:playerId": "Removed a player from an event",
+  "POST /v1/courses/:slug/event-dates/:id/pairings/auto": "Paired an event",
+  "PUT /v1/courses/:slug/event-dates/:id/pairings/:playerId": "Moved a player between groups",
+  "POST /v1/courses/:slug/event-dates/:id/check-in": "Checked in event players",
+  "POST /v1/courses/:slug/events/:id/payments": "Took an event payment",
   "PATCH /v1/courses/:slug/employee-types/:id": "Changed an employee type",
 };
 
@@ -750,6 +782,113 @@ export function buildApp(db: Db, opts: { fetchReport?: FetchReport; paymentsFetc
     return saveRainCheckDays(db, course, z.object({ rainCheckDays: z.number().int().min(1).max(3660) }).parse(req.body).rainCheckDays);
   });
 
+  // Standing tee times, leagues and outings. Managers set them up; the pro shop runs the day
+  // (pairings, check-in, payments).
+  const hhmm = z.string().regex(/^\d{2}:\d{2}$/);
+  app.get("/v1/courses/:slug/standing-times", async (req) => listStandingTimes(db, await courseFor(req)));
+  app.post("/v1/courses/:slug/standing-times", async (req, reply) => {
+    const course = await managedCourseFor(req);
+    const body = z
+      .object({
+        golferId: z.uuid(),
+        weekday: z.number().int().min(1).max(7),
+        localTime: hhmm,
+        players: z.number().int().min(1).max(8),
+        holes: z.number().int().min(9).max(72),
+        riding: z.boolean().default(false),
+        residency: z.enum(["resident", "nonresident"]).default("nonresident"),
+        startsOn: z.iso.date(),
+        endsOn: z.iso.date().nullish(),
+      })
+      .parse(req.body);
+    return reply.status(201).send(await createStandingTime(db, course, req.staff?.user.id, body));
+  });
+  app.patch("/v1/courses/:slug/standing-times/:id", async (req) => {
+    const course = await managedCourseFor(req);
+    return setStandingTimeActive(db, course, idParams.parse(req.params).id, z.object({ active: z.boolean() }).parse(req.body).active);
+  });
+  app.post("/v1/courses/:slug/standing-times/book-ahead", async (req) => {
+    const course = await courseFor(req);
+    await bookAhead(db, course);
+    return listStandingTimes(db, course);
+  });
+
+  const eventBody = z.object({
+    name: z.string().trim().min(1).max(120),
+    kind: z.enum(["league", "outing"]),
+    format: z.enum(["tee_times", "shotgun"]),
+    holes: z.number().int().min(9).max(72),
+    pricePerPlayerCents: z.number().int().min(0).max(10_000_000),
+    includesCart: z.boolean().optional(),
+    contactName: z.string().max(120).nullish(),
+    contactEmail: z.string().max(200).nullish(),
+    contactPhone: z.string().max(40).nullish(),
+    notes: z.string().max(1000).nullish(),
+  });
+  const dateBody = z.object({ date: z.iso.date(), startTime: hhmm, slots: z.number().int().min(1).max(60) });
+  app.get("/v1/courses/:slug/events", async (req) => listEvents(db, await courseFor(req)));
+  app.post("/v1/courses/:slug/events", async (req, reply) => {
+    const course = await managedCourseFor(req);
+    const body = eventBody.extend({ schedule: z.object({ startsOn: z.iso.date(), endsOn: z.iso.date().nullish(), startTime: hhmm, slots: z.number().int().min(1).max(60) }) }).parse(req.body);
+    return reply.status(201).send(await createEvent(db, course, body));
+  });
+  app.get("/v1/courses/:slug/events/:id", async (req) => getEvent(db, await courseFor(req), idParams.parse(req.params).id));
+  app.patch("/v1/courses/:slug/events/:id", async (req) => {
+    const course = await managedCourseFor(req);
+    const patch = eventBody.omit({ kind: true, format: true }).partial().extend({ active: z.boolean().optional() }).parse(req.body);
+    return updateEvent(db, course, idParams.parse(req.params).id, patch);
+  });
+  app.post("/v1/courses/:slug/events/:id/dates", async (req, reply) => {
+    const course = await managedCourseFor(req);
+    const id = idParams.parse(req.params).id;
+    const { conflicts } = await addEventDate(db, course, id, dateBody.parse(req.body));
+    return reply.status(201).send({ event: await getEvent(db, course, id), conflicts });
+  });
+  app.post("/v1/courses/:slug/event-dates/:id/cancel", async (req) => cancelEventDate(db, await managedCourseFor(req), idParams.parse(req.params).id));
+  app.post("/v1/courses/:slug/events/:id/players", async (req, reply) => {
+    const course = await courseFor(req);
+    const body = z
+      .object({ name: z.string().max(120).optional(), golferId: z.uuid().nullish(), email: z.string().max(200).nullish(), phone: z.string().max(40).nullish(), handicap: z.number().min(-10).max(54).nullish() })
+      .parse(req.body);
+    return reply.status(201).send(await addEventPlayer(db, course, idParams.parse(req.params).id, body));
+  });
+  app.delete("/v1/courses/:slug/events/:id/players/:playerId", async (req) => {
+    const course = await courseFor(req);
+    const { id, playerId } = z.object({ slug: z.string(), id: z.uuid(), playerId: z.uuid() }).parse(req.params);
+    return removeEventPlayer(db, course, id, playerId);
+  });
+  app.get("/v1/courses/:slug/event-dates/:id", async (req) => getEventDate(db, await courseFor(req), idParams.parse(req.params).id));
+  app.post("/v1/courses/:slug/event-dates/:id/pairings/auto", async (req) => {
+    const course = await courseFor(req);
+    const body = z.object({ groupSize: z.number().int().min(1).max(5).default(4), order: z.enum(["name", "random", "handicap"]).default("name"), playerIds: z.array(z.uuid()).max(500).optional() }).parse(req.body ?? {});
+    return autoPair(db, course, idParams.parse(req.params).id, body);
+  });
+  app.put("/v1/courses/:slug/event-dates/:id/pairings/:playerId", async (req) => {
+    const course = await courseFor(req);
+    const { id, playerId } = z.object({ slug: z.string(), id: z.uuid(), playerId: z.uuid() }).parse(req.params);
+    return setPairing(db, course, id, playerId, z.object({ groupNo: z.number().int().min(1).max(200).nullable() }).parse(req.body).groupNo);
+  });
+  app.post("/v1/courses/:slug/event-dates/:id/check-in", async (req) => {
+    const course = await courseFor(req);
+    const body = z.object({ playerIds: z.array(z.uuid()).min(1).max(500), checkedIn: z.boolean().default(true) }).parse(req.body);
+    return setCheckedIn(db, course, idParams.parse(req.params).id, body.playerIds, body.checkedIn);
+  });
+  app.post("/v1/courses/:slug/events/:id/payments", async (req, reply) => {
+    const course = await courseFor(req);
+    const body = z
+      .object({
+        amountCents: z.number().int().min(-10_000_000).max(10_000_000).refine((n) => n !== 0, "Enter an amount"),
+        method: z.enum(["card", "cash", "check", "gift_card", "comp"]),
+        eventDateId: z.uuid().nullish(),
+        note: z.string().max(300).nullish(),
+        cardPaymentId: z.uuid().nullish(),
+      })
+      .parse(req.body);
+    // Giving money back is for managers.
+    if (body.amountCents < 0) await managedCourseFor(req);
+    return reply.status(201).send(await addEventPayment(db, course, req.staff?.user.id, idParams.parse(req.params).id, body));
+  });
+
   // Processors call these when a card goes through. The raw body is kept for the signature check.
   app.register(async (hooks) => {
     hooks.addContentTypeParser("application/json", { parseAs: "string" }, (_req, body, done) => done(null, body));
@@ -810,6 +949,8 @@ export function buildApp(db: Db, opts: { fetchReport?: FetchReport; paymentsFetc
   app.get("/v1/courses/:slug/tee-sheet", async (req) => {
     const course = await courseFor(req);
     const { date } = dateQuery.parse(req.query);
+    // Standing tee times land on the sheet the first time a day is opened.
+    await bookStandingForDate(db, course, date);
     const sheet = await getTeeSheet(db, course, date);
     const { start, end } = dayRange(course, date);
     const bookings = await listBookingsForDay(db, course, start, end);

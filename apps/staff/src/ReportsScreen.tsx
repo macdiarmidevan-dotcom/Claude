@@ -18,6 +18,7 @@ const PERIODS: { id: Period; label: string }[] = [
 const METHOD_LABEL: Record<MoneyMethod, string> = {
   cash: "Cash",
   card: "Card",
+  check: "Check",
   gift_card: "Gift card",
   punch_card: "Punch card",
   season_pass: "Season pass",
@@ -117,6 +118,7 @@ function ManagerReports({ client, today }: { client: Client; today: string }) {
                 ["Green fees", r.revenue.greenFeesCents],
                 ["Carts and extras", r.revenue.cartsAndExtrasCents],
                 ["Pro shop", r.revenue.proShopCents],
+                ...(r.revenue.eventsCents ? ([["Leagues and outings", r.revenue.eventsCents]] as [string, number][]) : []),
               ]}
               total={["Total", r.revenue.totalCents]}
               note={r.revenue.proShopRefundsCents ? `Pro shop refunds: ${money(r.revenue.proShopRefundsCents)} (already left out)` : undefined}
