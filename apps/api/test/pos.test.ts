@@ -132,4 +132,27 @@ describe("pro shop", () => {
     expect(failed.json().error.code).toBe("product_inactive");
     expect((await call(staff, "GET", `/bookings/${other.id}`)).json().status).toBe("confirmed");
   });
+
+  it("re-prices the round at check-in when the pro shop changes the rate or adds carts", async () => {
+    let tuesday = DateTime.now().setZone("America/Chicago").plus({ days: 1 });
+    while (tuesday.weekday !== 2) tuesday = tuesday.plus({ days: 1 });
+    const sheet = (await call(staff, "GET", `/tee-sheet?date=${tuesday.toISODate()}`)).json();
+    const teeTimeId = sheet.teeTimes.find((t: { localTime: string }) => t.localTime === "11:02").id;
+    const two = [{ residency: "resident", ageGroup: "adult" }, { residency: "resident", ageGroup: "adult" }];
+    const expected = (await call(staff, "POST", "/quotes", { teeTimeId, holes: 9, players: two, addOns: [{ code: "gas_cart", quantity: 2 }] })).json().totalCents;
+    const booking = (await call(staff, "POST", "/bookings", { teeTimeId, holes: 9, customer: { name: "Pat Doyle", email: "pat@example.com" }, players: [{}, {}], source: "staff" })).json();
+    expect(booking.totalCents).not.toBe(expected);
+
+    const res = await call(staff, "POST", `/bookings/${booking.id}/check-in`, { payment: { method: "card" }, round: { residency: "resident", riding: true } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ status: "checked_in", totalCents: expected, payment: { paidCents: expected, balanceCents: 0 } });
+    const row = (await call(staff, "GET", `/tee-sheet?date=${tuesday.toISODate()}`)).json().teeTimes.flatMap((t: { bookings: object[] }) => t.bookings).find((b: { id: string }) => b.id === booking.id);
+    expect(row).toMatchObject({ resident: true, riding: true });
+
+    // Once a group has paid, its price stays put.
+    const paid = (await call(staff, "POST", "/bookings", { teeTimeId, holes: 9, customer: { name: "Pat Doyle", email: "pat@example.com" }, players: [{}], source: "staff" })).json();
+    await call(staff, "POST", `/bookings/${paid.id}/payments`, { amountCents: 500, method: "cash" });
+    const refused = await call(staff, "POST", `/bookings/${paid.id}/check-in`, { payment: { method: "card" }, round: { residency: "resident", riding: false } });
+    expect(refused.json().error.code).toBe("already_paid");
+  });
 });

@@ -50,7 +50,14 @@ export interface SheetBooking {
   signedCarts: string[];
   /** Riding in carts, or walking. */
   riding: boolean;
+  /** Paying resident rates. */
+  resident: boolean;
   payment: PaymentSummary;
+}
+
+export interface RoundChoice {
+  residency: "resident" | "nonresident";
+  riding: boolean;
 }
 
 export interface Waiver {
@@ -396,8 +403,9 @@ function createHttpClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "ap
       request(`/tee-times/${id}`, { method: "PATCH", body: patch }),
     book: (walkIn: WalkIn) => request(`/bookings`, { method: "POST", body: { ...walkIn, source: "staff" } }),
     /** Checks a group in, taking what's owed for the round and ringing up any items bought with it. */
-    checkIn: (id: string, method?: PaymentMethod, items?: { lines: SaleLineInput[]; paymentMethod: SalePaymentMethod }) =>
-      request(`/bookings/${id}/check-in`, { method: "POST", body: { ...(method ? { payment: { method } } : {}), ...(items ? { items } : {}) } }),
+    /** round: the pro shop's rate and walking/riding for the group, re-priced before payment. */
+    checkIn: (id: string, method?: PaymentMethod, items?: { lines: SaleLineInput[]; paymentMethod: SalePaymentMethod }, round?: RoundChoice) =>
+      request(`/bookings/${id}/check-in`, { method: "POST", body: { ...(method ? { payment: { method } } : {}), ...(items ? { items } : {}), ...(round ? { round } : {}) } }),
     waiver: () => request<Waiver>("/waiver"),
     /** Who is signed in. Managers can change course settings; other staff can't. */
     me: () => request<Me>("/me"),

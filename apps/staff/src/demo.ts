@@ -15,6 +15,7 @@ import {
   type Report,
   type ProductInput,
   type Sale,
+  type RoundChoice,
   type SaleLineInput,
   type SalePaymentMethod,
   type StockMovement,
@@ -465,6 +466,7 @@ export function createDemoClient(apiKey: string): Client {
       cartNumbers: [],
       signedCarts: [],
       riding: walkIn.addOns.some((a) => a.code === "gas_cart" && a.quantity > 0),
+      resident: walkIn.players.some((p) => p.residency === "resident"),
       payment: { status: "unpaid", paidCents: 0, balanceCents: total, methods: [] },
       paid: [],
     };
@@ -541,7 +543,7 @@ export function createDemoClient(apiKey: string): Client {
       if (!existing) {
         bookings.push({
           id: id(), teeTimeId: t.id, customerName: row.name, customerPhone: row.phone ?? null, golferId: null, players: row.players, holes,
-          status: row.status === "no_show" ? "no_show" : "confirmed", source: input.source, totalCents: total, cartNumbers: [], signedCarts: [], riding: false,
+          status: row.status === "no_show" ? "no_show" : "confirmed", source: input.source, totalCents: total, cartNumbers: [], signedCarts: [], riding: false, resident: false,
           payment: { status: "unpaid", paidCents: 0, balanceCents: total, methods: [] },
           paid: row.paidCents ? [{ amountCents: Math.min(row.paidCents, total), method: "prepaid" }] : [], externalId: row.externalId,
         });
@@ -614,10 +616,20 @@ export function createDemoClient(apiKey: string): Client {
         log("Added a booking", walkIn.customer.name);
         return b;
       }),
-    checkIn: (bookingId: string, method?: PaymentMethod, items?: { lines: SaleLineInput[]; paymentMethod: SalePaymentMethod }) =>
+    checkIn: (bookingId: string, method?: PaymentMethod, items?: { lines: SaleLineInput[]; paymentMethod: SalePaymentMethod }, round?: RoundChoice) =>
       reply(() => {
         const b = find(bookingId);
         if (b.status !== "confirmed" && b.status !== "no_show") throw conflict("invalid_status", "This group is already checked in");
+        if (round) {
+          if (payment(b).paidCents > 0) throw conflict("already_paid", "This group has already paid, so its price can't change here");
+          const t = teeTimes.get(b.teeTimeId)!;
+          const loops = Math.max(1, Math.round(b.holes / riverBend.holes));
+          const fee = quotePlayer(riverBendRates, { residency: round.residency, ageGroup: "adult" }, { startsAt: t.startsAt, timeZone: riverBend.timeZone }, loops).totalCents;
+          const cart = round.riding ? riverBendAddOns.find((x) => x.code === "gas_cart")!.priceCents : 0;
+          b.totalCents = (fee + cart) * b.players;
+          b.resident = round.residency === "resident";
+          b.riding = round.riding;
+        }
         const balance = payment(b).balanceCents;
         if (balance > 0 && !method) throw conflict("payment_required", "Take payment before checking in");
         if (items?.lines.length) ringUp({ ...items, golferId: b.golferId });

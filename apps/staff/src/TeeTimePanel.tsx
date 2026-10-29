@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { quotePlayer } from "@golf/core";
-import type { Client, Course, GolferAccount, PaymentMethod, Product, SalePaymentMethod, SheetBooking, SheetTeeTime, Station, Waiver } from "./api";
+import type { ScrollViewInstance } from "react-native";
+import type { Client, Course, RoundChoice, GolferAccount, PaymentMethod, Product, SalePaymentMethod, SheetBooking, SheetTeeTime, Station, Waiver } from "./api";
 import { WaiverModal } from "./WaiverModal";
 import { GolferPicker, useSearch } from "./Golfers";
 import { colors, type WebPress, formatTime, money, paymentMethodLabel, statusColor, statusLabel } from "./theme";
@@ -17,11 +18,13 @@ interface Props {
   onOpenGolfer?: (golferId: string) => void;
   onChanged: () => void;
   onClose: () => void;
+  /** The group whose name was tapped on the tee sheet: shown highlighted and scrolled to. */
+  focusBookingId?: string;
   /** Guests dragged onto a group on the tee sheet, waiting for staff to confirm. */
   guestRequest?: { bookingId: string; count: number; key: number };
 }
 
-export function TeeTimePanel({ client, teeTime, sheet, courseHoles, course, station, onOpenGolfer, onChanged, onClose, guestRequest }: Props) {
+export function TeeTimePanel({ client, teeTime, sheet, courseHoles, course, station, onOpenGolfer, onChanged, onClose, focusBookingId, guestRequest }: Props) {
   const price = (p: { players: number; holes: number; resident: boolean; riding: boolean }) => priceRound(course, teeTime.startsAt, p);
   const [error, setError] = useState<string>();
   const [moving, setMoving] = useState<SheetBooking>();
@@ -39,6 +42,13 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, course, stat
   useEffect(() => {
     if (guestRequest) setGuestsFor({ id: guestRequest.bookingId, count: guestRequest.count });
   }, [guestRequest?.key]);
+  const scrollRef = useRef<ScrollViewInstance>(null);
+  const cardTops = useRef(new Map<string, number>());
+  useEffect(() => {
+    const y = focusBookingId && cardTops.current.get(focusBookingId);
+    // The first group is already in view under the time; only scroll for ones further down.
+    if (y && y > 200) scrollRef.current?.scrollTo({ y: y - 8, animated: true });
+  }, [focusBookingId]);
   const spotsLeft = teeTime.maxPlayers - teeTime.bookedPlayers;
   const active = teeTime.bookings.filter((b) => b.status !== "cancelled");
 
@@ -53,7 +63,7 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, course, stat
   }
 
   return (
-    <ScrollView style={styles.panel} contentContainerStyle={{ padding: 16, paddingBottom: 48 }}>
+    <ScrollView ref={scrollRef} style={styles.panel} contentContainerStyle={{ padding: 16, paddingBottom: 48 }}>
       <View style={styles.header}>
         <View>
           <Text style={styles.time}>{formatTime(teeTime.localTime)}</Text>
@@ -71,7 +81,16 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, course, stat
       <Text style={styles.section}>Groups</Text>
       {active.length === 0 && <Text style={styles.muted}>No one booked yet.</Text>}
       {active.map((b) => (
-        <View key={b.id} style={styles.booking}>
+        <View
+          key={b.id}
+          style={[styles.booking, b.id === focusBookingId && styles.bookingFocus]}
+          onLayout={(e) => {
+            const y = e.nativeEvent.layout.y;
+            const first = !cardTops.current.has(b.id);
+            cardTops.current.set(b.id, y);
+            if (first && b.id === focusBookingId && y > 200) scrollRef.current?.scrollTo({ y: y - 8, animated: false });
+          }}
+        >
           <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
             {b.golferId && onOpenGolfer ? (
               <Pressable accessibilityRole="link" accessibilityLabel={`Open ${b.customerName}'s golfer account`} onPress={() => onOpenGolfer(b.golferId!)} hitSlop={6}>
@@ -106,20 +125,21 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, course, stat
           {cartsFor?.booking.id !== b.id && moving?.id !== b.id && payingFor?.id !== b.id && cancelling !== b.id && accountFor?.id !== b.id && guestsFor?.id !== b.id && (
             <View style={styles.actions}>
               {station === "proshop" && (b.status === "confirmed" || b.status === "no_show") && (
-                <Action
-                  label={b.payment.balanceCents > 0 ? `Take ${money(b.payment.balanceCents)} & check in` : "Check in"}
-                  primary
+                <CheckInButton
+                  label="Check in"
+                  detail={b.payment.balanceCents > 0 ? `${money(b.payment.balanceCents)} due` : "Paid"}
                   onPress={() =>
                     // The first check-in creates the golfer's account; after that it's a name search.
                     !b.golferId ? setAccountFor({ id: b.id, checkIn: true }) : setPayingFor(b)
                   }
                 />
               )}
+              {station === "starter" && b.status === "checked_in" && (
+                // The starter's half of check-in: carts and waivers at the tee box, then off they go.
+                <CheckInButton label="Check in at the tee" detail="Carts, then send off" onPress={() => setCartsFor({ booking: b, sendOff: true })} />
+              )}
               {station === "proshop" && b.status !== "no_show" && (
                 <Action label={b.golferId ? "Change golfer" : "Link golfer"} onPress={() => setAccountFor({ id: b.id, checkIn: false })} />
-              )}
-              {station === "starter" && b.status === "checked_in" && (
-                <Action label="Send off the tee" primary onPress={() => setCartsFor({ booking: b, sendOff: true })} />
               )}
               {(b.status === "checked_in" || b.status === "teed_off") && (
                 <Action label={b.cartNumbers.length ? "Change carts" : "Add carts"} onPress={() => setCartsFor({ booking: b, sendOff: false })} />
@@ -196,9 +216,10 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, course, stat
             <CheckoutForm
               client={client}
               booking={b}
-              onPay={(method, items) => {
+              price={price}
+              onPay={(method, items, round) => {
                 setPayingFor(undefined);
-                run(() => client.checkIn(b.id, method, items));
+                run(() => client.checkIn(b.id, method, items, round));
               }}
               onCancel={() => setPayingFor(undefined)}
             />
@@ -317,6 +338,25 @@ function Action({ label, onPress, primary, danger }: { label: string; onPress: (
   );
 }
 
+/** The one thing staff come to a group for, so it's the biggest button on the card. */
+function CheckInButton({ label, detail, onPress }: { label: string; detail: string; onPress: () => void }) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${label}, ${detail}`}
+      onPress={onPress}
+      style={({ pressed, focused }: WebPress) => [
+        styles.checkIn,
+        focused && ({ outlineColor: colors.focus, outlineWidth: 2, outlineStyle: "solid", outlineOffset: 2 } as object),
+        pressed && { opacity: 0.8 },
+      ]}
+    >
+      <Text style={styles.checkInText}>✓ {label}</Text>
+      <Text style={styles.checkInDetail}>{detail}</Text>
+    </Pressable>
+  );
+}
+
 function MovePicker({ sheet, booking, onPick, onCancel }: { sheet: SheetTeeTime[]; booking: SheetBooking; onPick: (id: string) => void; onCancel: () => void }) {
   const options = sheet.filter(
     (t) => t.id !== booking.teeTimeId && t.status === "open" && t.maxPlayers - t.bookedPlayers >= booking.players,
@@ -351,7 +391,7 @@ function CartForm({ booking, sendOff, onSave, onCancel }: { booking: SheetBookin
         autoFocus
       />
       <View style={styles.actions}>
-        <Action label={sendOff ? "Send off" : "Save carts"} primary onPress={() => onSave(carts)} />
+        <Action label={sendOff ? "Check in & send off" : "Save carts"} primary onPress={() => onSave(carts)} />
         <Action label="Back" onPress={onCancel} />
       </View>
     </View>
@@ -421,12 +461,14 @@ const ITEM_METHODS: { method: SalePaymentMethod; label: string }[] = [
 function CheckoutForm({
   client,
   booking,
+  price,
   onPay,
   onCancel,
 }: {
   client: Client;
   booking: SheetBooking;
-  onPay: (m: PaymentMethod | undefined, items?: { lines: { productId: string; quantity: number }[]; paymentMethod: SalePaymentMethod }) => void;
+  price: PriceFn;
+  onPay: (m: PaymentMethod | undefined, items?: { lines: { productId: string; quantity: number }[]; paymentMethod: SalePaymentMethod }, round?: RoundChoice) => void;
   onCancel: () => void;
 }) {
   const [products, setProducts] = useState<Product[]>();
@@ -442,7 +484,14 @@ function CheckoutForm({
     client.posSettings().then((x) => setTaxBps(x.salesTaxBps)).catch(() => undefined);
   }, [client]);
 
-  const owed = booking.payment.balanceCents;
+  // The rate and walking/riding can be changed at the counter until the group has paid anything.
+  const canReprice = booking.payment.paidCents === 0;
+  const [resident, setResident] = useState(booking.resident);
+  const [riding, setRiding] = useState(booking.riding);
+  const changed = canReprice && (resident !== booking.resident || riding !== booking.riding);
+  const repriced = changed ? price({ players: booking.players, holes: booking.holes, resident, riding }) : undefined;
+  const round: RoundChoice | undefined = changed && repriced !== undefined ? { residency: resident ? "resident" : "nonresident", riding } : undefined;
+  const owed = round ? repriced! : booking.payment.balanceCents;
   const add = (p: Product) =>
     setCart((c) => (c.some((x) => x.product.id === p.id) ? c.map((x) => (x.product.id === p.id ? { ...x, quantity: x.quantity + 1 } : x)) : [...c, { product: p, quantity: 1 }]));
   const setQty = (id: string, n: number) => setCart((c) => (n < 1 ? c.filter((x) => x.product.id !== id) : c.map((x) => (x.product.id === id ? { ...x, quantity: n } : x))));
@@ -461,9 +510,23 @@ function CheckoutForm({
   return (
     <View style={{ marginTop: 10 }}>
       <Text style={styles.section}>Check in {booking.customerName}</Text>
+      {canReprice && (
+        <>
+          <Row label="Rate">
+            <Toggle label="Nonresident" on={!resident} onPress={() => setResident(false)} />
+            <Toggle label="Resident" on={resident} onPress={() => setResident(true)} />
+          </Row>
+          <Row label="Walk/ride">
+            <Toggle label="Walking" on={!riding} onPress={() => setRiding(false)} />
+            <Toggle label="Riding" on={riding} onPress={() => setRiding(true)} />
+          </Row>
+          {changed && repriced === undefined && <Text style={styles.warning}>No rate is set for that, so the round stays at its booked price.</Text>}
+        </>
+      )}
       <View style={styles.billRow}>
         <Text style={styles.muted}>
-          Round: {booking.players} {booking.players === 1 ? "player" : "players"}, {booking.holes} holes, {booking.riding ? "riding" : "walking"}
+          Round: {booking.players} {booking.players === 1 ? "player" : "players"}, {booking.holes} holes, {(round ? riding : booking.riding) ? "riding" : "walking"}
+          {round ? `, ${resident ? "resident" : "nonresident"}` : ""}
         </Text>
         <Text style={styles.name}>{owed > 0 ? money(owed) : "Paid"}</Text>
       </View>
@@ -538,7 +601,11 @@ function CheckoutForm({
           label={total > 0 ? `Take ${money(total)} & check in` : "Check in"}
           primary
           onPress={() =>
-            onPay(owed > 0 ? method : undefined, cart.length ? { lines: cart.map((x) => ({ productId: x.product.id, quantity: x.quantity })), paymentMethod: owed > 0 ? payItemsWith : itemMethod } : undefined)
+            onPay(
+              owed > 0 ? method : undefined,
+              cart.length ? { lines: cart.map((x) => ({ productId: x.product.id, quantity: x.quantity })), paymentMethod: owed > 0 ? payItemsWith : itemMethod } : undefined,
+              round,
+            )
           }
         />
         <Action label="Back" onPress={onCancel} />
@@ -726,6 +793,10 @@ const styles = StyleSheet.create({
   error: { color: colors.noShow, backgroundColor: "#fbebeb", padding: 10, borderRadius: 3, marginBottom: 10 },
   section: { fontSize: 12, fontWeight: "700", color: colors.muted, textTransform: "uppercase", letterSpacing: 0.5, marginTop: 18, marginBottom: 8 },
   booking: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, padding: 12, marginBottom: 10 },
+  bookingFocus: { borderColor: colors.primary, borderWidth: 2, padding: 11 },
+  checkIn: { flexBasis: "100%", flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: colors.primary, borderRadius: 3, paddingHorizontal: 16, minHeight: 48 },
+  checkInText: { color: "#fff", fontSize: 16, fontWeight: "700" },
+  checkInDetail: { color: "#dce9fa", fontSize: 13, fontWeight: "600" },
   name: { fontSize: 15, fontWeight: "600", color: colors.text },
   badge: { fontSize: 12, fontWeight: "700", borderWidth: 1, borderRadius: 3, paddingHorizontal: 8, paddingVertical: 2, overflow: "hidden" },
   actions: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 },
