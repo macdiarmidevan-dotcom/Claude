@@ -163,6 +163,8 @@ Each row shows the time, filled spots, the groups (âœ“ checked in at the shop, â
 
 **Removing golfers.** Tap a time and press **Remove** on the group. Pick **Whole group** to cancel the booking and open its spots, or pick how many players aren't coming (2 of a foursome, say) to keep the rest booked. Taking players off drops the bill by their green fees, replay fees and carts, guests first. Groups that haven't checked in can be removed, including no-shows. A group that has already paid more than its new total is refused, since that would need a refund.
 
+If a group marked as a no-show turns up late, **Undo no-show** puts them back to booked so they can check in as usual. It's refused if their spots were given to someone else in the meantime; move them to another time instead.
+
 ![Removing one player from a foursome](docs/screenshots/remove-players.png)
 
 **Check in.** Tapping a golfer's name opens their tee time with their group outlined and a large **Check in** button showing what's due. At the pro shop it takes payment (and any items) and checks them in. Until a group has paid anything, the checkout also has **Rate** (nonresident/resident) and **Walk/ride** choices for the whole group: changing them re-prices the round, and the **Take $X & check in** amount updates with them and with each item added. On the starter screen, groups the pro shop has checked in get **Check in at the tee**, which asks for cart numbers and waivers and sends them off.

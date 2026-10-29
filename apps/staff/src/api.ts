@@ -536,6 +536,7 @@ function createHttpClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "ap
     setCarts: (id: string, cartNumbers: string[], waivers: WaiverSignature[]) =>
       request(`/bookings/${id}/carts`, { method: "PUT", body: { cartNumbers, waivers } }),
     noShow: (id: string) => request(`/bookings/${id}/no-show`, { method: "POST" }),
+    undoNoShow: (id: string) => request(`/bookings/${id}/undo-no-show`, { method: "POST" }),
     cancel: (id: string) => request(`/bookings/${id}/cancel`, { method: "POST" }),
     move: (id: string, teeTimeId: string) => request(`/bookings/${id}/move`, { method: "POST", body: { teeTimeId } }),
     removePlayers: (id: string, count: number) => request(`/bookings/${id}/remove-players`, { method: "POST", body: { count } }),

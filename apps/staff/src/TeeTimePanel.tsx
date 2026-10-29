@@ -147,6 +147,7 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, course, stat
               )}
               {spotsLeft > 0 && b.status !== "no_show" && <Action label="Add guests" onPress={() => setGuestsFor({ id: b.id, count: 1 })} />}
               {b.status === "confirmed" && <Action label="No-show" onPress={() => run(() => client.noShow(b.id))} />}
+              {b.status === "no_show" && <Action label="Undo no-show" onPress={() => run(() => client.undoNoShow(b.id))} />}
               {(b.status === "confirmed" || b.status === "checked_in") && <Action label="Move" onPress={() => setMoving(b)} />}
               {(b.status === "confirmed" || b.status === "no_show") && (
                 <Action label="Remove" danger onPress={() => setCancelling(b.id)} />

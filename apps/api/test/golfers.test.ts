@@ -171,5 +171,11 @@ describe("golfer accounts", () => {
     const other = await walkIn("13:18", "Lou");
     await call("POST", `/bookings/${other}/no-show`);
     expect((await call("POST", `/bookings/${other}/cancel`)).json().status).toBe("cancelled");
+
+    // A no-show who turns up late goes back to booked.
+    const late = await walkIn("13:26", "Sam");
+    await call("POST", `/bookings/${late}/no-show`);
+    expect((await call("POST", `/bookings/${late}/undo-no-show`)).json().status).toBe("confirmed");
+    expect((await call("POST", `/bookings/${late}/undo-no-show`)).json().error.code).toBe("invalid_status");
   });
 });

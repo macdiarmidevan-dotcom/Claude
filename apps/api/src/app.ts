@@ -81,6 +81,7 @@ import {
   moveBooking,
   addGuests,
   removePlayers,
+  undoNoShow,
   recordPayment,
   setCartNumbers,
   teeOff,
@@ -108,6 +109,7 @@ const ACTIONS: Record<string, string> = {
   "POST /v1/courses/:slug/bookings/:id/guests": "Added guests to a group",
   "POST /v1/courses/:slug/bookings/:id/remove-players": "Removed players from a group",
   "POST /v1/courses/:slug/bookings/:id/cancel": "Cancelled a booking",
+  "POST /v1/courses/:slug/bookings/:id/undo-no-show": "Undid a no-show",
   "POST /v1/courses/:slug/bookings/:id/no-show": "Marked a no-show",
   "PATCH /v1/courses/:slug/tee-times/:id": "Changed a tee time",
   "PUT /v1/courses/:slug/waiver": "Changed the cart waiver",
@@ -754,6 +756,12 @@ export function buildApp(db: Db, opts: { fetchReport?: FetchReport; paymentsFetc
     const course = await courseFor(req);
     const { id } = idParams.parse(req.params);
     return removePlayers(db, course, id, removePlayersBody.parse(req.body).count);
+  });
+
+  app.post("/v1/courses/:slug/bookings/:id/undo-no-show", async (req) => {
+    const course = await courseFor(req);
+    const { id } = idParams.parse(req.params);
+    return undoNoShow(db, course, id);
   });
 
   // Pro shop check-in: takes any balance due, then marks the group checked in.

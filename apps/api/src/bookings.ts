@@ -303,6 +303,22 @@ async function changeStatus(
   }
 }
 
+/**
+ * A no-show group that turns up late goes back to booked, so the pro shop can check them in as
+ * usual. Refused if their spots were given away in the meantime.
+ */
+export async function undoNoShow(db: Db, course: Course, id: string): Promise<Booking> {
+  await withTransaction(db, async (client) => {
+    const { rows } = await client.query("SELECT tee_time_id, status FROM bookings WHERE id = $1 AND course_id = $2 FOR UPDATE", [id, course.id]);
+    if (!rows[0]) throw notFound("Booking");
+    if (rows[0].status !== "no_show") throw conflict("invalid_status", "This group isn't marked as a no-show");
+    const teeTime = await lockTeeTime(client, course, rows[0].tee_time_id, true);
+    if (teeTime.bookedPlayers > teeTime.maxPlayers) throw conflict("not_enough_spots", "Their spots have been taken. Move them to another time instead");
+    await client.query("UPDATE bookings SET status = 'confirmed' WHERE id = $1", [id]);
+  });
+  return getBooking(db, course, id);
+}
+
 export async function setBookingStatus(
   db: Db,
   course: Course,
