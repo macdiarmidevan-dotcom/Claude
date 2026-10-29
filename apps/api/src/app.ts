@@ -53,6 +53,17 @@ import {
   updateTerminal,
 } from "./payments.ts";
 import { providers, type PaymentsFetch } from "./terminals.ts";
+import {
+  adjustPoints,
+  cancelPass,
+  createPassType,
+  getLoyaltySettings,
+  getWallet,
+  listPassTypes,
+  saveLoyaltySettings,
+  sellPass,
+  updatePassType,
+} from "./passes.ts";
 import { deleteSync, getSync, runSync, saveSync, type FetchReport } from "./sync.ts";
 import { createGolfer, getGolfer, linkGolfer, searchGolfers, updateGolfer } from "./golfers.ts";
 import {
@@ -140,6 +151,12 @@ const ACTIONS: Record<string, string> = {
   "POST /v1/courses/:slug/terminals": "Added a card reader",
   "PATCH /v1/courses/:slug/terminals/:id": "Changed a card reader",
   "POST /v1/courses/:slug/card-payments/:id/refund": "Refunded a card payment",
+  "POST /v1/courses/:slug/pass-types": "Added a pass type",
+  "PATCH /v1/courses/:slug/pass-types/:id": "Changed a pass type",
+  "PUT /v1/courses/:slug/settings/loyalty": "Changed loyalty points",
+  "POST /v1/courses/:slug/golfers/:id/passes": "Sold a pass",
+  "POST /v1/courses/:slug/golfers/:id/passes/:passId/cancel": "Cancelled a pass",
+  "POST /v1/courses/:slug/golfers/:id/points": "Adjusted loyalty points",
   "PATCH /v1/courses/:slug/employee-types/:id": "Changed an employee type",
 };
 
@@ -186,7 +203,7 @@ const waiverSignature = z.object({
     .regex(/^[MLQCZmlqcz0-9.,\s-]+$/, "signature must be SVG path data"),
 });
 const waivers = z.array(waiverSignature).max(8).optional();
-const paymentMethod = z.enum(["card", "cash", "prepaid", "punch_card", "gift_card", "comp"]);
+const paymentMethod = z.enum(["card", "cash", "prepaid", "punch_card", "season_pass", "loyalty", "gift_card", "comp"]);
 const saleLine = z.union([
   z.object({ productId: z.uuid(), quantity: z.number().int().min(1).max(999) }),
   z.object({ description: z.string().max(200), unitCents: z.number().int().min(0).max(10_000_000), quantity: z.number().int().min(1).max(999), taxable: z.boolean().optional() }),
@@ -199,6 +216,8 @@ const checkInBody = z.object({
   items: z.object({ lines: z.array(saleLine).max(100), paymentMethod: salePaymentMethod }).optional(),
   round: z.object({ residency: z.enum(["resident", "nonresident"]), riding: z.boolean() }).optional(),
   cardPaymentId: z.uuid().optional(),
+  pass: z.object({ golferPassId: z.uuid(), rounds: z.number().int().min(1).max(8) }).optional(),
+  points: z.number().int().positive().max(10_000_000).optional(),
 });
 const teeOffBody = z.object({ cartNumbers: cartNumbers.optional(), waivers });
 const cartsBody = z.object({ cartNumbers, waivers });
@@ -639,6 +658,50 @@ export function buildApp(db: Db, opts: { fetchReport?: FetchReport; paymentsFetc
     const course = await managedCourseFor(req);
     const { amountCents } = z.object({ amountCents: z.number().int().positive().optional() }).parse(req.body ?? {});
     return refundCardPayment(db, course, processors, idParams.parse(req.params).id, amountCents);
+  });
+
+  // Punch cards, season passes and loyalty points. Managers set them up; anyone sells and uses them.
+  const passTypeBody = z.object({
+    name: z.string().trim().min(1).max(120),
+    kind: z.enum(["punch_card", "season_pass"]),
+    priceCents: z.number().int().min(0).max(10_000_000),
+    rounds: z.number().int().min(1).max(500).nullish(),
+    validDays: z.number().int().min(1).max(3660).nullish(),
+    coversCart: z.boolean().optional(),
+  });
+  app.get("/v1/courses/:slug/pass-types", async (req) => listPassTypes(db, await courseFor(req)));
+  app.post("/v1/courses/:slug/pass-types", async (req, reply) => {
+    const course = await managedCourseFor(req);
+    return reply.status(201).send(await createPassType(db, course, passTypeBody.parse(req.body)));
+  });
+  app.patch("/v1/courses/:slug/pass-types/:id", async (req) => {
+    const course = await managedCourseFor(req);
+    const patch = passTypeBody.omit({ kind: true }).partial().extend({ active: z.boolean().optional() }).parse(req.body);
+    return updatePassType(db, course, idParams.parse(req.params).id, patch);
+  });
+  app.get("/v1/courses/:slug/settings/loyalty", async (req) => getLoyaltySettings(db, await courseFor(req)));
+  app.put("/v1/courses/:slug/settings/loyalty", async (req) => {
+    const course = await managedCourseFor(req);
+    const body = z
+      .object({ pointsPerDollar: z.number().int().min(0).max(100), rewardPoints: z.number().int().min(1).max(1_000_000), rewardCents: z.number().int().min(0).max(1_000_000) })
+      .parse(req.body);
+    return saveLoyaltySettings(db, course, body);
+  });
+  app.get("/v1/courses/:slug/golfers/:id/wallet", async (req) => getWallet(db, await courseFor(req), idParams.parse(req.params).id));
+  app.post("/v1/courses/:slug/golfers/:id/passes", async (req, reply) => {
+    const course = await courseFor(req);
+    const body = z.object({ passTypeId: z.uuid(), paymentMethod: salePaymentMethod, cardPaymentId: z.uuid().nullish() }).parse(req.body);
+    return reply.status(201).send(await sellPass(db, course, req.staff?.user.id, idParams.parse(req.params).id, body));
+  });
+  app.post("/v1/courses/:slug/golfers/:id/passes/:passId/cancel", async (req) => {
+    const course = await managedCourseFor(req);
+    const { id, passId } = z.object({ slug: z.string(), id: z.uuid(), passId: z.uuid() }).parse(req.params);
+    return cancelPass(db, course, id, passId);
+  });
+  app.post("/v1/courses/:slug/golfers/:id/points", async (req) => {
+    const course = await managedCourseFor(req);
+    const { change, note } = z.object({ change: z.number().int().min(-1_000_000).max(1_000_000), note: z.string().max(300) }).parse(req.body);
+    return adjustPoints(db, course, req.staff?.user.id, idParams.parse(req.params).id, change, note);
   });
 
   // Processors call these when a card goes through. The raw body is kept for the signature check.

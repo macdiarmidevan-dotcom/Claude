@@ -7,7 +7,7 @@ import { revenue } from "./insights.ts";
 // Reports for managers and the end-of-day close. Tee sheet money comes from bookings and
 // their payments; pro shop money from register sales. Everything is read-only except the close.
 
-const METHODS = ["cash", "card", "gift_card", "punch_card", "prepaid", "comp"] as const;
+const METHODS = ["cash", "card", "gift_card", "punch_card", "season_pass", "loyalty", "prepaid", "comp"] as const;
 type Method = (typeof METHODS)[number];
 const emptyMethods = () => Object.fromEntries(METHODS.map((m) => [m, 0])) as Record<Method, number>;
 
