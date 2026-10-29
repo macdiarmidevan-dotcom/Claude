@@ -173,6 +173,16 @@ API: `GET/PUT /settings/accounting`, `GET /accounting/journal?from&to` (up to tw
 
 ![The daily journal entry](docs/screenshots/accounting-export.png)
 
+## Carts and maintenance
+
+**Carts & maintenance › Carts** is the cart board: every cart with whether it's free, out on the course (and with which group), or out of service and why. A manager adds the fleet once (**Add carts**, numbers 1 to 60 in one go, with how many rounds between services). From then on the starter can only hand out carts that are in the fleet and in service, picks free carts by tapping their numbers, and marks a group's carts back in when they return (a cart counts as back six hours after tee off anyway). Rounds are counted on each cart from the cart numbers given at the tee, so **Service due** shows up on its own; logging a service restarts the count. Until any carts are added, any cart number is accepted, as before.
+
+**Equipment** lists mowers, utility vehicles and other machines with their hour meter and service interval in hours. **Work orders** is for anything that needs fixing, on a cart, a machine, the course or the clubhouse: anyone on staff can report a problem (optionally taking the cart out of service until it's fixed), assign it, set how urgent it is and when it's due, add notes and move it along. Finishing one on a cart or machine records the repair and cost in its service history and can put it back in service. Only managers cancel a work order.
+
+API: `GET/POST /fleet`, `POST /fleet/carts`, `GET/PATCH /fleet/:id`, `POST /fleet/:id/status`, `POST /fleet/:id/service`, `PUT /fleet/:id/hours`, `POST /bookings/:id/carts-in`, `GET/POST /work-orders`, `GET/PATCH /work-orders/:id`, `POST /work-orders/:id/status`, `POST /work-orders/:id/notes`.
+
+![The cart board](docs/screenshots/cart-fleet.png)
+
 ## AI assistant
 
 Managers can ask Claude, ChatGPT or another MCP client about the course: "how many rounds today?", "who still owes?", "is Mike Sullivan booked this week?", "what did we take last week?". Add a custom connector with the address `https://<your server>/v1/courses/<course>/mcp` and the manager key as a Bearer token.

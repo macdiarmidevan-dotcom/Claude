@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { quotePlayer } from "@golf/core";
 import type { ScrollViewInstance } from "react-native";
-import type { Client, Course, GiftCard, RoundChoice, GolferAccount, PaymentMethod, Product, SalePaymentMethod, SheetBooking, SheetTeeTime, Station, Waiver, Redemption, Wallet, RainCheck } from "./api";
+import type { Asset, Client, Course, GiftCard, RoundChoice, GolferAccount, PaymentMethod, Product, SalePaymentMethod, SheetBooking, SheetTeeTime, Station, Waiver, Redemption, Wallet, RainCheck } from "./api";
 import { WaiverModal } from "./WaiverModal";
 import { CardChargeModal, useCardReader } from "./CardReader";
 import { GolferPicker, useSearch } from "./Golfers";
@@ -150,6 +150,9 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, course, stat
               {(b.status === "checked_in" || b.status === "teed_off") && (
                 <Action label={b.cartNumbers.length ? "Change carts" : "Add carts"} onPress={() => setCartsFor({ booking: b, sendOff: false })} />
               )}
+              {b.status === "teed_off" && b.cartNumbers.length > 0 && !b.cartsIn && (
+                <Action label={b.cartNumbers.length === 1 ? "Cart back in" : "Carts back in"} onPress={() => run(() => client.cartsIn(b.id))} />
+              )}
               {station === "proshop" && (b.status === "checked_in" || b.status === "teed_off") && (
                 <Action label="Rain check" onPress={() => setCreditFor({ id: b.id, kind: "rain_check" })} />
               )}
@@ -269,6 +272,7 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, course, stat
           )}
           {cartsFor?.booking.id === b.id && (
             <CartForm
+              client={client}
               booking={b}
               sendOff={cartsFor.sendOff}
               onSave={async (carts) => {
@@ -419,12 +423,49 @@ function MovePicker({ sheet, booking, onPick, onCancel }: { sheet: SheetTeeTime[
   );
 }
 
-function CartForm({ booking, sendOff, onSave, onCancel }: { booking: SheetBooking; sendOff: boolean; onSave: (carts: string[]) => void; onCancel: () => void }) {
+function CartForm({ client, booking, sendOff, onSave, onCancel }: { client: Client; booking: SheetBooking; sendOff: boolean; onSave: (carts: string[]) => void; onCancel: () => void }) {
   const [value, setValue] = useState(booking.cartNumbers.join(", "));
   const carts = value.split(/[\s,]+/).filter(Boolean);
+  // With the fleet set up, the free carts are a tap away; out-of-service ones aren't offered.
+  const [fleet, setFleet] = useState<Asset[]>([]);
+  useEffect(() => {
+    client
+      .fleet("cart")
+      .then(setFleet)
+      .catch(() => setFleet([]));
+  }, [client]);
+  const free = fleet.filter((c) => c.status === "in_service" && !c.out).map((c) => c.number);
+  // Catch a cart that's down before anyone signs a waiver for it; the server checks again.
+  const problem = fleet.length
+    ? carts
+        .filter((n) => !booking.cartNumbers.includes(n))
+        .map((n) => {
+          const c = fleet.find((x) => x.number === n);
+          return !c ? `Cart ${n} isn't in the fleet` : c.status !== "in_service" ? `Cart ${n} is out of service${c.statusNote ? ` (${c.statusNote})` : ""}` : null;
+        })
+        .filter(Boolean)
+        .join(". ")
+    : "";
+  const toggle = (n: string) => setValue((carts.includes(n) ? carts.filter((c) => c !== n) : [...carts, n]).join(", "));
   return (
     <View style={{ marginTop: 10 }}>
       <Text style={styles.muted}>Cart numbers (leave empty if walking). Each driver signs the cart waiver next.</Text>
+      {free.length > 0 && (
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+          {[...new Set([...booking.cartNumbers, ...free])].slice(0, 24).map((n) => (
+            <Pressable
+              key={n}
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: carts.includes(n) }}
+              accessibilityLabel={`Cart ${n}`}
+              onPress={() => toggle(n)}
+              style={({ focused }: WebPress) => [styles.cartChip, carts.includes(n) && styles.cartChipOn, focused && styles.focus]}
+            >
+              <Text style={[styles.cartChipText, carts.includes(n) && { color: "#fff" }]}>{n}</Text>
+            </Pressable>
+          ))}
+        </View>
+      )}
       <TextInput
         style={[styles.input, { marginTop: 6 }]}
         placeholder="e.g. 12, 14"
@@ -433,8 +474,9 @@ function CartForm({ booking, sendOff, onSave, onCancel }: { booking: SheetBookin
         keyboardType="numbers-and-punctuation"
         autoFocus
       />
+      {!!problem && <Text style={[styles.muted, { color: colors.noShow, marginTop: 4 }]}>{problem}</Text>}
       <View style={styles.actions}>
-        <Action label={sendOff ? "Check in & send off" : "Save carts"} primary onPress={() => onSave(carts)} />
+        <Action label={sendOff ? "Check in & send off" : "Save carts"} primary onPress={() => !problem && onSave(carts)} />
         <Action label="Back" onPress={onCancel} />
       </View>
     </View>
@@ -1219,6 +1261,10 @@ const styles = StyleSheet.create({
   suggestions: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, marginTop: -6, marginBottom: 10, backgroundColor: colors.card },
   suggestion: { paddingHorizontal: 10, paddingVertical: 6, borderBottomWidth: 1, borderColor: colors.border },
   carts: { color: colors.primaryText, fontWeight: "700", fontSize: 13, marginTop: 4 },
+  cartChip: { minWidth: 44, minHeight: 40, paddingHorizontal: 8, borderWidth: 1, borderColor: colors.border, borderRadius: 3, alignItems: "center", justifyContent: "center", backgroundColor: "#fff" },
+  cartChipOn: { backgroundColor: colors.primary, borderColor: colors.primary },
+  focus: { outlineColor: colors.focus, outlineWidth: 2, outlineStyle: "solid" } as object,
+  cartChipText: { fontSize: 15, fontWeight: "700", color: colors.text },
   payment: { fontWeight: "700", fontSize: 13, marginTop: 4 },
   warning: { color: colors.warn, fontSize: 13, marginTop: 4 },
   nameLink: { color: colors.primary, textDecorationLine: "underline" },
