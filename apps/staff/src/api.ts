@@ -309,6 +309,33 @@ export interface SalesDay {
   };
 }
 
+export type MoneyMethod = "cash" | "card" | "gift_card" | "punch_card" | "prepaid" | "comp";
+
+export interface Report {
+  from: string;
+  to: string;
+  revenue: {
+    greenFeesCents: number;
+    cartsAndExtrasCents: number;
+    proShopCents: number;
+    /** Green fees, carts and extras, and pro shop sales before tax. */
+    totalCents: number;
+    salesTaxCents: number;
+    proShopRefundsCents: number;
+    proShopByCategory: { category: string; cents: number; items: number }[];
+  };
+  collected: Record<MoneyMethod, number> & { totalCents: number };
+  rounds: { played: number; booked: number; noShows: number; openSpots: number; occupancy: number | null; bySource: Record<string, number> };
+  labor: { hours: number; people: number };
+  days: { date: string; greenFeesCents: number; cartsAndExtrasCents: number; proShopCents: number; taxCents: number; collectedCents: number; rounds: number }[];
+}
+
+export interface DayClose {
+  date: string;
+  expected: Record<MoneyMethod, number>;
+  close: { expectedCashCents: number; countedCashCents: number; overShortCents: number; note: string | null; closedBy: string | null; closedAt: string } | null;
+}
+
 export interface Coworker {
   id: string;
   name: string;
@@ -416,6 +443,10 @@ function createHttpClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "ap
     refundSale: (id: string) => request<Sale>(`/sales/${id}/refund`, { method: "POST" }),
     posSettings: () => request<{ salesTaxBps: number }>("/settings/pos"),
     savePosSettings: (settings: { salesTaxBps: number }) => request<{ salesTaxBps: number }>("/settings/pos", { method: "PUT", body: settings }),
+    report: (from: string, to: string) => request<Report>(`/reports?from=${from}&to=${to}`),
+    dayClose: (date: string) => request<DayClose>(`/closes/${date}`),
+    closeDay: (date: string, close: { countedCashCents: number; note?: string | null }) =>
+      request<DayClose>(`/closes/${date}`, { method: "PUT", body: close }),
     searchGolfers: (q: string) => request<GolferAccount[]>(`/golfers?q=${encodeURIComponent(q)}`),
     golfer: (id: string) => request<GolferProfile>(`/golfers/${id}`),
     /** Creates a golfer's account, usually at their first check-in, and links that booking. */
