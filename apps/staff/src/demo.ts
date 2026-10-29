@@ -9,6 +9,15 @@ import {
   type GolferProfile,
   type Role,
   type EmployeeType,
+  type DayClose,
+  type MoneyMethod,
+  type Product,
+  type Report,
+  type ProductInput,
+  type Sale,
+  type SaleLineInput,
+  type SalePaymentMethod,
+  type StockMovement,
   type Punch,
   type Shift,
   type ShiftInput,
@@ -84,6 +93,7 @@ const shifts: DemoShift[] = [];
 const punches: (Omit<Punch, "staff" | "hours"> & { staffId: string })[] = [];
 const swaps: { id: string; status: Swap["status"]; fromId: string; toId: string; offeredId: string; requestedId: string | null; message: string | null; createdAt: string }[] = [];
 const scheduling = { swapsNeedApproval: true };
+const closes = new Map<string, NonNullable<DayClose["close"]>>();
 let shiftSeq = 1;
 
 function seedSchedule() {
@@ -103,6 +113,42 @@ function seedSchedule() {
     }
     shifts.push({ id: `sh-${shiftSeq++}`, staffId: null, typeId: "et-4", date: addDays(monday, week + 6), start: "11:00", end: "18:00", note: "Open: Sunday bar" });
   }
+}
+
+// The demo pro shop, kept outside the client like the schedule so stock carries between sign-ins.
+const products: Product[] = [];
+const movements = new Map<string, StockMovement[]>();
+const sales: Sale[] = [];
+const pos = { salesTaxBps: 725 };
+
+function seedProducts() {
+  if (products.length) return;
+  const list: [string, string, string, number, number, number, number, boolean?][] = [
+    // name, sku, category, price, cost, stock, reorder at, taxable
+    ["Titleist Pro V1 (dozen)", "TPV1", "Balls", 5499, 3800, 14, 6],
+    ["Callaway Supersoft (dozen)", "CSS12", "Balls", 2499, 1550, 22, 8],
+    ["Srixon Soft Feel sleeve", "SSF3", "Balls", 999, 560, 4, 6],
+    ["FootJoy WeatherSof glove", "FJWS", "Gloves", 2299, 1200, 18, 10],
+    ["FootJoy StaSof glove", "FJSS", "Gloves", 2799, 1500, 3, 5],
+    ["River Bend logo cap", "RBCAP", "Apparel", 2800, 1100, 25, 8],
+    ["River Bend polo", "RBPOLO", "Apparel", 6500, 2800, 11, 6],
+    ["Wooden tees (bag of 50)", "TEE50", "Accessories", 399, 120, 40, 15],
+    ["Divot tool with ball marker", "DIVOT", "Accessories", 899, 300, 16, 6],
+    ["Rain umbrella", "UMB", "Accessories", 3499, 1600, 5, 3],
+    ["Bottled water", "H2O", "Food & drink", 250, 60, 48, 24],
+    ["Gatorade", "GATR", "Food & drink", 350, 110, 30, 18],
+    ["Hot dog", "HOTDOG", "Food & drink", 500, 140, 0, 0, true],
+    ["Range bucket, small", "RNGS", "Range", 800, 0, 0, 0, false],
+    ["Range bucket, large", "RNGL", "Range", 1400, 0, 0, 0, false],
+  ];
+  for (const [name, sku, category, priceCents, costCents, stock, reorderLevel, taxable] of list) {
+    const tracked = !["Range"].includes(category) && sku !== "HOTDOG";
+    products.push({ id: `pr-${sku}`, name, sku, category, priceCents, costCents, taxable: taxable ?? true, trackStock: tracked, stock: tracked ? stock : 0, reorderLevel, low: false, active: true });
+  }
+  for (const p of products) refreshLow(p);
+}
+function refreshLow(p: Product) {
+  p.low = p.trackStock && p.active && p.stock <= p.reorderLevel;
 }
 
 export async function demoSignIn(email: string, password: string) {
@@ -187,6 +233,21 @@ export function createDemoClient(apiKey: string): Client {
     if (requested) requested.staffId = w.fromId;
     w.status = "approved";
   }
+  function move(p: Product, change: number, reason: StockMovement["reason"], saleNumber: number | null, note: string | null) {
+    p.stock += change;
+    refreshLow(p);
+    const list = movements.get(p.id) ?? [];
+    list.unshift({ id: id(), change, stockAfter: p.stock, reason, saleNumber, note, staff: account()?.name ?? null, at: new Date().toISOString() });
+    movements.set(p.id, list);
+  }
+  function demoClose(date: string): DayClose {
+    ensureDay(date);
+    const expected: Record<MoneyMethod, number> = { cash: 0, card: 0, gift_card: 0, punch_card: 0, prepaid: 0, comp: 0 };
+    for (const b of bookings) if (teeTimes.get(b.teeTimeId)?.date === date) for (const p of b.paid) expected[p.method] += p.amountCents;
+    for (const sale of sales)
+      if (sale.status === "completed" && new Intl.DateTimeFormat("en-CA", { timeZone: riverBend.timeZone }).format(new Date(sale.at)) === date) expected[sale.paymentMethod] += sale.totalCents;
+    return { date, expected, close: closes.get(date) ?? null };
+  }
   const log = (action: string, golfer?: string) =>
     activity.unshift({ actor: account()?.name ?? "Shared device key", action, golfer: golfer ?? null, bookingId: null, detail: {}, at: new Date().toISOString() });
   const teeTimes = new Map<string, DemoTeeTime>();
@@ -211,7 +272,7 @@ export function createDemoClient(apiKey: string): Client {
     Array.from({ length: n }, (_, i) => {
       const d = new Date(Date.now() - (i + 1) * 6 * 86_400_000);
       d.setHours(7 + (i % 4), 10, 0, 0);
-      return { bookingId: `past-${nextId++}`, startsAt: d.toISOString(), course: riverBend.name, players: 2 + (i % 3), holes, status: "teed_off" as const, source: "teeitup", totalCents: 4200, paidCents: 4200 };
+      return { bookingId: `past-${nextId++}`, startsAt: d.toISOString(), course: riverBend.name, players: 2 + (i % 3), guests: 1 + (i % 3), holes, status: "teed_off" as const, source: "teeitup", paidCents: holes === 18 ? 4200 : 2300 };
     });
   let nextId = 1;
   const id = () => `demo-${nextId++}`;
@@ -296,7 +357,7 @@ export function createDemoClient(apiKey: string): Client {
       .filter((b) => b.golferId === g.id)
       .map((b) => {
         const t = teeTimes.get(b.teeTimeId)!;
-        return { bookingId: b.id, startsAt: t.startsAt, course: riverBend.name, players: b.players, holes: b.holes, status: b.status, source: b.source, totalCents: b.totalCents, paidCents: payment(b).paidCents };
+        return { bookingId: b.id, startsAt: t.startsAt, course: riverBend.name, players: b.players, guests: b.players - 1, holes: b.holes, status: b.status, source: b.source, paidCents: Math.round(payment(b).paidCents / b.players) };
       });
     const history = [...today, ...g.past].sort((a, b) => b.startsAt.localeCompare(a.startsAt));
     const rounds = history.filter((h) => played(h.status));
@@ -311,6 +372,7 @@ export function createDemoClient(apiKey: string): Client {
         noShows: history.filter((h) => h.status === "no_show").length,
         cancelled: history.filter((h) => h.status === "cancelled").length,
         upcoming: history.filter((h) => h.status === "confirmed" && h.startsAt > new Date().toISOString()).length,
+        guestsBrought: rounds.reduce((s, h) => s + h.guests, 0),
         paidCents: history.reduce((s, h) => s + h.paidCents, 0),
       },
       history,
@@ -369,6 +431,7 @@ export function createDemoClient(apiKey: string): Client {
       totalCents: total,
       cartNumbers: [],
       signedCarts: [],
+      riding: walkIn.addOns.some((a) => a.code === "gas_cart" && a.quantity > 0),
       payment: { status: "unpaid", paidCents: 0, balanceCents: total, methods: [] },
       paid: [],
     };
@@ -445,7 +508,7 @@ export function createDemoClient(apiKey: string): Client {
       if (!existing) {
         bookings.push({
           id: id(), teeTimeId: t.id, customerName: row.name, customerPhone: row.phone ?? null, golferId: null, players: row.players, holes,
-          status: row.status === "no_show" ? "no_show" : "confirmed", source: input.source, totalCents: total, cartNumbers: [], signedCarts: [],
+          status: row.status === "no_show" ? "no_show" : "confirmed", source: input.source, totalCents: total, cartNumbers: [], signedCarts: [], riding: false,
           payment: { status: "unpaid", paidCents: 0, balanceCents: total, methods: [] },
           paid: row.paidCents ? [{ amountCents: Math.min(row.paidCents, total), method: "prepaid" }] : [], externalId: row.externalId,
         });
@@ -804,6 +867,236 @@ export function createDemoClient(apiKey: string): Client {
         log("Changed scheduling settings");
         return { ...scheduling };
       }),
+    products: (opts: { q?: string; all?: boolean } = {}) =>
+      reply(() => {
+        seedProducts();
+        const q = opts.q?.trim().toLowerCase() ?? "";
+        return products
+          .filter((p) => (opts.all || p.active) && (!q || p.name.toLowerCase().includes(q) || p.sku?.toLowerCase() === q))
+          .sort((a, b) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name))
+          .map((p) => ({ ...p }));
+      }),
+    addProduct: (input: ProductInput) =>
+      reply(() => {
+        managerOnly();
+        seedProducts();
+        if (input.sku && products.some((p) => p.sku?.toLowerCase() === input.sku!.toLowerCase())) throw conflict("sku_taken", "Another product already uses that SKU");
+        const p: Product = {
+          id: id(),
+          name: input.name.trim(),
+          sku: input.sku?.trim() || null,
+          category: input.category?.trim() || "Other",
+          priceCents: input.priceCents,
+          costCents: input.costCents ?? null,
+          taxable: input.taxable ?? true,
+          trackStock: input.trackStock ?? true,
+          stock: input.trackStock === false ? 0 : (input.stock ?? 0),
+          reorderLevel: input.reorderLevel ?? 0,
+          low: false,
+          active: true,
+        };
+        refreshLow(p);
+        products.push(p);
+        if (p.stock) move(p, p.stock, "receive", null, "Starting stock");
+        log("Added a product");
+        return { ...p };
+      }),
+    updateProduct: (productId: string, patch: Partial<Omit<ProductInput, "stock">> & { active?: boolean }) =>
+      reply(() => {
+        managerOnly();
+        const p = products.find((x) => x.id === productId)!;
+        if (patch.sku && products.some((x) => x.id !== p.id && x.sku?.toLowerCase() === patch.sku!.toLowerCase())) throw conflict("sku_taken", "Another product already uses that SKU");
+        Object.assign(p, Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)));
+        refreshLow(p);
+        log("Changed a product");
+        return { ...p };
+      }),
+    productHistory: (productId: string) => reply(() => movements.get(productId) ?? []),
+    changeStock: (productId: string, change: { kind: "receive" | "count" | "adjust"; quantity: number; note?: string | null }) =>
+      reply(() => {
+        if (change.kind !== "receive") managerOnly();
+        if (change.kind === "adjust" && !change.note?.trim()) throw new ApiError(400, "note_required", "Say why the stock is being adjusted");
+        const p = products.find((x) => x.id === productId)!;
+        const after = change.kind === "count" ? change.quantity : p.stock + change.quantity;
+        move(p, after - p.stock, change.kind, null, change.note?.trim() || null);
+        log("Changed stock");
+        return { ...p };
+      }),
+    sell: (input: { lines: SaleLineInput[]; paymentMethod: SalePaymentMethod; golferId?: string | null }) =>
+      reply(() => {
+        if (!input.lines.length) throw new ApiError(400, "empty_sale", "Add something to the sale first");
+        const lines = input.lines.map((l) => {
+          if ("productId" in l) {
+            const p = products.find((x) => x.id === l.productId)!;
+            return { productId: p.id, description: p.name, category: p.category, quantity: l.quantity, unitCents: p.priceCents, totalCents: p.priceCents * l.quantity, taxable: p.taxable };
+          }
+          return { productId: null, description: l.description, category: "Other", quantity: l.quantity, unitCents: l.unitCents, totalCents: l.unitCents * l.quantity, taxable: l.taxable ?? true };
+        });
+        const subtotalCents = lines.reduce((t, l) => t + l.totalCents, 0);
+        const taxCents = input.paymentMethod === "comp" ? 0 : Math.round((lines.filter((l) => l.taxable).reduce((t, l) => t + l.totalCents, 0) * pos.salesTaxBps) / 10_000);
+        const g = input.golferId ? golfers.find((x) => x.id === input.golferId) : undefined;
+        const sale: Sale = {
+          id: id(),
+          number: sales.length + 1001,
+          at: new Date().toISOString(),
+          staff: account()?.name ?? null,
+          golfer: g ? { id: g.id, name: g.name } : null,
+          subtotalCents,
+          taxCents,
+          totalCents: subtotalCents + taxCents,
+          paymentMethod: input.paymentMethod,
+          status: "completed",
+          lines,
+        };
+        sales.unshift(sale);
+        for (const l of lines) {
+          const p = products.find((x) => x.id === l.productId);
+          if (p?.trackStock) move(p, -l.quantity, "sale", sale.number, null);
+        }
+        log("Made a sale", g?.name);
+        return sale;
+      }),
+    sales: (date: string) =>
+      reply(() => {
+        const list = sales.filter((x) => new Intl.DateTimeFormat("en-CA", { timeZone: riverBend.timeZone }).format(new Date(x.at)) === date);
+        const kept = list.filter((x) => x.status === "completed");
+        const sum = (l: { totalCents: number }[]) => l.reduce((t, x) => t + x.totalCents, 0);
+        const byMethod: Partial<Record<SalePaymentMethod, number>> = {};
+        for (const x of kept) byMethod[x.paymentMethod] = (byMethod[x.paymentMethod] ?? 0) + x.totalCents;
+        const byCategory: Record<string, number> = {};
+        for (const l of kept.flatMap((x) => x.lines)) byCategory[l.category] = (byCategory[l.category] ?? 0) + l.totalCents;
+        return {
+          sales: list,
+          summary: {
+            count: kept.length,
+            subtotalCents: kept.reduce((t, x) => t + x.subtotalCents, 0),
+            taxCents: kept.reduce((t, x) => t + x.taxCents, 0),
+            totalCents: sum(kept),
+            refundedCents: sum(list.filter((x) => x.status === "refunded")),
+            byMethod,
+            byCategory,
+          },
+        };
+      }),
+    refundSale: (saleId: string) =>
+      reply(() => {
+        managerOnly();
+        const sale = sales.find((x) => x.id === saleId)!;
+        if (sale.status === "refunded") throw conflict("already_refunded", "This sale was already refunded");
+        sale.status = "refunded";
+        for (const l of sale.lines) {
+          const p = products.find((x) => x.id === l.productId);
+          if (p?.trackStock) move(p, l.quantity, "refund", sale.number, null);
+        }
+        log("Refunded a sale", sale.golfer?.name);
+        return sale;
+      }),
+    report: (from: string, to: string) =>
+      reply((): Report => {
+        managerOnly();
+        const dayOf = (iso: string) => new Intl.DateTimeFormat("en-CA", { timeZone: riverBend.timeZone }).format(new Date(iso));
+        const inRange = (d: string) => d >= from && d <= to;
+        type Day = Report["days"][number];
+        const days = new Map<string, Day>();
+        const at = (date: string) => {
+          if (!days.has(date)) days.set(date, { date, greenFeesCents: 0, cartsAndExtrasCents: 0, proShopCents: 0, taxCents: 0, collectedCents: 0, rounds: 0 });
+          return days.get(date)!;
+        };
+        const collected: Record<MoneyMethod, number> = { cash: 0, card: 0, gift_card: 0, punch_card: 0, prepaid: 0, comp: 0 };
+        const bySource: Record<string, number> = {};
+        let played = 0;
+        let booked = 0;
+        let noShows = 0;
+        for (const b of bookings) {
+          const t = teeTimes.get(b.teeTimeId)!;
+          if (b.status === "cancelled" || !inRange(t.date)) continue;
+          if (b.status === "no_show") {
+            noShows += b.players;
+            continue;
+          }
+          booked += b.players;
+          bySource[b.source] = (bySource[b.source] ?? 0) + b.players;
+          const d = at(t.date);
+          // The demo doesn't keep booking lines, so carts are worked out from whether the group rides.
+          const carts = b.riding ? Math.min(b.totalCents, b.players * 1300) : 0;
+          d.cartsAndExtrasCents += carts;
+          d.greenFeesCents += b.totalCents - carts;
+          if (b.status === "checked_in" || b.status === "teed_off") {
+            d.rounds += b.players;
+            played += b.players;
+          }
+          // Demo payments are counted on the day of the round.
+          for (const p of b.paid) {
+            d.collectedCents += p.amountCents;
+            collected[p.method] += p.amountCents;
+          }
+        }
+        const kept = sales.filter((x) => inRange(dayOf(x.at)));
+        const categories = new Map<string, { category: string; cents: number; items: number }>();
+        for (const sale of kept.filter((x) => x.status === "completed")) {
+          const d = at(dayOf(sale.at));
+          d.proShopCents += sale.subtotalCents;
+          d.taxCents += sale.taxCents;
+          d.collectedCents += sale.totalCents;
+          collected[sale.paymentMethod] += sale.totalCents;
+          for (const l of sale.lines) {
+            const c = categories.get(l.category) ?? { category: l.category, cents: 0, items: 0 };
+            c.cents += l.totalCents;
+            c.items += l.quantity;
+            categories.set(l.category, c);
+          }
+        }
+        const list = [...days.values()].sort((a, b) => a.date.localeCompare(b.date));
+        const sum = (k: keyof Omit<Day, "date">) => list.reduce((t, d) => t + d[k], 0);
+        const spots = [...teeTimes.values()].filter((t) => inRange(t.date) && t.status === "open").reduce((t, x) => t + x.maxPlayers, 0);
+        const worked = punches.filter((p) => p.clockOut && inRange(dayOf(p.clockIn)));
+        return {
+          from,
+          to,
+          revenue: {
+            greenFeesCents: sum("greenFeesCents"),
+            cartsAndExtrasCents: sum("cartsAndExtrasCents"),
+            proShopCents: sum("proShopCents"),
+            totalCents: sum("greenFeesCents") + sum("cartsAndExtrasCents") + sum("proShopCents"),
+            salesTaxCents: sum("taxCents"),
+            proShopRefundsCents: kept.filter((x) => x.status === "refunded").reduce((t, x) => t + x.totalCents, 0),
+            proShopByCategory: [...categories.values()].sort((a, b) => b.cents - a.cents),
+          },
+          collected: { ...collected, totalCents: Object.values(collected).reduce((t, c) => t + c, 0) },
+          rounds: { played, booked, noShows, openSpots: spots, occupancy: spots ? Math.round((booked / spots) * 1000) / 10 : null, bySource },
+          labor: {
+            hours: Math.round(worked.reduce((t, p) => t + (Date.parse(p.clockOut!) - Date.parse(p.clockIn)) / 3_600_000, 0) * 10) / 10,
+            people: new Set(worked.map((p) => p.staffId)).size,
+          },
+          days: list,
+        };
+      }),
+    dayClose: (date: string) => reply(() => demoClose(date)),
+    closeDay: (date: string, input: { countedCashCents: number; note?: string | null }) =>
+      reply(() => {
+        const expected = demoClose(date).expected;
+        if (closes.has(date) && role() !== "manager") throw conflict("already_closed", "This day is already closed. Ask a manager to close it again");
+        const overShortCents = input.countedCashCents - expected.cash;
+        if (overShortCents !== 0 && !input.note?.trim()) throw new ApiError(400, "note_required", "The drawer is over or short. Add a note saying why");
+        closes.set(date, {
+          expectedCashCents: expected.cash,
+          countedCashCents: input.countedCashCents,
+          overShortCents,
+          note: input.note?.trim() || null,
+          closedBy: account()?.name ?? null,
+          closedAt: new Date().toISOString(),
+        });
+        log("Closed the day");
+        return demoClose(date);
+      }),
+    posSettings: () => reply(() => ({ ...pos })),
+    savePosSettings: (next: { salesTaxBps: number }) =>
+      reply(() => {
+        managerOnly();
+        pos.salesTaxBps = next.salesTaxBps;
+        log("Changed sales tax");
+        return { ...pos };
+      }),
     activity: () =>
       reply(() => {
         managerOnly();
@@ -902,6 +1195,22 @@ export function createDemoClient(apiKey: string): Client {
       reply(() => {
         log("Cancelled a booking", find(bookingId).customerName);
         return Object.assign(find(bookingId), { status: "cancelled" as const });
+      }),
+    addGuests: (bookingId: string, g: { count: number; riding: boolean; residency?: "resident" | "nonresident" }) =>
+      reply(() => {
+        const b = find(bookingId);
+        const t = teeTimes.get(b.teeTimeId)!;
+        const left = t.maxPlayers - live(t.id).reduce((s, x) => s + x.players, 0);
+        if (g.count > left) throw conflict("not_enough_spots", `Only ${left} spot${left === 1 ? "" : "s"} left`);
+        const loops = Math.max(1, Math.round(b.holes / riverBend.holes));
+        const player = { residency: g.residency ?? "nonresident", ageGroup: "adult" } as const;
+        const each = quotePlayer(riverBendRates, player, { startsAt: t.startsAt, timeZone: riverBend.timeZone }, loops).totalCents + (g.riding ? riverBendAddOns.find((x) => x.code === "gas_cart")!.priceCents : 0);
+        b.players += g.count;
+        b.totalCents += each * g.count;
+        if (g.riding) b.riding = true;
+        b.payment = payment(b);
+        log(`Added ${g.count} guest${g.count === 1 ? "" : "s"}`, b.customerName);
+        return b;
       }),
     move: (bookingId: string, teeTimeId: string) =>
       reply(() => {

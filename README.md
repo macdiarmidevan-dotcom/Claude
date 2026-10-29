@@ -136,6 +136,20 @@ Each row shows the time, filled spots, the groups (✓ checked in at the shop, �
 
 ![Staff schedule](docs/screenshots/staff-schedule.png)
 
+**Guests.** To add guests to a golfer's group, slide the golfer's name to the right across the open spots on the tee sheet: each spot it covers becomes a guest (shown as "+ Guest" while dragging). Letting go opens the tee time with the guests ready to confirm, where staff choose walking or riding (and, at the pro shop, the rate) before adding them. **Add guests** in the tee time panel does the same without dragging. Guests are priced like walk-ins and added to the group's bill, so they count toward the course's revenue. On the golfer's account they're listed (how many guests each round, and guests brought in total) but their fees aren't counted as the golfer's own spending: **Own spend** is the golfer's share of each group's payments, split evenly across the players.
+
+**Walking or riding.** Walk-ins and guests are booked as walking or riding (riding adds a gas cart per player), and each group in the panel shows which.
+
+![Dragging a golfer's name to add two guests](docs/screenshots/add-guests-drag.png)
+
+**Pro shop.** The **Register** tab rings up sales: tap products (filter by category, or search by name or scanned SKU), change quantities, add a one-off item that isn't in the list, and optionally attach the sale to a golfer account. Tax is added on taxable items at the course's rate (a manager sets it; comps aren't taxed), then staff pick card, cash, gift card or comp and charge. Each sale gets a receipt number. **Inventory** lists products with stock on hand, reorder levels and a low-stock flag (the tab shows how many are low), plus the value of stock at cost. Anyone can record a delivery received; managers add products, remove them, and change the price or the number in stock in the same edit form (or count the shelf, or adjust with a reason). After that, every sale takes stock down automatically and a refund puts it back. Every stock change is kept in the product's history with who made it. **Today's sales** shows the day's sales with totals before tax, tax, and breakdowns by payment and category; managers can refund a sale, which puts stocked items back. Card payments are recorded, not processed: the card reader is still separate.
+
+![Pro shop register](docs/screenshots/pro-shop-register.png)
+
+**Reports and closing the day.** **Reports** starts with **Close the day**: it shows what the tee sheet and register took today by payment type, and staff count the cash drawer against it. If the drawer is over or short they must say why. Once a day is closed only a manager can count it again. Managers also see reports for today, yesterday, this or last week, or this or last month: revenue before tax (green fees, carts and extras, pro shop), money taken by payment type (prepaid online is shown apart, since the booking provider collected it), sales tax collected, pro shop sales by category, rounds played, occupancy, no-shows, players by booking source and staff hours, plus a day-by-day table. **Download CSV** saves the day-by-day table for the bookkeeper. Revenue counts on the day of the round; money taken counts on the day it was paid.
+
+![Reports](docs/screenshots/reports.png)
+
 **Calendar.** The 📅 button next to Today opens a month calendar to jump the tee sheet to any date.
 
 **Manager tools.** Signed in as a manager, the app shows a **Waiver** button where the manager can change the wording. Each save is a new version; drivers who already signed stay tied to the version they read.

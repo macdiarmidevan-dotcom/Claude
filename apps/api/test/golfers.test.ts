@@ -124,4 +124,30 @@ describe("golfer accounts", () => {
     expect(actions).toContain("Created a golfer account");
     expect(actions).toContain("Linked a golfer account");
   });
+
+  it("adds guests to a golfer's group: they pay into the booking but not the golfer's own spending", async () => {
+    const booking = await walkIn("13:02", "Jim");
+    await call("PUT", `/bookings/${booking}/golfer`, { golferId: jim });
+    const before = (await call("GET", `/golfers/${jim}`)).json();
+    const single = (await call("GET", `/bookings/${booking}`)).json().totalCents;
+
+    const res = await call("POST", `/bookings/${booking}/guests`, { count: 2, riding: true });
+    expect(res.statusCode).toBe(200);
+    const after = res.json();
+    expect(after.players).toBe(3);
+    expect(after.totalCents).toBe(single * 3 + 2 * 1300);
+    const guestLines = after.lines.filter((l: { description: string }) => l.description.startsWith("Guest:"));
+    expect(guestLines.reduce((t: number, l: { totalCents: number }) => t + l.totalCents, 0)).toBe(after.totalCents - single);
+
+    const row = (await call("GET", `/tee-sheet?date=${date}`)).json().teeTimes.flatMap((t: { bookings: object[] }) => t.bookings).find((b: { id: string }) => b.id === booking);
+    expect(row).toMatchObject({ players: 3, riding: true });
+
+    expect((await call("POST", `/bookings/${booking}/guests`, { count: 2 })).json().error.code).toBe("not_enough_spots");
+
+    await call("POST", `/bookings/${booking}/check-in`, { payment: { method: "card" } });
+    const profile = (await call("GET", `/golfers/${jim}`)).json();
+    expect(profile.stats.guestsBrought).toBe(before.stats.guestsBrought + 2);
+    expect(profile.stats.paidCents - before.stats.paidCents).toBe(Math.round(after.totalCents / 3));
+    expect(profile.history.find((h: { bookingId: string }) => h.bookingId === booking)).toMatchObject({ guests: 2, players: 3 });
+  });
 });

@@ -90,6 +90,10 @@ export async function getGolfer(db: DbClient, course: Course, id: string) {
     [id],
   );
   const now = Date.now();
+  // Everyone else in a golfer's group is their guest. Guests' fees still count toward the
+  // course's revenue, but not toward what this golfer spent: their own share is the group's
+  // payments split evenly across its players.
+  const ownCents = (h: { paid_cents: number; players: number }) => Math.round(h.paid_cents / Math.max(1, h.players));
   const played = history.filter((h) => h.status === "checked_in" || h.status === "teed_off");
   return {
     ...toAccount(r),
@@ -100,18 +104,21 @@ export async function getGolfer(db: DbClient, course: Course, id: string) {
       noShows: history.filter((h) => h.status === "no_show").length,
       cancelled: history.filter((h) => h.status === "cancelled").length,
       upcoming: history.filter((h) => h.status === "confirmed" && h.starts_at.getTime() > now).length,
-      paidCents: history.reduce((s, h) => s + h.paid_cents, 0),
+      guestsBrought: played.reduce((s, h) => s + h.players - 1, 0),
+      /** What the golfer paid for their own rounds, leaving out their guests. */
+      paidCents: history.reduce((s, h) => s + ownCents(h), 0),
     },
     history: history.map((h) => ({
       bookingId: h.id,
       startsAt: h.starts_at.toISOString(),
       course: h.course_name,
       players: h.players,
+      guests: h.players - 1,
       holes: h.holes,
       status: h.status,
       source: h.source,
-      totalCents: h.total_cents,
-      paidCents: h.paid_cents,
+      /** The golfer's own share; the group's full amount stays on the booking and in revenue. */
+      paidCents: ownCents(h),
     })),
   };
 }

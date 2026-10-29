@@ -48,6 +48,8 @@ export interface SheetBooking {
   cartNumbers: string[];
   /** Carts whose driver has signed the waiver for this booking. */
   signedCarts: string[];
+  /** Riding in carts, or walking. */
+  riding: boolean;
   payment: PaymentSummary;
 }
 
@@ -177,8 +179,10 @@ export interface GolferAccount {
 
 export interface GolferProfile extends GolferAccount {
   createdBy: string | null;
-  stats: { roundsPlayed: number; holesPlayed: number; noShows: number; cancelled: number; upcoming: number; paidCents: number };
-  history: { bookingId: string; startsAt: string; course: string; players: number; holes: number; status: BookingStatus; source: string; totalCents: number; paidCents: number }[];
+  /** paidCents is what the golfer paid for their own rounds; their guests' fees aren't in it. */
+  stats: { roundsPlayed: number; holesPlayed: number; noShows: number; cancelled: number; upcoming: number; guestsBrought: number; paidCents: number };
+  /** Everyone else in the group is the golfer's guest. paidCents is the golfer's own share. */
+  history: { bookingId: string; startsAt: string; course: string; players: number; guests: number; holes: number; status: BookingStatus; source: string; paidCents: number }[];
 }
 
 export interface Shift {
@@ -233,6 +237,103 @@ export interface Swap {
   requested: Shift | null;
   message: string | null;
   createdAt: string;
+}
+
+export type SalePaymentMethod = "card" | "cash" | "gift_card" | "comp";
+
+export interface Product {
+  id: string;
+  name: string;
+  sku: string | null;
+  category: string;
+  priceCents: number;
+  costCents: number | null;
+  taxable: boolean;
+  trackStock: boolean;
+  stock: number;
+  reorderLevel: number;
+  /** Stock is at or below the reorder level. */
+  low: boolean;
+  active: boolean;
+}
+
+export interface ProductInput {
+  name: string;
+  sku?: string | null;
+  category?: string;
+  priceCents: number;
+  costCents?: number | null;
+  taxable?: boolean;
+  trackStock?: boolean;
+  reorderLevel?: number;
+  stock?: number;
+}
+
+export interface StockMovement {
+  id: string;
+  change: number;
+  stockAfter: number;
+  reason: "sale" | "refund" | "receive" | "count" | "adjust";
+  saleNumber: number | null;
+  note: string | null;
+  staff: string | null;
+  at: string;
+}
+
+export type SaleLineInput = { productId: string; quantity: number } | { description: string; unitCents: number; quantity: number; taxable?: boolean };
+
+export interface Sale {
+  id: string;
+  number: number;
+  at: string;
+  staff: string | null;
+  golfer: { id: string; name: string } | null;
+  subtotalCents: number;
+  taxCents: number;
+  totalCents: number;
+  paymentMethod: SalePaymentMethod;
+  status: "completed" | "refunded";
+  lines: { productId: string | null; description: string; category: string; quantity: number; unitCents: number; totalCents: number; taxable: boolean }[];
+}
+
+export interface SalesDay {
+  sales: Sale[];
+  summary: {
+    count: number;
+    subtotalCents: number;
+    taxCents: number;
+    totalCents: number;
+    refundedCents: number;
+    byMethod: Partial<Record<SalePaymentMethod, number>>;
+    byCategory: Record<string, number>;
+  };
+}
+
+export type MoneyMethod = "cash" | "card" | "gift_card" | "punch_card" | "prepaid" | "comp";
+
+export interface Report {
+  from: string;
+  to: string;
+  revenue: {
+    greenFeesCents: number;
+    cartsAndExtrasCents: number;
+    proShopCents: number;
+    /** Green fees, carts and extras, and pro shop sales before tax. */
+    totalCents: number;
+    salesTaxCents: number;
+    proShopRefundsCents: number;
+    proShopByCategory: { category: string; cents: number; items: number }[];
+  };
+  collected: Record<MoneyMethod, number> & { totalCents: number };
+  rounds: { played: number; booked: number; noShows: number; openSpots: number; occupancy: number | null; bySource: Record<string, number> };
+  labor: { hours: number; people: number };
+  days: { date: string; greenFeesCents: number; cartsAndExtrasCents: number; proShopCents: number; taxCents: number; collectedCents: number; rounds: number }[];
+}
+
+export interface DayClose {
+  date: string;
+  expected: Record<MoneyMethod, number>;
+  close: { expectedCashCents: number; countedCashCents: number; overShortCents: number; note: string | null; closedBy: string | null; closedAt: string } | null;
 }
 
 export interface Coworker {
@@ -328,6 +429,24 @@ function createHttpClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "ap
     schedulingSettings: () => request<{ swapsNeedApproval: boolean }>("/settings/scheduling"),
     saveSchedulingSettings: (settings: { swapsNeedApproval: boolean }) =>
       request<{ swapsNeedApproval: boolean }>("/settings/scheduling", { method: "PUT", body: settings }),
+    products: (opts: { q?: string; all?: boolean } = {}) =>
+      request<Product[]>(`/products?q=${encodeURIComponent(opts.q ?? "")}${opts.all ? "&all=1" : ""}`),
+    addProduct: (input: ProductInput) => request<Product>("/products", { method: "POST", body: input }),
+    updateProduct: (id: string, patch: Partial<Omit<ProductInput, "stock">> & { active?: boolean }) =>
+      request<Product>(`/products/${id}`, { method: "PATCH", body: patch }),
+    productHistory: (id: string) => request<StockMovement[]>(`/products/${id}/history`),
+    changeStock: (id: string, change: { kind: "receive" | "count" | "adjust"; quantity: number; note?: string | null }) =>
+      request<Product>(`/products/${id}/stock`, { method: "POST", body: change }),
+    sell: (sale: { lines: SaleLineInput[]; paymentMethod: SalePaymentMethod; golferId?: string | null }) =>
+      request<Sale>("/sales", { method: "POST", body: sale }),
+    sales: (date: string) => request<SalesDay>(`/sales?date=${date}`),
+    refundSale: (id: string) => request<Sale>(`/sales/${id}/refund`, { method: "POST" }),
+    posSettings: () => request<{ salesTaxBps: number }>("/settings/pos"),
+    savePosSettings: (settings: { salesTaxBps: number }) => request<{ salesTaxBps: number }>("/settings/pos", { method: "PUT", body: settings }),
+    report: (from: string, to: string) => request<Report>(`/reports?from=${from}&to=${to}`),
+    dayClose: (date: string) => request<DayClose>(`/closes/${date}`),
+    closeDay: (date: string, close: { countedCashCents: number; note?: string | null }) =>
+      request<DayClose>(`/closes/${date}`, { method: "PUT", body: close }),
     searchGolfers: (q: string) => request<GolferAccount[]>(`/golfers?q=${encodeURIComponent(q)}`),
     golfer: (id: string) => request<GolferProfile>(`/golfers/${id}`),
     /** Creates a golfer's account, usually at their first check-in, and links that booking. */
@@ -352,6 +471,8 @@ function createHttpClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "ap
     noShow: (id: string) => request(`/bookings/${id}/no-show`, { method: "POST" }),
     cancel: (id: string) => request(`/bookings/${id}/cancel`, { method: "POST" }),
     move: (id: string, teeTimeId: string) => request(`/bookings/${id}/move`, { method: "POST", body: { teeTimeId } }),
+    addGuests: (id: string, guests: { count: number; riding: boolean; residency?: "resident" | "nonresident" }) =>
+      request(`/bookings/${id}/guests`, { method: "POST", body: guests }),
   };
 }
 

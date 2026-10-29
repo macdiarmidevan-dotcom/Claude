@@ -8,7 +8,7 @@ import { colors, money, statusLabel, type WebPress } from "./theme";
 // rounds land on the same account.
 
 /** Waits a moment after typing stops, so each keystroke isn't its own search. */
-function useSearch(client: Client, q: string) {
+export function useSearch(client: Client, q: string) {
   const [results, setResults] = useState<GolferAccount[]>();
   const [error, setError] = useState<string>();
   useEffect(() => {
@@ -274,7 +274,8 @@ export function GolferDetail({ client, id, onBack, onOpenBooking }: { client: Cl
         <Stat label="Holes played" value={String(g.stats.holesPlayed)} />
         <Stat label="Upcoming" value={String(g.stats.upcoming)} />
         <Stat label="No-shows" value={String(g.stats.noShows)} warn={g.stats.noShows > 0} />
-        <Stat label="Paid" value={money(g.stats.paidCents)} />
+        <Stat label="Guests brought" value={String(g.stats.guestsBrought)} />
+        <Stat label="Own spend" value={money(g.stats.paidCents)} />
       </View>
 
       <Text role="heading" style={styles.h2}>Rounds and bookings</Text>
@@ -294,7 +295,7 @@ export function GolferDetail({ client, id, onBack, onOpenBooking }: { client: Cl
             >
               <Text style={[styles.historyCell, { width: 230 }]}>{dateTime(h.startsAt)}</Text>
               <Text style={[styles.historyCell, { flex: 1, minWidth: 140 }]}>
-                {h.holes} holes · {h.players} {h.players === 1 ? "player" : "players"}
+                {h.holes} holes · {h.guests ? `with ${h.guests} ${h.guests === 1 ? "guest" : "guests"}` : "alone"}
               </Text>
               <Text style={[styles.historyCell, { width: 130 }, h.status === "no_show" && { color: colors.noShow }]}>
                 {h.status === "teed_off" || h.status === "checked_in" ? "Played" : statusLabel[h.status]}
