@@ -114,6 +114,17 @@ API: `GET/PUT /settings/payments`, `GET /settings/payments/readers`, `GET/POST /
 
 ![Waiting for the card on the reader](docs/screenshots/card-reader-waiting.png)
 
+## Punch cards, passes and loyalty points
+
+Managers set up what the course sells under **Pro shop › Passes & points**: punch cards (a number of rounds) and season passes (unlimited rounds for the holder), each with a price, how many days it's good for and whether it includes a cart. The same tab turns loyalty points on and sets the rates: points per dollar, and how many points take how much off a round. Setting points per dollar to 0 turns them off.
+
+- **Selling.** On a golfer's account, **Sell a pass** rings it up as a pro shop sale (category "Passes", untaxed) and adds it to the account. Card sales go through the card reader.
+- **Using.** At check-in, a linked golfer's usable passes and points appear in the checkout. Each round on a punch card covers one player's green fee, plus their cart if the card includes one. A season pass covers the holder only. Points come off in whole rewards. The total updates as these are picked, and whatever's left is paid the usual way. On the API, check-in takes `pass: { golferPassId, rounds }` and `points`.
+- **Earning.** Golfers earn points on money they spend on rounds (card, cash or gift card) and in the pro shop. Rounds paid with a pass, points or a comp don't earn. A refunded sale takes its points back.
+- **Fixing.** Managers can cancel a pass sold by mistake (refund the sale separately) and add or take away points with a reason. Every change to points is kept in a ledger shown on the account.
+
+![A golfer's passes and points](docs/screenshots/golfer-wallet.png)
+
 ## AI assistant
 
 Managers can ask Claude, ChatGPT or another MCP client about the course: "how many rounds today?", "who still owes?", "is Mike Sullivan booked this week?", "what did we take last week?". Add a custom connector with the address `https://<your server>/v1/courses/<course>/mcp` and the manager key as a Bearer token.

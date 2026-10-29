@@ -5,6 +5,8 @@ import { badRequest, conflict, notFound } from "./errors.ts";
 import { getAddOns, getHolidays, getRates, toTeeTime, type Course, type TeeTime } from "./courses.ts";
 import { insertSale, type SaleLineInput, type SalePaymentMethod } from "./pos.ts";
 import { useCardPayment } from "./payments.ts";
+import { earnPoints } from "./loyalty.ts";
+import { redeemPass, redeemPoints } from "./passes.ts";
 
 export type BookingSource = "staff" | "phone" | "teeitup" | "golfnow" | "import";
 
@@ -66,7 +68,7 @@ export interface WaiverSignature {
   signature: string;
 }
 
-export type PaymentMethod = "card" | "cash" | "prepaid" | "punch_card" | "gift_card" | "comp";
+export type PaymentMethod = "card" | "cash" | "prepaid" | "punch_card" | "season_pass" | "loyalty" | "gift_card" | "comp";
 
 export interface PaymentSummary {
   status: "paid" | "partial" | "unpaid";
@@ -372,6 +374,10 @@ export async function checkIn(
      * the round, the items, or both, so it must match that total exactly.
      */
     cardPaymentId?: string | undefined;
+    /** Rounds paid with one of the golfer's punch cards or season pass. */
+    pass?: { golferPassId: string; rounds: number } | undefined;
+    /** Loyalty points spent on money off the round. */
+    points?: number | undefined;
     staffId?: string | undefined;
   },
 ): Promise<Booking> {
@@ -391,6 +397,17 @@ export async function checkIn(
         onCard += rows[0].total_cents;
       }
     }
+    // Passes and points go first; whatever's left is paid the usual way.
+    const golferId = locked[0]?.golfer_id as string | undefined;
+    if ((opts.pass || opts.points) && !golferId) throw badRequest("no_account", "Link the golfer's account to use their passes or points");
+    if (opts.pass) {
+      const b = await getBooking(client, course, id);
+      await redeemPass(client, course, { id, customerId: golferId!, players: b.players, balanceCents: b.payment.balanceCents, lines: b.lines }, opts.pass, opts.staffId);
+    }
+    if (opts.points) {
+      const b = await getBooking(client, course, id);
+      await redeemPoints(client, course, { id, customerId: golferId!, balanceCents: b.payment.balanceCents }, opts.points, opts.staffId);
+    }
     const booking = await getBooking(client, course, id);
     const roundOnCard = opts.payment?.method === "card" ? booking.payment.balanceCents : 0;
     onCard += roundOnCard;
@@ -404,6 +421,9 @@ export async function checkIn(
     } else if (booking.payment.balanceCents > 0) {
       throw conflict("payment_required", `This group still owes ${booking.payment.balanceCents} cents`);
     }
+    // Points for the money paid on the round today. Rounds on a pass, points or comps don't earn.
+    const paidToday = opts.payment && ["card", "cash", "gift_card"].includes(opts.payment.method) ? booking.payment.balanceCents : 0;
+    if (golferId && paidToday) await earnPoints(client, course, golferId, paidToday, "round", { bookingId: id, staffId: opts.staffId });
     if (opts.cartNumbers) await updateCarts(client, course, id, opts.cartNumbers, opts.waivers);
     await changeStatus(client, course, id, "checked_in");
   });
@@ -688,6 +708,8 @@ export async function listBookingsForDay(db: DbClient, course: Course, start: Da
             ${PAYMENT_COLUMNS},
             (SELECT array_agg(cart_number) FROM cart_waivers WHERE booking_id = b.id) AS signed_carts,
             (cardinality(b.cart_numbers) > 0 OR EXISTS (SELECT 1 FROM booking_lines l WHERE l.booking_id = b.id AND l.code = 'gas_cart')) AS riding,
+            (SELECT COALESCE(sum(total_cents), 0)::int FROM booking_lines l WHERE l.booking_id = b.id AND l.kind = 'green_fee') AS green_fee_cents,
+            (SELECT COALESCE(sum(total_cents), 0)::int FROM booking_lines l WHERE l.booking_id = b.id AND l.code = 'gas_cart') AS cart_cents,
             EXISTS (SELECT 1 FROM booking_lines l JOIN rate_rules r ON r.course_id = b.course_id AND r.code = l.code
                      WHERE l.booking_id = b.id AND l.kind = 'green_fee' AND r.residency = 'resident') AS resident
        FROM bookings b JOIN customers c ON c.id = b.customer_id JOIN tee_times t ON t.id = b.tee_time_id
@@ -715,5 +737,8 @@ export async function listBookingsForDay(db: DbClient, course: Course, start: Da
     riding: r.riding as boolean,
     /** Paying resident rates. */
     resident: r.resident as boolean,
+    /** The group's green fees and carts, for working out what a pass covers per player. */
+    greenFeeCents: r.green_fee_cents as number,
+    cartCents: r.cart_cents as number,
   }));
 }
