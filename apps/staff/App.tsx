@@ -15,7 +15,7 @@ export default function App() {
   const [settings, setSettings] = useState<Settings>();
   // The demo build fills in a pretend course so visitors can just press Connect.
   const [lastSettings, setLastSettings] = useState<Settings | undefined>(
-    DEMO ? { apiUrl: DEMO_URL, courseSlug: "river-bend", apiKey: "demo-manager", station: "proshop" } : undefined,
+    DEMO ? { apiUrl: DEMO_URL, courseSlug: "river-bend", apiKey: "", station: "proshop" } : undefined,
   );
 
   useEffect(() => {
@@ -32,7 +32,7 @@ export default function App() {
   }
 
   function signOut() {
-    setLastSettings(settings && { ...settings, apiKey: DEMO ? settings.apiKey : "" });
+    setLastSettings(settings && { ...settings, apiKey: "" });
     setSettings(undefined);
     AsyncStorage.removeItem(SETTINGS_KEY).catch(() => undefined);
   }
