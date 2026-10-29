@@ -84,6 +84,7 @@ import {
   setStandingTimeActive,
   updateEvent,
 } from "./events.ts";
+import { addTabItems, closeTab, getTab, listTabs, openTab, prepTickets, renameTab, setItemStatus, voidTab, voidTabItem } from "./tabs.ts";
 import { findRainCheck, getRainCheckDays, issueRainCheck, listRainChecks, refundRound, saveRainCheckDays, voidRainCheck } from "./rainchecks.ts";
 import { deleteSync, getSync, runSync, saveSync, type FetchReport } from "./sync.ts";
 import { createGolfer, getGolfer, linkGolfer, searchGolfers, updateGolfer } from "./golfers.ts";
@@ -199,6 +200,10 @@ const ACTIONS: Record<string, string> = {
   "POST /v1/courses/:slug/event-dates/:id/check-in": "Checked in event players",
   "POST /v1/courses/:slug/events/:id/payments": "Took an event payment",
   "PATCH /v1/courses/:slug/employee-types/:id": "Changed an employee type",
+  "POST /v1/courses/:slug/tabs": "Opened a tab",
+  "POST /v1/courses/:slug/tabs/:id/close": "Closed a tab",
+  "POST /v1/courses/:slug/tabs/:id/void": "Voided a tab",
+  "DELETE /v1/courses/:slug/tabs/:id/items/:itemId": "Took an item off a tab",
 };
 
 const player = z.object({
@@ -593,6 +598,8 @@ export function buildApp(db: Db, opts: { fetchReport?: FetchReport; paymentsFetc
     trackStock: z.boolean().optional(),
     reorderLevel: z.number().int().min(0).max(100_000).optional(),
     stock: z.number().int().min(0).max(100_000).optional(),
+    foodBev: z.boolean().optional(),
+    station: z.enum(["kitchen", "bar"]).nullish(),
   });
   app.get("/v1/courses/:slug/products", async (req) => {
     const course = await courseFor(req);
@@ -887,6 +894,65 @@ export function buildApp(db: Db, opts: { fetchReport?: FetchReport; paymentsFetc
     // Giving money back is for managers.
     if (body.amountCents < 0) await managedCourseFor(req);
     return reply.status(201).send(await addEventPayment(db, course, req.staff?.user.id, idParams.parse(req.params).id, body));
+  });
+
+  // Food and bar: open tabs, the kitchen and bar screens, and paying a tab at the end.
+  const isManager = (req: FastifyRequest) => req.apiKey!.role === "manager";
+  const tabItem = z.union([
+    z.object({ productId: z.uuid(), quantity: z.number().int().min(1).max(99), note: z.string().max(200).nullish() }),
+    z.object({
+      description: z.string().max(200),
+      unitCents: money,
+      quantity: z.number().int().min(1).max(99),
+      taxable: z.boolean().optional(),
+      station: z.enum(["kitchen", "bar"]).nullish(),
+      note: z.string().max(200).nullish(),
+    }),
+  ]);
+  app.get("/v1/courses/:slug/tabs", async (req) => {
+    const course = await courseFor(req);
+    return listTabs(db, course, z.object({ status: z.enum(["open", "closed"]).optional() }).parse(req.query));
+  });
+  app.post("/v1/courses/:slug/tabs", async (req, reply) => {
+    const course = await courseFor(req);
+    const body = z
+      .object({ name: z.string().max(80).nullish(), location: z.enum(["grill", "bar", "turn", "cart"]).optional(), golferId: z.uuid().nullish(), bookingId: z.uuid().nullish() })
+      .parse(req.body);
+    return reply.status(201).send(await openTab(db, course, req.staff?.user.id, body));
+  });
+  app.get("/v1/courses/:slug/tabs/:id", async (req) => getTab(db, await courseFor(req), idParams.parse(req.params).id));
+  app.patch("/v1/courses/:slug/tabs/:id", async (req) => {
+    const course = await courseFor(req);
+    return renameTab(db, course, idParams.parse(req.params).id, z.object({ name: z.string().max(80) }).parse(req.body).name);
+  });
+  app.post("/v1/courses/:slug/tabs/:id/items", async (req, reply) => {
+    const course = await courseFor(req);
+    const { lines } = z.object({ lines: z.array(tabItem).min(1).max(50) }).parse(req.body);
+    return reply.status(201).send(await addTabItems(db, course, req.staff?.user.id, idParams.parse(req.params).id, lines));
+  });
+  app.delete("/v1/courses/:slug/tabs/:id/items/:itemId", async (req) => {
+    const course = await courseFor(req);
+    const { id, itemId } = z.object({ id: z.uuid(), itemId: z.uuid() }).parse(req.params);
+    return voidTabItem(db, course, id, itemId, isManager(req));
+  });
+  app.post("/v1/courses/:slug/tabs/:id/close", async (req) => {
+    const course = await courseFor(req);
+    const body = z.object({ paymentMethod: salePaymentMethod, cardPaymentId: z.uuid().nullish() }).parse(req.body);
+    return closeTab(db, course, req.staff?.user.id, idParams.parse(req.params).id, body);
+  });
+  app.post("/v1/courses/:slug/tabs/:id/void", async (req) => {
+    const course = await courseFor(req);
+    const { reason } = z.object({ reason: z.string().max(300) }).parse(req.body);
+    return voidTab(db, course, req.staff?.user.id, idParams.parse(req.params).id, reason, isManager(req));
+  });
+  app.get("/v1/courses/:slug/prep/:station", async (req) => {
+    const course = await courseFor(req);
+    return prepTickets(db, course, z.object({ station: z.enum(["kitchen", "bar"]) }).parse(req.params).station);
+  });
+  app.post("/v1/courses/:slug/prep/items", async (req) => {
+    const course = await courseFor(req);
+    const body = z.object({ itemIds: z.array(z.uuid()).min(1).max(100), status: z.enum(["sent", "ready", "served"]) }).parse(req.body);
+    return setItemStatus(db, course, body.itemIds, body.status);
   });
 
   // Processors call these when a card goes through. The raw body is kept for the signature check.

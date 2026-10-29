@@ -460,9 +460,66 @@ export interface Product {
   trackStock: boolean;
   stock: number;
   reorderLevel: number;
+  /** Food or drink, reported apart from the pro shop. */
+  foodBev: boolean;
+  /** Where it's made: orders for it show on that prep screen. */
+  station: PrepStation | null;
   /** Stock is at or below the reorder level. */
   low: boolean;
   active: boolean;
+}
+
+export type PrepStation = "kitchen" | "bar";
+export type TabLocation = "grill" | "bar" | "turn" | "cart";
+
+export interface TabItem {
+  id: string;
+  productId: string | null;
+  description: string;
+  category: string;
+  quantity: number;
+  unitCents: number;
+  totalCents: number;
+  taxable: boolean;
+  station: PrepStation | null;
+  note: string | null;
+  status: "sent" | "ready" | "served" | "void";
+  addedBy: string | null;
+  addedAt: string;
+}
+
+export interface Tab {
+  id: string;
+  name: string;
+  location: TabLocation;
+  status: "open" | "closed" | "void";
+  golfer: { id: string; name: string } | null;
+  bookingId: string | null;
+  teeTime: string | null;
+  openedBy: string | null;
+  openedAt: string;
+  closedAt: string | null;
+  saleId: string | null;
+  voidReason: string | null;
+  items: TabItem[];
+  subtotalCents: number;
+  taxCents: number;
+  /** Items still on the kitchen or bar screen. */
+  waiting: number;
+}
+
+export type TabItemInput =
+  | { productId: string; quantity: number; note?: string | null }
+  | { description: string; unitCents: number; quantity: number; taxable?: boolean; station?: PrepStation | null; note?: string | null };
+
+export interface PrepTicket {
+  key: string;
+  tabId: string;
+  tabName: string;
+  location: TabLocation;
+  orderedAt: string;
+  by: string | null;
+  items: TabItem[];
 }
 
 export interface ProductInput {
@@ -475,6 +532,8 @@ export interface ProductInput {
   trackStock?: boolean;
   reorderLevel?: number;
   stock?: number;
+  foodBev?: boolean;
+  station?: PrepStation | null;
 }
 
 export interface StockMovement {
@@ -501,7 +560,7 @@ export interface Sale {
   totalCents: number;
   paymentMethod: SalePaymentMethod;
   status: "completed" | "refunded";
-  lines: { productId: string | null; description: string; category: string; quantity: number; unitCents: number; totalCents: number; taxable: boolean }[];
+  lines: { productId: string | null; description: string; category: string; quantity: number; unitCents: number; totalCents: number; taxable: boolean; foodBev?: boolean }[];
 }
 
 export interface SalesDay {
@@ -525,7 +584,10 @@ export interface Report {
   revenue: {
     greenFeesCents: number;
     cartsAndExtrasCents: number;
+    /** Pro shop sales before tax, not counting food and drink. */
     proShopCents: number;
+    /** Food and drink sales before tax. */
+    foodBevCents: number;
     /** League and outing payments, counted when paid. */
     eventsCents: number;
     /** Green fees, carts and extras, pro shop sales before tax, and leagues and outings. */
@@ -533,11 +595,12 @@ export interface Report {
     salesTaxCents: number;
     proShopRefundsCents: number;
     proShopByCategory: { category: string; cents: number; items: number }[];
+    foodBevByCategory: { category: string; cents: number; items: number }[];
   };
   collected: Record<MoneyMethod, number> & { totalCents: number };
   rounds: { played: number; booked: number; noShows: number; openSpots: number; occupancy: number | null; bySource: Record<string, number> };
   labor: { hours: number; people: number };
-  days: { date: string; greenFeesCents: number; cartsAndExtrasCents: number; proShopCents: number; eventsCents: number; taxCents: number; collectedCents: number; rounds: number }[];
+  days: { date: string; greenFeesCents: number; cartsAndExtrasCents: number; proShopCents: number; foodBevCents: number; eventsCents: number; taxCents: number; collectedCents: number; rounds: number }[];
 }
 
 export interface DayClose {
@@ -677,6 +740,17 @@ function createHttpClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "ap
     cancelCardPayment: (id: string) => request<CardPayment>(`/card-payments/${id}/cancel`, { method: "POST" }),
     sales: (date: string) => request<SalesDay>(`/sales?date=${date}`),
     refundSale: (id: string) => request<Sale>(`/sales/${id}/refund`, { method: "POST" }),
+    tabs: (status: "open" | "closed" = "open") => request<Tab[]>(`/tabs?status=${status}`),
+    tab: (id: string) => request<Tab>(`/tabs/${id}`),
+    openTab: (t: { name?: string | null; location?: TabLocation; golferId?: string | null; bookingId?: string | null }) => request<Tab>("/tabs", { method: "POST", body: t }),
+    renameTab: (id: string, name: string) => request<Tab>(`/tabs/${id}`, { method: "PATCH", body: { name } }),
+    addTabItems: (id: string, lines: TabItemInput[]) => request<Tab>(`/tabs/${id}/items`, { method: "POST", body: { lines } }),
+    voidTabItem: (id: string, itemId: string) => request<Tab>(`/tabs/${id}/items/${itemId}`, { method: "DELETE" }),
+    closeTab: (id: string, paymentMethod: SalePaymentMethod, cardPaymentId?: string) =>
+      request<{ tab: Tab; sale: Sale }>(`/tabs/${id}/close`, { method: "POST", body: { paymentMethod, ...(cardPaymentId ? { cardPaymentId } : {}) } }),
+    voidTab: (id: string, reason: string) => request<Tab>(`/tabs/${id}/void`, { method: "POST", body: { reason } }),
+    prep: (station: PrepStation) => request<PrepTicket[]>(`/prep/${station}`),
+    setPrepStatus: (itemIds: string[], status: "sent" | "ready" | "served") => request<{ updated: number }>("/prep/items", { method: "POST", body: { itemIds, status } }),
     passTypes: () => request<PassType[]>("/pass-types"),
     addPassType: (t: { name: string; kind: PassKind; priceCents: number; rounds?: number | null; validDays?: number | null; coversCart?: boolean }) =>
       request<PassType>("/pass-types", { method: "POST", body: t }),
