@@ -37,6 +37,7 @@ import {
   savePosSettings,
   updateProduct,
 } from "./pos.ts";
+import { closeDay, getDayClose, report } from "./reports.ts";
 import { deleteSync, getSync, runSync, saveSync, type FetchReport } from "./sync.ts";
 import { createGolfer, getGolfer, linkGolfer, searchGolfers, updateGolfer } from "./golfers.ts";
 import {
@@ -119,6 +120,7 @@ const ACTIONS: Record<string, string> = {
   "POST /v1/courses/:slug/sales": "Made a sale",
   "POST /v1/courses/:slug/sales/:id/refund": "Refunded a sale",
   "PUT /v1/courses/:slug/settings/pos": "Changed sales tax",
+  "PUT /v1/courses/:slug/closes/:date": "Closed the day",
   "PATCH /v1/courses/:slug/employee-types/:id": "Changed an employee type",
 };
 
@@ -546,6 +548,20 @@ export function buildApp(db: Db, opts: { fetchReport?: FetchReport } = {}): Fast
   app.put("/v1/courses/:slug/settings/pos", async (req) => {
     const course = await managedCourseFor(req);
     return savePosSettings(db, course, z.object({ salesTaxBps: z.number().int().min(0).max(2000) }).parse(req.body));
+  });
+
+  // Reports are for managers; anyone can close the day by counting the drawer.
+  app.get("/v1/courses/:slug/reports", async (req) => {
+    const course = await managedCourseFor(req);
+    const { from, to } = rangeQuery.parse(req.query);
+    return report(db, course, from, to);
+  });
+  const dateParams = z.object({ date: z.iso.date() });
+  app.get("/v1/courses/:slug/closes/:date", async (req) => getDayClose(db, await courseFor(req), dateParams.parse(req.params).date));
+  app.put("/v1/courses/:slug/closes/:date", async (req) => {
+    const course = await courseFor(req);
+    const body = z.object({ countedCashCents: z.number().int().min(0).max(100_000_000), note: z.string().max(500).nullish() }).parse(req.body);
+    return closeDay(db, course, { id: req.staff?.user.id, isManager: req.apiKey!.role === "manager" }, dateParams.parse(req.params).date, body);
   });
 
   app.get("/v1/courses/:slug/activity", async (req) => listActivity(db, (await managedCourseFor(req)).id));
