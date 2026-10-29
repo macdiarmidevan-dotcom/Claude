@@ -87,6 +87,7 @@ export const paymentMethodLabel: Record<string, string> = {
   punch_card: "punch card",
   season_pass: "season pass",
   loyalty: "loyalty points",
+  rain_check: "rain check",
   gift_card: "gift card",
   comp: "comp",
 };

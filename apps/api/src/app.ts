@@ -64,6 +64,7 @@ import {
   sellPass,
   updatePassType,
 } from "./passes.ts";
+import { findRainCheck, getRainCheckDays, issueRainCheck, listRainChecks, refundRound, saveRainCheckDays, voidRainCheck } from "./rainchecks.ts";
 import { deleteSync, getSync, runSync, saveSync, type FetchReport } from "./sync.ts";
 import { createGolfer, getGolfer, linkGolfer, searchGolfers, updateGolfer } from "./golfers.ts";
 import {
@@ -161,6 +162,10 @@ const ACTIONS: Record<string, string> = {
   "POST /v1/courses/:slug/golfers/:id/passes": "Sold a pass",
   "POST /v1/courses/:slug/golfers/:id/passes/:passId/cancel": "Cancelled a pass",
   "POST /v1/courses/:slug/golfers/:id/points": "Adjusted loyalty points",
+  "POST /v1/courses/:slug/bookings/:id/rain-checks": "Issued a rain check",
+  "POST /v1/courses/:slug/rain-checks/:id/void": "Voided a rain check",
+  "POST /v1/courses/:slug/bookings/:id/refund": "Refunded a round",
+  "PUT /v1/courses/:slug/settings/rain-checks": "Changed rain check settings",
   "PATCH /v1/courses/:slug/employee-types/:id": "Changed an employee type",
 };
 
@@ -209,7 +214,7 @@ const waiverSignature = z.object({
     .regex(/^[MLQCZmlqcz0-9.,\s-]+$/, "signature must be SVG path data"),
 });
 const waivers = z.array(waiverSignature).max(8).optional();
-const paymentMethod = z.enum(["card", "cash", "prepaid", "punch_card", "season_pass", "loyalty", "gift_card", "comp"]);
+const paymentMethod = z.enum(["card", "cash", "prepaid", "punch_card", "season_pass", "loyalty", "rain_check", "gift_card", "comp"]);
 const saleLine = z.union([
   z.object({ productId: z.uuid(), quantity: z.number().int().min(1).max(999) }),
   z.object({ description: z.string().max(200), unitCents: z.number().int().min(0).max(10_000_000), quantity: z.number().int().min(1).max(999), taxable: z.boolean().optional() }),
@@ -224,6 +229,7 @@ const checkInBody = z.object({
   cardPaymentId: z.uuid().optional(),
   pass: z.object({ golferPassId: z.uuid(), rounds: z.number().int().min(1).max(8) }).optional(),
   points: z.number().int().positive().max(10_000_000).optional(),
+  rainCheck: z.string().trim().min(4).max(20).optional(),
 });
 const teeOffBody = z.object({ cartNumbers: cartNumbers.optional(), waivers });
 const cartsBody = z.object({ cartNumbers, waivers });
@@ -708,6 +714,40 @@ export function buildApp(db: Db, opts: { fetchReport?: FetchReport; paymentsFetc
     const course = await managedCourseFor(req);
     const { change, note } = z.object({ change: z.number().int().min(-1_000_000).max(1_000_000), note: z.string().max(300) }).parse(req.body);
     return adjustPoints(db, course, req.staff?.user.id, idParams.parse(req.params).id, change, note);
+  });
+
+  // Rain checks and refunds on rounds cut short. Anyone can issue a rain check; setting its amount
+  // by hand, voiding one and giving money back are for managers.
+  app.post("/v1/courses/:slug/bookings/:id/rain-checks", async (req, reply) => {
+    const body = z
+      .object({
+        players: z.number().int().min(1).max(8),
+        holesPlayed: z.number().int().min(0).max(72),
+        includeCart: z.boolean().optional(),
+        amountCents: z.number().int().positive().max(10_000_000).optional(),
+        note: z.string().max(300).nullish(),
+      })
+      .parse(req.body);
+    const course = body.amountCents !== undefined ? await managedCourseFor(req) : await courseFor(req);
+    return reply.status(201).send(await issueRainCheck(db, course, req.staff?.user.id, idParams.parse(req.params).id, body));
+  });
+  app.get("/v1/courses/:slug/bookings/:id/rain-checks", async (req) => listRainChecks(db, await courseFor(req), { bookingId: idParams.parse(req.params).id }));
+  app.get("/v1/courses/:slug/rain-checks/:code", async (req) => {
+    const { code } = z.object({ slug: z.string(), code: z.string().trim().min(4).max(20) }).parse(req.params);
+    return findRainCheck(db, await courseFor(req), code);
+  });
+  app.post("/v1/courses/:slug/rain-checks/:id/void", async (req) => voidRainCheck(db, await managedCourseFor(req), idParams.parse(req.params).id));
+  app.post("/v1/courses/:slug/bookings/:id/refund", async (req) => {
+    const course = await managedCourseFor(req);
+    const body = z.object({ amountCents: z.number().int().positive().max(10_000_000), method: z.enum(["cash", "card"]), reason: z.string().max(300) }).parse(req.body);
+    return refundRound(db, course, req.staff?.user.id, idParams.parse(req.params).id, body, (client, cardPaymentId, cents) =>
+      refundCardPayment(client, course, processors, cardPaymentId, cents),
+    );
+  });
+  app.get("/v1/courses/:slug/settings/rain-checks", async (req) => getRainCheckDays(db, await courseFor(req)));
+  app.put("/v1/courses/:slug/settings/rain-checks", async (req) => {
+    const course = await managedCourseFor(req);
+    return saveRainCheckDays(db, course, z.object({ rainCheckDays: z.number().int().min(1).max(3660) }).parse(req.body).rainCheckDays);
   });
 
   // Processors call these when a card goes through. The raw body is kept for the signature check.

@@ -22,12 +22,14 @@ export const passTerms = (t: PassType) =>
 export function PassSetup({ client, isManager }: { client: Client; isManager: boolean }) {
   const [types, setTypes] = useState<PassType[]>();
   const [loyalty, setLoyalty] = useState<LoyaltySettings>();
+  const [rainDays, setRainDays] = useState<number>();
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string>();
 
   const load = () => {
     client.passTypes().then(setTypes).catch((e) => setError(e.message));
     client.loyaltySettings().then(setLoyalty).catch((e) => setError(e.message));
+    client.rainCheckSettings().then((r) => setRainDays(r.rainCheckDays)).catch((e) => setError(e.message));
   };
   useEffect(load, [client]);
 
@@ -79,7 +81,28 @@ export function PassSetup({ client, isManager }: { client: Client; isManager: bo
         </Text>
         {loyalty && (isManager ? <LoyaltyForm settings={loyalty} onSave={(s) => run(() => client.saveLoyaltySettings(s))} /> : <LoyaltyText s={loyalty} />)}
       </View>
+
+      <View style={styles.card}>
+        <Text role="heading" aria-level={2} style={styles.title}>
+          Rain checks
+        </Text>
+        <Text style={styles.help}>
+          When weather cuts a round short, the pro shop gives a rain check from the group's tee time for the holes they didn't play. It's a code they use on a later round.
+        </Text>
+        {rainDays !== undefined && (isManager ? <RainDaysForm days={rainDays} onSave={(d) => run(() => client.saveRainCheckSettings({ rainCheckDays: d }))} /> : <Text style={styles.text}>Rain checks are good for {rainDays} days.</Text>)}
+      </View>
     </ScrollView>
+  );
+}
+
+function RainDaysForm({ days, onSave }: { days: number; onSave: (d: number) => void }) {
+  const [text, setText] = useState(String(days));
+  const d = whole(text);
+  return (
+    <View style={[styles.row, { marginTop: 10, alignItems: "flex-end" }]}>
+      <Field label="Good for (days)" value={text} onChangeText={setText} keyboardType="number-pad" />
+      <Button label="Save" primary disabled={!d || d === days} onPress={() => onSave(d!)} />
+    </View>
   );
 }
 

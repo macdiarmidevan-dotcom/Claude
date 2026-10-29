@@ -22,6 +22,7 @@ const METHOD_LABEL: Record<MoneyMethod, string> = {
   punch_card: "Punch card",
   season_pass: "Season pass",
   loyalty: "Loyalty points",
+  rain_check: "Rain check",
   prepaid: "Prepaid online",
   comp: "Comp",
 };

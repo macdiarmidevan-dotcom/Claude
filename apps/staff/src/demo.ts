@@ -39,6 +39,7 @@ import {
   type LoyaltySettings,
   type PassType,
   type Redemption,
+  type RainCheck,
   type Wallet,
   type SheetBooking,
   type SheetTeeTime,
@@ -47,6 +48,7 @@ import {
   type WalkIn,
 } from "./api";
 import { addDays, todayIn, weekStart } from "./dates";
+import { money } from "./theme";
 
 export const DEMO = process.env.EXPO_PUBLIC_DEMO === "1";
 export const DEMO_URL = "demo";
@@ -61,6 +63,8 @@ function chicagoOffset(date: string) {
 
 interface DemoBooking extends Omit<SheetBooking, "greenFeeCents" | "cartCents"> {
   paid: { amountCents: number; method: PaymentMethod }[];
+  /** The round's price before any rain check or refund came off it. */
+  originalCents?: number;
   externalId?: string;
 }
 interface DemoTeeTime extends Omit<SheetTeeTime, "bookings" | "bookedPlayers"> {
@@ -316,7 +320,7 @@ export function createDemoClient(apiKey: string): Client {
   }
   function demoClose(date: string): DayClose {
     ensureDay(date);
-    const expected: Record<MoneyMethod, number> = { cash: 0, card: 0, gift_card: 0, punch_card: 0, season_pass: 0, loyalty: 0, prepaid: 0, comp: 0 };
+    const expected: Record<MoneyMethod, number> = { cash: 0, card: 0, gift_card: 0, punch_card: 0, season_pass: 0, loyalty: 0, rain_check: 0, prepaid: 0, comp: 0 };
     for (const b of bookings) if (teeTimes.get(b.teeTimeId)?.date === date) for (const p of b.paid) expected[p.method] += p.amountCents;
     for (const sale of sales)
       if (sale.status === "completed" && new Intl.DateTimeFormat("en-CA", { timeZone: riverBend.timeZone }).format(new Date(sale.at)) === date) expected[sale.paymentMethod] += sale.totalCents;
@@ -389,6 +393,27 @@ export function createDemoClient(apiKey: string): Client {
   const earn = (golferId: string | null | undefined, cents: number, reason: "round" | "sale") => {
     if (golferId && loyalty.pointsPerDollar > 0) changePoints(golferId, Math.floor(cents / 100) * loyalty.pointsPerDollar, reason);
   };
+  const rainChecks: RainCheck[] = [];
+  const rainCheckSettings = { rainCheckDays: 365 };
+  const rcView = (r: RainCheck): RainCheck => ({ ...r, usable: r.status === "active" && r.remainingCents > 0 && (!r.expiresAt || Date.parse(r.expiresAt) > Date.now()) });
+  const RC_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const rcCode = () => "RC-" + Array.from({ length: 6 }, () => RC_CHARS[Math.floor(Math.random() * RC_CHARS.length)]).join("");
+  function roundMoney(b: DemoBooking) {
+    if (b.status !== "checked_in" && b.status !== "teed_off") throw conflict("invalid_status", "Only groups that have checked in can get a rain check or refund");
+    const f = fees({ ...b, totalCents: b.originalCents ?? b.totalCents });
+    return { green: f.greenFeeCents, carts: f.cartCents, givable: Math.min(b.totalCents, payment(b).paidCents) };
+  }
+  function useRainCheck(b: DemoBooking, code: string) {
+    const r = rainChecks.find((x) => x.code === code.trim().toUpperCase());
+    if (!r) throw new ApiError(404, "not_found", "Rain check not found");
+    if (!rcView(r).usable) throw conflict("rain_check_unusable", r.status === "void" ? "That rain check was voided" : r.remainingCents === 0 ? "That rain check has been used up" : "That rain check has expired");
+    if (r.bookingId === b.id) throw new ApiError(400, "same_round", "A rain check is for a later round");
+    const amount = Math.min(r.remainingCents, payment(b).balanceCents);
+    if (amount <= 0) return;
+    r.remainingCents -= amount;
+    b.paid.push({ amountCents: amount, method: "rain_check" });
+  }
+
   function passView(p: (typeof golferPasses)[number]): GolferPass {
     const { golferId: _, ...rest } = p;
     const roundsLeft = p.roundsTotal === null ? null : p.roundsTotal - p.roundsUsed;
@@ -400,6 +425,7 @@ export function createDemoClient(apiKey: string): Client {
     const pts = points.get(golferId) ?? 0;
     return {
       passes: golferPasses.filter((p) => p.golferId === golferId).map(passView),
+      rainChecks: rainChecks.filter((r) => r.golferId === golferId).map(rcView),
       loyalty: {
         ...loyalty,
         enabled: loyalty.pointsPerDollar > 0,
@@ -474,6 +500,12 @@ export function createDemoClient(apiKey: string): Client {
       expiresAt: new Date(Date.now() + 300 * 86_400_000).toISOString(), soldAt: new Date(Date.now() - 65 * 86_400_000).toISOString(), status: "active",
     });
     changePoints(linda, 340, "round");
+    // And a rain check from a round last week that lightning cut short.
+    rainChecks.push({
+      id: id(), code: "RC-7K2M9Q", bookingId: "past-rain", golferId: linda, name: "Linda Hart", players: 1, holesUnplayed: 5, amountCents: 1300, remainingCents: 1300,
+      expiresAt: new Date(Date.now() + 358 * 86_400_000).toISOString(), status: "active", note: "Lightning", issuedBy: "Jordan Price",
+      issuedAt: new Date(Date.now() - 7 * 86_400_000).toISOString(), usable: true,
+    });
     const groups: [string, string, number, number, boolean, string?][] = [
       ["07:02", "Mike Sullivan", 4, 18, true, "teed_off"],
       ["07:10", "Dana Kowalski", 2, 9, false, "teed_off"],
@@ -805,6 +837,7 @@ export function createDemoClient(apiKey: string): Client {
             throw e;
           }
         }
+        if (redemption?.rainCheck) useRainCheck(b, redemption.rainCheck);
         const balance = payment(b).balanceCents;
         if (balance > 0 && !method) throw conflict("payment_required", "Take payment before checking in");
         if (items?.lines.length) earnSale(ringUp({ ...items, golferId: b.golferId }));
@@ -1199,7 +1232,7 @@ export function createDemoClient(apiKey: string): Client {
           if (!days.has(date)) days.set(date, { date, greenFeesCents: 0, cartsAndExtrasCents: 0, proShopCents: 0, taxCents: 0, collectedCents: 0, rounds: 0 });
           return days.get(date)!;
         };
-        const collected: Record<MoneyMethod, number> = { cash: 0, card: 0, gift_card: 0, punch_card: 0, season_pass: 0, loyalty: 0, prepaid: 0, comp: 0 };
+        const collected: Record<MoneyMethod, number> = { cash: 0, card: 0, gift_card: 0, punch_card: 0, season_pass: 0, loyalty: 0, rain_check: 0, prepaid: 0, comp: 0 };
         const bySource: Record<string, number> = {};
         let played = 0;
         let booked = 0;
@@ -1349,6 +1382,76 @@ export function createDemoClient(apiKey: string): Client {
         changePoints(golferId, change, "adjust", note.trim());
         log("Adjusted loyalty points");
         return wallet(golferId);
+      }),
+    issueRainCheck: (bookingId: string, input: { players: number; holesPlayed: number; includeCart?: boolean; amountCents?: number; note?: string | null }) =>
+      reply(() => {
+        const b = find(bookingId);
+        const m = roundMoney(b);
+        if (input.amountCents !== undefined) managerOnly();
+        if (input.players > b.players) throw new ApiError(400, "too_many_players", `This group only has ${b.players} players`);
+        if (input.holesPlayed >= b.holes) throw new ApiError(400, "round_finished", "They played every hole, so there's nothing to credit");
+        const share = (input.players / b.players) * ((b.holes - input.holesPlayed) / b.holes);
+        const amount = input.amountCents ?? Math.round(m.green * share) + (input.includeCart ?? true ? Math.round(m.carts * share) : 0);
+        if (amount <= 0) throw new ApiError(400, "nothing_to_credit", "That comes to nothing");
+        if (amount > m.givable) throw conflict("too_much", `Only ${money(m.givable)} is left on this round to give back`);
+        b.originalCents ??= b.totalCents;
+        b.totalCents -= amount;
+        b.payment = payment(b);
+        const rc: RainCheck = {
+          id: id(), code: rcCode(), bookingId: b.id, golferId: b.golferId, name: b.customerName, players: input.players, holesUnplayed: b.holes - input.holesPlayed,
+          amountCents: amount, remainingCents: amount, expiresAt: new Date(Date.now() + rainCheckSettings.rainCheckDays * 86_400_000).toISOString(),
+          status: "active", note: input.note?.trim() || null, issuedBy: account()?.name ?? null, issuedAt: new Date().toISOString(), usable: true,
+        };
+        rainChecks.unshift(rc);
+        log("Issued a rain check", b.customerName);
+        return rcView(rc);
+      }),
+    bookingRainChecks: (bookingId: string) => reply(() => rainChecks.filter((r) => r.bookingId === bookingId).map(rcView)),
+    findRainCheck: (code: string) =>
+      reply(() => {
+        const r = rainChecks.find((x) => x.code === code.trim().toUpperCase());
+        if (!r) throw new ApiError(404, "not_found", "Rain check not found");
+        return rcView(r);
+      }),
+    voidRainCheck: (rcId: string) =>
+      reply(() => {
+        managerOnly();
+        const r = rainChecks.find((x) => x.id === rcId);
+        if (!r) throw new ApiError(404, "not_found", "Rain check not found");
+        if (r.status === "void") throw conflict("already_void", "This rain check is already void");
+        if (r.remainingCents !== r.amountCents) throw conflict("already_used", "Part of this rain check has been used, so it can't be voided");
+        r.status = "void";
+        const b = bookings.find((x) => x.id === r.bookingId);
+        if (b) {
+          b.totalCents += r.amountCents;
+          b.payment = payment(b);
+        }
+        log("Voided a rain check");
+        return rcView(r);
+      }),
+    refundRound: (bookingId: string, input: { amountCents: number; method: "cash" | "card"; reason: string }) =>
+      reply(() => {
+        managerOnly();
+        if (!input.reason.trim()) throw new ApiError(400, "reason_required", "Say why the round is being refunded");
+        const b = find(bookingId);
+        const m = roundMoney(b);
+        const inMethod = b.paid.filter((p) => p.method === input.method).reduce((t, p) => t + p.amountCents, 0);
+        const most = Math.min(m.givable, inMethod);
+        if (input.amountCents > most) throw conflict("too_much", `Only ${money(most)} paid by ${input.method} can be refunded on this round`);
+        b.originalCents ??= b.totalCents;
+        b.paid.push({ amountCents: -input.amountCents, method: input.method });
+        b.totalCents -= input.amountCents;
+        b.payment = payment(b);
+        log("Refunded a round", b.customerName);
+        return b;
+      }),
+    rainCheckSettings: () => reply(() => ({ ...rainCheckSettings })),
+    saveRainCheckSettings: (next: { rainCheckDays: number }) =>
+      reply(() => {
+        managerOnly();
+        rainCheckSettings.rainCheckDays = next.rainCheckDays;
+        log("Changed rain check settings");
+        return { ...rainCheckSettings };
       }),
     posSettings: () => reply(() => ({ ...pos })),
     savePosSettings: (next: { salesTaxBps: number }) =>

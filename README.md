@@ -125,6 +125,14 @@ Managers set up what the course sells under **Pro shop › Passes & points**: pu
 
 ![A golfer's passes and points](docs/screenshots/golfer-wallet.png)
 
+## Rain checks and refunds
+
+When weather cuts a round short, the pro shop opens the group's tee time and presses **Rain check** (for groups that have checked in). They pick how many players and how many holes were played. The credit is worked out from what the group paid for the holes they didn't play, with or without carts, and managers can set a different amount. The golfer gets a code like `RC-7K2M9Q`, good for 365 days by default (set under **Pro shop › Passes & points**). It's also listed on their golfer account if the round was linked to one. At a later check-in, staff pick the rain check from the account or type the code. It pays toward the round, and anything left stays on the code. Managers can void a rain check that hasn't been used.
+
+Managers can also **Refund** a round, by cash or back to the card. Card refunds go through the reader's processor when the round was paid on one. Either way, the amount comes off the round as its own line ("Rain check RC-…" or "Refund: reason"), so revenue counts the round at what it ended up costing. A refund is recorded as a negative payment on the day it's given, so money taken and the cash drawer net it out.
+
+![Giving a rain check](docs/screenshots/rain-check.png)
+
 ## AI assistant
 
 Managers can ask Claude, ChatGPT or another MCP client about the course: "how many rounds today?", "who still owes?", "is Mike Sullivan booked this week?", "what did we take last week?". Add a custom connector with the address `https://<your server>/v1/courses/<course>/mcp` and the manager key as a Bearer token.
