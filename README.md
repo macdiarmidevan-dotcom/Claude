@@ -133,6 +133,16 @@ Managers can also **Refund** a round, by cash or back to the card. Card refunds 
 
 ![Giving a rain check](docs/screenshots/rain-check.png)
 
+## Leagues, outings and standing tee times
+
+**Leagues & events** holds a course's weekly leagues and one-day outings. A manager sets one up with a price per player, holes, whether carts are included, and who the bill goes to, then picks the first (and for a league, last) date, the first tee time and how many tee times to hold. The app blocks those tee times on the tee sheet for every date. Any time that already has golfers on it is left alone and listed, so staff can move the golfers or play around them. Events run as one group per tee time or as a shotgun start, where groups are given starting holes (1A, 2A … then 1B for a second group on a hole).
+
+On the day, the pro shop opens the date, pairs everyone into groups (by handicap so groups are even, by random draw, or by name), moves players between groups by tapping them, and checks groups in. The event is billed as one account: each date charges the players who checked in (or who are in a group, before check-in starts) at the event's price, and payments by card, cash, check, gift card or comp are taken against the balance, for the whole season or a single date. Event payments show in reports as "Leagues and outings" and count in the cash drawer. Managers can cancel a rained-out date, which frees its tee times and drops its charge.
+
+**Standing tee times** are a golfer's permanent weekly time, such as Saturdays at 7:02 for a foursome. The golfer is booked 8 weeks ahead, and again whenever a later day is opened on the tee sheet. If a week can't be booked (the time is blocked or full), it's listed on the standing time so staff can sort it out. Stopping a standing time cancels its future bookings that haven't checked in.
+
+![Pairing a league night](docs/screenshots/league-pairings.png)
+
 ## AI assistant
 
 Managers can ask Claude, ChatGPT or another MCP client about the course: "how many rounds today?", "who still owes?", "is Mike Sullivan booked this week?", "what did we take last week?". Add a custom connector with the address `https://<your server>/v1/courses/<course>/mcp` and the manager key as a Bearer token.

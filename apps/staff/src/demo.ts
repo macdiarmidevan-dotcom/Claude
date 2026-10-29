@@ -38,6 +38,13 @@ import {
   type GolferPass,
   type LoyaltySettings,
   type PassType,
+  type NewEvent,
+  type EventPaymentMethod,
+  type StandingTime,
+  type HoldConflict,
+  type EventSummary,
+  type EventDetail,
+  type EventDay,
   type Redemption,
   type RainCheck,
   type Wallet,
@@ -320,10 +327,12 @@ export function createDemoClient(apiKey: string): Client {
   }
   function demoClose(date: string): DayClose {
     ensureDay(date);
-    const expected: Record<MoneyMethod, number> = { cash: 0, card: 0, gift_card: 0, punch_card: 0, season_pass: 0, loyalty: 0, rain_check: 0, prepaid: 0, comp: 0 };
+    const expected: Record<MoneyMethod, number> = { cash: 0, card: 0, gift_card: 0, punch_card: 0, season_pass: 0, loyalty: 0, rain_check: 0, check: 0, prepaid: 0, comp: 0 };
     for (const b of bookings) if (teeTimes.get(b.teeTimeId)?.date === date) for (const p of b.paid) expected[p.method] += p.amountCents;
     for (const sale of sales)
       if (sale.status === "completed" && new Intl.DateTimeFormat("en-CA", { timeZone: riverBend.timeZone }).format(new Date(sale.at)) === date) expected[sale.paymentMethod] += sale.totalCents;
+    for (const ev of events)
+      for (const p of ev.payments) if (p.method !== "comp" && new Intl.DateTimeFormat("en-CA", { timeZone: riverBend.timeZone }).format(new Date(p.at)) === date) expected[p.method] += p.amountCents;
     return { date, expected, close: closes.get(date) ?? null };
   }
   const log = (action: string, golfer?: string) =>
@@ -759,6 +768,178 @@ export function createDemoClient(apiKey: string): Client {
     }
     return p;
   }
+  // Standing tee times, leagues and outings.
+  type DemoStanding = Omit<StandingTime, "golferName" | "upcoming"> & { runs: Map<string, { bookingId: string | null; problem: string | null }> };
+  type DemoEventDate = { id: string; date: string; startTime: string; slots: number; status: "scheduled" | "cancelled"; held: string[]; pairs: Map<string, { groupNo: number; checkedIn: boolean }> };
+  type DemoEvent = Omit<EventSummary, "nextDate" | "dates" | "players"> & {
+    dates: DemoEventDate[];
+    players: EventDetail["players"];
+    payments: (EventDetail["billing"]["payments"][number] & { eventDateId: string | null })[];
+  };
+  const standing: DemoStanding[] = [];
+  const events: DemoEvent[] = [];
+  const BOOK_AHEAD_DAYS = 56;
+  const weekdayOf = (date: string) => ((new Date(`${date}T12:00:00Z`).getUTCDay() + 6) % 7) + 1;
+
+  function bookStanding(s: DemoStanding, date: string) {
+    if (!s.active || s.runs.has(date) || weekdayOf(date) !== s.weekday || date < s.startsOn || (s.endsOn && date > s.endsOn)) return;
+    ensureDay(date);
+    const t = [...teeTimes.values()].find((x) => x.date === date && x.localTime === s.localTime);
+    const g = golfers.find((x) => x.id === s.golferId)!;
+    try {
+      if (!t) throw new Error("no tee time at that time");
+      if (live(t.id).some((b) => b.golferId === s.golferId)) throw new Error("already booked");
+      const b = book({
+        teeTimeId: t.id,
+        holes: s.holes,
+        customer: { name: g.name, email: g.email },
+        players: Array.from({ length: s.players }, () => ({ residency: s.residency, ageGroup: "adult" as const })),
+        addOns: s.riding ? [{ code: "gas_cart", quantity: s.players }] : [],
+      });
+      Object.assign(b, { source: "standing", golferId: g.id, customerPhone: g.phone });
+      s.runs.set(date, { bookingId: b.id, problem: null });
+    } catch (e) {
+      s.runs.set(date, { bookingId: null, problem: e instanceof Error ? e.message.toLowerCase() : "couldn't book" });
+    }
+  }
+  function bookAheadAll() {
+    const today = todayIn(riverBend.timeZone);
+    for (const s of standing) for (let i = 0; i <= BOOK_AHEAD_DAYS; i++) bookStanding(s, addDays(today, i));
+  }
+  function standingView(s: DemoStanding): StandingTime {
+    const today = todayIn(riverBend.timeZone);
+    const { runs, ...rest } = s;
+    const upcoming = [...runs.entries()]
+      .filter(([d]) => d >= today)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, r]) => ({ date, bookingId: r.bookingId && bookings.some((b) => b.id === r.bookingId && b.status !== "cancelled") ? r.bookingId : null, problem: r.problem }));
+    return { ...rest, golferName: golfers.find((g) => g.id === s.golferId)?.name ?? "", upcoming };
+  }
+
+  /** Blocks a run of tee times for an event date, skipping any that already have golfers on them. */
+  function holdTimes(ev: DemoEvent, d: DemoEventDate) {
+    ensureDay(d.date);
+    const day = [...teeTimes.values()].filter((t) => t.date === d.date && t.localTime >= d.startTime).sort((a, b) => a.localTime.localeCompare(b.localTime));
+    const conflicts: HoldConflict[] = [];
+    for (const t of day.slice(0, d.slots)) {
+      const group = live(t.id);
+      if (group.length) {
+        conflicts.push({ date: d.date, localTime: t.localTime, detail: group.map((b) => `${b.customerName} (${b.players})`).join(", ") });
+        continue;
+      }
+      Object.assign(t, { status: "blocked", note: ev.name });
+      d.held.push(t.id);
+    }
+    return conflicts;
+  }
+  function addDate(ev: DemoEvent, date: string, startTime: string, slots: number) {
+    const d: DemoEventDate = { id: id(), date, startTime, slots, status: "scheduled", held: [], pairs: new Map() };
+    ev.dates.push(d);
+    ev.dates.sort((a, b) => a.date.localeCompare(b.date));
+    return holdTimes(ev, d);
+  }
+  function dateCharge(ev: DemoEvent, d: DemoEventDate) {
+    if (d.status === "cancelled") return { players: 0, cents: 0 };
+    const pairs = [...d.pairs.values()];
+    const checked = pairs.filter((p) => p.checkedIn).length;
+    const players = checked || pairs.length;
+    return { players, cents: players * ev.pricePerPlayerCents };
+  }
+  function eventDetail(ev: DemoEvent): EventDetail {
+    const dates = ev.dates.map((d) => {
+      const c = dateCharge(ev, d);
+      return { id: d.id, date: d.date, startTime: d.startTime, slots: d.slots, held: d.held.length, status: d.status, paired: d.pairs.size, chargedPlayers: c.players, chargeCents: c.cents };
+    });
+    const chargedCents = dates.reduce((s, d) => s + d.chargeCents, 0);
+    const paidCents = ev.payments.reduce((s, p) => s + p.amountCents, 0);
+    const { payments, ...rest } = ev;
+    return { ...rest, dates, billing: { chargedCents, paidCents, balanceCents: chargedCents - paidCents, payments: payments.map(({ eventDateId: _, ...p }) => p) } };
+  }
+  function eventSummary(ev: DemoEvent): EventSummary {
+    const today = todayIn(riverBend.timeZone);
+    const { dates, players, payments: _, ...rest } = ev;
+    return { ...rest, nextDate: dates.find((d) => d.status === "scheduled" && d.date >= today)?.date ?? null, dates: dates.length, players: players.length };
+  }
+  function findEvent(eventId: string) {
+    const ev = events.find((e) => e.id === eventId);
+    if (!ev) throw new ApiError(404, "not_found", "Event not found");
+    return ev;
+  }
+  function findDate(dateId: string) {
+    for (const ev of events) {
+      const d = ev.dates.find((x) => x.id === dateId);
+      if (d) return { ev, d };
+    }
+    throw new ApiError(404, "not_found", "Event date not found");
+  }
+  function eventDay(ev: DemoEvent, d: DemoEventDate): EventDay {
+    const times = d.held.map((tid) => teeTimes.get(tid)!.localTime).sort();
+    const holes = riverBend.holes;
+    const byGroup = new Map<number, EventDay["groups"][number]["players"]>();
+    for (const p of ev.players) {
+      const pair = d.pairs.get(p.id);
+      if (!pair) continue;
+      if (!byGroup.has(pair.groupNo)) byGroup.set(pair.groupNo, []);
+      byGroup.get(pair.groupNo)!.push({ id: p.id, name: p.name, golferId: p.golferId, handicap: p.handicap, checkedIn: pair.checkedIn });
+    }
+    const groups = [...byGroup.entries()]
+      .sort(([a], [b]) => a - b)
+      .map(([groupNo, players], i) => ({
+        groupNo,
+        start: ev.format === "shotgun" ? `Hole ${(i % holes) + 1}${i < holes ? "A" : "B"}` : times[i] ?? times[times.length - 1] ?? d.startTime,
+        players,
+      }));
+    return {
+      id: d.id,
+      eventId: ev.id,
+      eventName: ev.name,
+      format: ev.format,
+      date: d.date,
+      startTime: d.startTime,
+      status: d.status,
+      heldTimes: times,
+      groups,
+      unpaired: ev.players.filter((p) => !d.pairs.has(p.id)).map((p) => ({ id: p.id, name: p.name, handicap: p.handicap })),
+      checkedIn: [...d.pairs.values()].filter((p) => p.checkedIn).length,
+    };
+  }
+
+  let eventsSeeded = false;
+  function seedEvents() {
+    if (eventsSeeded) return;
+    eventsSeeded = true;
+    const today = todayIn(riverBend.timeZone);
+    ensureDay(today);
+    // Mike's foursome has Saturday 7:02 every week.
+    const mike = golfers.find((g) => g.name === "Mike Sullivan")!;
+    standing.push({ id: id(), golferId: mike.id, weekday: 6, localTime: "07:02", players: 4, holes: 18, riding: true, residency: "resident", startsOn: today, endsOn: null, active: true, runs: new Map() });
+    // A Tuesday night league that started a few weeks ago.
+    let tuesday = today;
+    while (weekdayOf(tuesday) !== 2) tuesday = addDays(tuesday, -1);
+    const league: DemoEvent = {
+      id: id(), name: "Tuesday Men's League", kind: "league", format: "tee_times", holes: 9, pricePerPlayerCents: 2500, includesCart: false,
+      contactName: "Rich Alvarez", contactEmail: null, contactPhone: "(630) 555-0155", notes: null, active: true, dates: [], players: [], payments: [],
+    };
+    events.push(league);
+    const names: [string, number][] = [["Rich Alvarez", 8], ["Tom Reyes", 14], ["Greg Olson", 21], ["Bob Kim", 11], ["Dave Lindgren", 17], ["Kevin Wu", 6], ["Pete Marsh", 24], ["Joe Bianchi", 12], ["Al Novak", 19], ["Steve Park", 9], ["Mark Doyle", 15], ["Ray Ortiz", 26]];
+    for (const [name, handicap] of names) league.players.push({ id: id(), name, golferId: golfers.find((g) => g.name === name)?.id ?? null, email: null, phone: null, handicap });
+    for (let w = -3; w <= 8; w++) addDate(league, addDays(tuesday, 7 * w), "16:30", 4);
+    // The past nights were played: everyone in groups of four, checked in.
+    for (const d of league.dates.filter((x) => x.date < today)) league.players.forEach((p, i) => d.pairs.set(p.id, { groupNo: Math.floor(i / 4) + 1, checkedIn: true }));
+    league.payments.push({ id: id(), amountCents: 60000, method: "check", date: null, note: "Check 1042, first two nights", staff: "Jordan Price", eventDateId: null, at: new Date(Date.now() - 20 * 86_400_000).toISOString() });
+    // A charity outing next month as a shotgun.
+    const outing: DemoEvent = {
+      id: id(), name: "Lisle Rotary Charity Scramble", kind: "outing", format: "shotgun", holes: 18, pricePerPlayerCents: 6500, includesCart: true,
+      contactName: "Karen Mills", contactEmail: "karen@lislerotary.example", contactPhone: "(630) 555-0168", notes: null, active: true, dates: [], players: [], payments: [],
+    };
+    events.push(outing);
+    addDate(outing, addDays(today, 24), "08:00", 12);
+    for (const [name, handicap] of [["Karen Mills", 22], ["Paul Mills", 13], ["Nina Ford", 28], ["Ed Chu", 10], ["Lou Grant", 18], ["Beth Ames", 30], ["Carl Voss", 7], ["Dee Shaw", 25]] as const)
+      outing.players.push({ id: id(), name, golferId: null, email: null, phone: null, handicap });
+    outing.payments.push({ id: id(), amountCents: 50000, method: "card", date: null, note: "Deposit", staff: "Jordan Price", eventDateId: null, at: new Date(Date.now() - 3 * 86_400_000).toISOString() });
+    bookAheadAll();
+  }
+
   function useCard(id: string) {
     const p = cardState(id);
     if (p.status !== "succeeded") throw conflict("card_not_paid", "The card hasn't gone through on the reader yet");
@@ -781,7 +962,9 @@ export function createDemoClient(apiKey: string): Client {
     course: () => reply(() => ({ ...riverBend, addOns: riverBendAddOns, rates: riverBendRates })),
     teeSheet: (date: string) =>
       reply(() => {
+        seedEvents();
         ensureDay(date);
+        for (const st of standing) bookStanding(st, date);
         const list = [...teeTimes.values()]
           .filter((t) => t.date === date)
           .sort((a, b) => a.startsAt.localeCompare(b.startsAt))
@@ -1229,10 +1412,10 @@ export function createDemoClient(apiKey: string): Client {
         type Day = Report["days"][number];
         const days = new Map<string, Day>();
         const at = (date: string) => {
-          if (!days.has(date)) days.set(date, { date, greenFeesCents: 0, cartsAndExtrasCents: 0, proShopCents: 0, taxCents: 0, collectedCents: 0, rounds: 0 });
+          if (!days.has(date)) days.set(date, { date, greenFeesCents: 0, cartsAndExtrasCents: 0, proShopCents: 0, eventsCents: 0, taxCents: 0, collectedCents: 0, rounds: 0 });
           return days.get(date)!;
         };
-        const collected: Record<MoneyMethod, number> = { cash: 0, card: 0, gift_card: 0, punch_card: 0, season_pass: 0, loyalty: 0, rain_check: 0, prepaid: 0, comp: 0 };
+        const collected: Record<MoneyMethod, number> = { cash: 0, card: 0, gift_card: 0, punch_card: 0, season_pass: 0, loyalty: 0, rain_check: 0, check: 0, prepaid: 0, comp: 0 };
         const bySource: Record<string, number> = {};
         let played = 0;
         let booked = 0;
@@ -1276,6 +1459,16 @@ export function createDemoClient(apiKey: string): Client {
             categories.set(l.category, c);
           }
         }
+        // League and outing payments count on the day they were taken. Comps are money not collected.
+        for (const ev of events)
+          for (const p of ev.payments) {
+            if (!inRange(dayOf(p.at))) continue;
+            const d = at(dayOf(p.at));
+            collected[p.method] += p.amountCents;
+            if (p.method === "comp") continue;
+            d.eventsCents += p.amountCents;
+            d.collectedCents += p.amountCents;
+          }
         const list = [...days.values()].sort((a, b) => a.date.localeCompare(b.date));
         const sum = (k: keyof Omit<Day, "date">) => list.reduce((t, d) => t + d[k], 0);
         const spots = [...teeTimes.values()].filter((t) => inRange(t.date) && t.status === "open").reduce((t, x) => t + x.maxPlayers, 0);
@@ -1287,7 +1480,8 @@ export function createDemoClient(apiKey: string): Client {
             greenFeesCents: sum("greenFeesCents"),
             cartsAndExtrasCents: sum("cartsAndExtrasCents"),
             proShopCents: sum("proShopCents"),
-            totalCents: sum("greenFeesCents") + sum("cartsAndExtrasCents") + sum("proShopCents"),
+            eventsCents: sum("eventsCents"),
+            totalCents: sum("greenFeesCents") + sum("cartsAndExtrasCents") + sum("proShopCents") + sum("eventsCents"),
             salesTaxCents: sum("taxCents"),
             proShopRefundsCents: kept.filter((x) => x.status === "refunded").reduce((t, x) => t + x.totalCents, 0),
             proShopByCategory: [...categories.values()].sort((a, b) => b.cents - a.cents),
@@ -1661,6 +1855,166 @@ export function createDemoClient(apiKey: string): Client {
         const p = cardState(paymentId);
         if (p.status === "processing") Object.assign(p, { status: "cancelled", completedAt: new Date().toISOString() });
         return publicCard(p);
+      }),
+    standingTimes: () =>
+      reply(() => {
+        seedEvents();
+        return standing.map(standingView);
+      }),
+    addStandingTime: (input: Omit<StandingTime, "id" | "golferName" | "active" | "upcoming">) =>
+      reply(() => {
+        managerOnly();
+        seedEvents();
+        golfer(input.golferId);
+        if (!/^\d{2}:\d{2}$/.test(input.localTime) || !at(todayIn(riverBend.timeZone), input.localTime))
+          throw new ApiError(400, "not_a_tee_time", "Pick a time on the tee sheet, e.g. 07:02");
+        const s: DemoStanding = { ...input, id: id(), active: true, runs: new Map() };
+        standing.push(s);
+        bookAheadAll();
+        log("Added a standing tee time", golfers.find((g) => g.id === s.golferId)?.name);
+        return standingView(s);
+      }),
+    setStandingTimeActive: (standingId: string, active: boolean) =>
+      reply(() => {
+        managerOnly();
+        const s = standing.find((x) => x.id === standingId);
+        if (!s) throw new ApiError(404, "not_found", "Standing tee time not found");
+        s.active = active;
+        const today = todayIn(riverBend.timeZone);
+        if (!active)
+          for (const [date, r] of s.runs) {
+            const b = r.bookingId ? bookings.find((x) => x.id === r.bookingId) : undefined;
+            if (date >= today && b?.status === "confirmed") b.status = "cancelled";
+            if (date >= today) s.runs.delete(date);
+          }
+        else bookAheadAll();
+        log(active ? "Started a standing tee time" : "Stopped a standing tee time", golfers.find((g) => g.id === s.golferId)?.name);
+        return standingView(s);
+      }),
+    bookAhead: () =>
+      reply(() => {
+        seedEvents();
+        bookAheadAll();
+        return standing.map(standingView);
+      }),
+    events: () =>
+      reply(() => {
+        seedEvents();
+        return events.map(eventSummary);
+      }),
+    event: (eventId: string) =>
+      reply(() => {
+        seedEvents();
+        return eventDetail(findEvent(eventId));
+      }),
+    addEvent: (input: NewEvent) =>
+      reply(() => {
+        managerOnly();
+        seedEvents();
+        if (!input.name.trim()) throw new ApiError(400, "name_required", "Give it a name");
+        const { schedule, ...rest } = input;
+        const ev: DemoEvent = {
+          includesCart: false, contactName: null, contactEmail: null, contactPhone: null, notes: null,
+          ...rest, name: input.name.trim(), id: id(), active: true, dates: [], players: [], payments: [],
+        };
+        const last = input.kind === "league" && schedule.endsOn ? schedule.endsOn : schedule.startsOn;
+        const conflicts: HoldConflict[] = [];
+        for (let d = schedule.startsOn, n = 0; d <= last && n < 40; d = addDays(d, 7), n++) conflicts.push(...addDate(ev, d, schedule.startTime, schedule.slots));
+        events.push(ev);
+        log(`Set up ${ev.name}`);
+        return { event: eventDetail(ev), conflicts };
+      }),
+    updateEvent: (eventId: string, patch: Partial<Omit<NewEvent, "kind" | "format" | "schedule">> & { active?: boolean }) =>
+      reply(() => {
+        managerOnly();
+        return eventDetail(Object.assign(findEvent(eventId), patch));
+      }),
+    addEventDate: (eventId: string, input: { date: string; startTime: string; slots: number }) =>
+      reply(() => {
+        managerOnly();
+        const ev = findEvent(eventId);
+        if (ev.dates.some((d) => d.date === input.date && d.status === "scheduled")) throw conflict("date_exists", "That date is already on the schedule");
+        const conflicts = addDate(ev, input.date, input.startTime, input.slots);
+        return { event: eventDetail(ev), conflicts };
+      }),
+    cancelEventDate: (dateId: string) =>
+      reply(() => {
+        managerOnly();
+        const { ev, d } = findDate(dateId);
+        d.status = "cancelled";
+        for (const tid of d.held) Object.assign(teeTimes.get(tid)!, { status: "open", note: null });
+        d.held = [];
+        log(`Cancelled ${ev.name} on ${d.date}`);
+        return eventDetail(ev);
+      }),
+    addEventPlayer: (eventId: string, p: { name?: string; golferId?: string | null; email?: string | null; phone?: string | null; handicap?: number | null }) =>
+      reply(() => {
+        const ev = findEvent(eventId);
+        const g = p.golferId ? golfer(p.golferId) : undefined;
+        const name = g?.name ?? p.name?.trim();
+        if (!name) throw new ApiError(400, "name_required", "Enter the player's name");
+        if (g && ev.players.some((x) => x.golferId === g.id)) throw conflict("already_playing", `${g.name} is already in ${ev.name}`);
+        ev.players.push({ id: id(), name, golferId: g?.id ?? null, email: g?.email ?? p.email ?? null, phone: g?.phone ?? p.phone ?? null, handicap: p.handicap ?? null });
+        return eventDetail(ev);
+      }),
+    removeEventPlayer: (eventId: string, playerId: string) =>
+      reply(() => {
+        const ev = findEvent(eventId);
+        ev.players = ev.players.filter((p) => p.id !== playerId);
+        for (const d of ev.dates) if (d.date >= todayIn(riverBend.timeZone)) d.pairs.delete(playerId);
+        return eventDetail(ev);
+      }),
+    eventDay: (dateId: string) =>
+      reply(() => {
+        const { ev, d } = findDate(dateId);
+        return eventDay(ev, d);
+      }),
+    autoPair: (dateId: string, opts: { groupSize: number; order: "name" | "random" | "handicap" }) =>
+      reply(() => {
+        const { ev, d } = findDate(dateId);
+        const list = [...ev.players];
+        if (opts.order === "name") list.sort((a, b) => a.name.localeCompare(b.name));
+        else if (opts.order === "random") list.sort(() => Math.random() - 0.5);
+        else list.sort((a, b) => (a.handicap ?? 99) - (b.handicap ?? 99));
+        const groups = Math.max(1, Math.ceil(list.length / opts.groupSize));
+        const was = new Map(d.pairs);
+        d.pairs.clear();
+        list.forEach((p, i) => {
+          // Handicap order deals players out like cards, back and forth, so each group gets a spread.
+          const round = Math.floor(i / groups);
+          const k = i % groups;
+          const groupNo = opts.order === "handicap" ? (round % 2 === 0 ? k : groups - 1 - k) + 1 : Math.floor(i / opts.groupSize) + 1;
+          d.pairs.set(p.id, { groupNo, checkedIn: was.get(p.id)?.checkedIn ?? false });
+        });
+        return eventDay(ev, d);
+      }),
+    setPairing: (dateId: string, playerId: string, groupNo: number | null) =>
+      reply(() => {
+        const { ev, d } = findDate(dateId);
+        if (groupNo === null) d.pairs.delete(playerId);
+        else d.pairs.set(playerId, { groupNo, checkedIn: d.pairs.get(playerId)?.checkedIn ?? false });
+        return eventDay(ev, d);
+      }),
+    eventCheckIn: (dateId: string, playerIds: string[], checkedIn: boolean) =>
+      reply(() => {
+        const { ev, d } = findDate(dateId);
+        for (const pid of playerIds) {
+          const p = d.pairs.get(pid);
+          if (p) p.checkedIn = checkedIn;
+        }
+        log(checkedIn ? `Checked in ${ev.name}` : `Undid check-in for ${ev.name}`);
+        return eventDay(ev, d);
+      }),
+    addEventPayment: (eventId: string, p: { amountCents: number; method: EventPaymentMethod; eventDateId?: string | null; note?: string | null; cardPaymentId?: string }) =>
+      reply(() => {
+        const ev = findEvent(eventId);
+        if (!Number.isInteger(p.amountCents) || p.amountCents === 0) throw new ApiError(400, "invalid_amount", "Enter an amount");
+        if (p.amountCents < 0) managerOnly();
+        if (p.cardPaymentId) useCard(p.cardPaymentId);
+        const d = p.eventDateId ? ev.dates.find((x) => x.id === p.eventDateId) : undefined;
+        ev.payments.unshift({ id: id(), amountCents: p.amountCents, method: p.method, date: d?.date ?? null, note: p.note ?? null, staff: account()?.name ?? null, eventDateId: d?.id ?? null, at: new Date().toISOString() });
+        log(`${p.amountCents < 0 ? "Refunded" : "Took a payment for"} ${ev.name}`, ev.contactName ?? undefined);
+        return eventDetail(ev);
       }),
     move: (bookingId: string, teeTimeId: string) =>
       reply(() => {

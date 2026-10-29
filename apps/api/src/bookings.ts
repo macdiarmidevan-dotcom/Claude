@@ -9,7 +9,7 @@ import { earnPoints } from "./loyalty.ts";
 import { redeemPass, redeemPoints } from "./passes.ts";
 import { redeemRainCheck } from "./rainchecks.ts";
 
-export type BookingSource = "staff" | "phone" | "teeitup" | "golfnow" | "import";
+export type BookingSource = "staff" | "phone" | "teeitup" | "golfnow" | "import" | "standing";
 
 export interface QuoteRequest {
   teeTimeId: string;

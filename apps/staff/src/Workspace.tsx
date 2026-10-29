@@ -11,16 +11,18 @@ import { GolfersScreen } from "./Golfers";
 import { ScheduleScreen } from "./ScheduleScreen";
 import { ProShopScreen } from "./ProShopScreen";
 import { CardPaymentSettings, CardReaderProvider } from "./CardReader";
+import { EventsScreen } from "./EventsScreen";
 import { ReportsScreen } from "./ReportsScreen";
 import { colors, type WebPress } from "./theme";
 
-type Section = "tee-sheet" | "import" | "staff" | "customers" | "reports" | "schedule" | "inventory" | "settings";
+type Section = "tee-sheet" | "import" | "staff" | "customers" | "events" | "reports" | "schedule" | "inventory" | "settings";
 
 const SECTIONS: { id: Section; label: string; soon?: string; managers?: boolean }[] = [
   { id: "tee-sheet", label: "Tee sheet" },
   { id: "import", label: "Sync tee sheet", managers: true },
   { id: "staff", label: "Staff accounts", managers: true },
   { id: "customers", label: "Golfers" },
+  { id: "events", label: "Leagues & events" },
   { id: "reports", label: "Reports" },
   { id: "schedule", label: "Staff schedule" },
   { id: "inventory", label: "Pro shop" },
@@ -135,6 +137,11 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
           <>
             <Header title="Staff schedule" onOpenMenu={openMenu} />
             {course && <ScheduleScreen client={client} me={me} timeZone={course.timeZone} />}
+          </>
+        ) : section === "events" ? (
+          <>
+            <Header title="Leagues & events" onOpenMenu={openMenu} />
+            {course && <EventsScreen client={client} isManager={isManager} timeZone={course.timeZone} courseHoles={course.holes} />}
           </>
         ) : section === "reports" ? (
           <>
