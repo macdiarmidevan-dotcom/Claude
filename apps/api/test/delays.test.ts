@@ -44,8 +44,8 @@ async function sheet() {
 }
 async function bookAt(time: string, name: string, phone: string) {
   const t = (await sheet()).find((x) => x.localTime === time)!;
-  const b = (await call(staff, "POST", "/bookings", { teeTimeId: t.id, holes: 18, customer: { name, email: `${name.split(" ")[0].toLowerCase()}@example.com` }, players: [{}, {}], source: "staff" })).json();
-  const g = (await call(staff, "POST", "/golfers", { name, email: `${name.split(" ")[0].toLowerCase()}@example.com`, phone })).json();
+  const b = (await call(staff, "POST", "/bookings", { teeTimeId: t.id, holes: 18, customer: { name, email: `${name.split(" ")[0]!.toLowerCase()}@example.com` }, players: [{}, {}], source: "staff" })).json();
+  const g = (await call(staff, "POST", "/golfers", { name, email: `${name.split(" ")[0]!.toLowerCase()}@example.com`, phone })).json();
   await call(staff, "PUT", `/bookings/${b.id}/golfer`, { golferId: g.id });
   return b;
 }
@@ -55,7 +55,7 @@ describe("weather delays", () => {
     await bookAt("06:30", "Ann Lake", "630-555-0101");
     await bookAt("07:02", "Bo Park", "630-555-0102");
     const before = await sheet();
-    expect(before[0].localTime).toBe("06:30");
+    expect(before[0]!.localTime).toBe("06:30");
 
     const res = (
       await call(staff, "POST", "/tee-sheet/delays", { date, from: "06:30", minutes: 45, reason: "frost", note: "Greens white", notify: { channels: ["sms"] } })
@@ -69,7 +69,7 @@ describe("weather delays", () => {
     // Loading the sheet again doesn't fill the gap with fresh template times.
     const after = await sheet();
     expect(after.length).toBe(before.length);
-    expect(after[0].localTime).toBe("07:15");
+    expect(after[0]!.localTime).toBe("07:15");
     expect(after.find((t) => t.bookings.some((b) => b.customerName === "Ann Lake"))!.localTime).toBe("07:15");
     expect(after.find((t) => t.bookings.some((b) => b.customerName === "Bo Park"))!.localTime).toBe("07:47");
   });
@@ -85,7 +85,7 @@ describe("weather delays", () => {
     await call(staff, "POST", `/tee-sheet/delays/${delays[0].id}/undo`);
     expect((await call(staff, "POST", `/tee-sheet/delays/${delays[0].id}/undo`)).json().error.code).toBe("already_undone");
     after = await sheet();
-    expect(after[0].localTime).toBe("06:30");
+    expect(after[0]!.localTime).toBe("06:30");
     expect(after.find((t) => t.bookings.some((b) => b.customerName === "Cy Young"))!.localTime).toBe("06:38");
     expect(after.find((t) => t.bookings.some((b) => b.customerName === "Bo Park"))!.localTime).toBe("07:02");
   });
