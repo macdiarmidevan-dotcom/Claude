@@ -9,7 +9,10 @@ import {
   type GolferProfile,
   type Role,
   type EmployeeType,
+  type DayClose,
+  type MoneyMethod,
   type Product,
+  type Report,
   type ProductInput,
   type Sale,
   type SaleLineInput,
@@ -90,6 +93,7 @@ const shifts: DemoShift[] = [];
 const punches: (Omit<Punch, "staff" | "hours"> & { staffId: string })[] = [];
 const swaps: { id: string; status: Swap["status"]; fromId: string; toId: string; offeredId: string; requestedId: string | null; message: string | null; createdAt: string }[] = [];
 const scheduling = { swapsNeedApproval: true };
+const closes = new Map<string, NonNullable<DayClose["close"]>>();
 let shiftSeq = 1;
 
 function seedSchedule() {
@@ -235,6 +239,14 @@ export function createDemoClient(apiKey: string): Client {
     const list = movements.get(p.id) ?? [];
     list.unshift({ id: id(), change, stockAfter: p.stock, reason, saleNumber, note, staff: account()?.name ?? null, at: new Date().toISOString() });
     movements.set(p.id, list);
+  }
+  function demoClose(date: string): DayClose {
+    ensureDay(date);
+    const expected: Record<MoneyMethod, number> = { cash: 0, card: 0, gift_card: 0, punch_card: 0, prepaid: 0, comp: 0 };
+    for (const b of bookings) if (teeTimes.get(b.teeTimeId)?.date === date) for (const p of b.paid) expected[p.method] += p.amountCents;
+    for (const sale of sales)
+      if (sale.status === "completed" && new Intl.DateTimeFormat("en-CA", { timeZone: riverBend.timeZone }).format(new Date(sale.at)) === date) expected[sale.paymentMethod] += sale.totalCents;
+    return { date, expected, close: closes.get(date) ?? null };
   }
   const log = (action: string, golfer?: string) =>
     activity.unshift({ actor: account()?.name ?? "Shared device key", action, golfer: golfer ?? null, bookingId: null, detail: {}, at: new Date().toISOString() });
@@ -978,6 +990,104 @@ export function createDemoClient(apiKey: string): Client {
         }
         log("Refunded a sale", sale.golfer?.name);
         return sale;
+      }),
+    report: (from: string, to: string) =>
+      reply((): Report => {
+        managerOnly();
+        const dayOf = (iso: string) => new Intl.DateTimeFormat("en-CA", { timeZone: riverBend.timeZone }).format(new Date(iso));
+        const inRange = (d: string) => d >= from && d <= to;
+        type Day = Report["days"][number];
+        const days = new Map<string, Day>();
+        const at = (date: string) => {
+          if (!days.has(date)) days.set(date, { date, greenFeesCents: 0, cartsAndExtrasCents: 0, proShopCents: 0, taxCents: 0, collectedCents: 0, rounds: 0 });
+          return days.get(date)!;
+        };
+        const collected: Record<MoneyMethod, number> = { cash: 0, card: 0, gift_card: 0, punch_card: 0, prepaid: 0, comp: 0 };
+        const bySource: Record<string, number> = {};
+        let played = 0;
+        let booked = 0;
+        let noShows = 0;
+        for (const b of bookings) {
+          const t = teeTimes.get(b.teeTimeId)!;
+          if (b.status === "cancelled" || !inRange(t.date)) continue;
+          if (b.status === "no_show") {
+            noShows += b.players;
+            continue;
+          }
+          booked += b.players;
+          bySource[b.source] = (bySource[b.source] ?? 0) + b.players;
+          const d = at(t.date);
+          // The demo doesn't keep booking lines, so carts are worked out from whether the group rides.
+          const carts = b.riding ? Math.min(b.totalCents, b.players * 1300) : 0;
+          d.cartsAndExtrasCents += carts;
+          d.greenFeesCents += b.totalCents - carts;
+          if (b.status === "checked_in" || b.status === "teed_off") {
+            d.rounds += b.players;
+            played += b.players;
+          }
+          // Demo payments are counted on the day of the round.
+          for (const p of b.paid) {
+            d.collectedCents += p.amountCents;
+            collected[p.method] += p.amountCents;
+          }
+        }
+        const kept = sales.filter((x) => inRange(dayOf(x.at)));
+        const categories = new Map<string, { category: string; cents: number; items: number }>();
+        for (const sale of kept.filter((x) => x.status === "completed")) {
+          const d = at(dayOf(sale.at));
+          d.proShopCents += sale.subtotalCents;
+          d.taxCents += sale.taxCents;
+          d.collectedCents += sale.totalCents;
+          collected[sale.paymentMethod] += sale.totalCents;
+          for (const l of sale.lines) {
+            const c = categories.get(l.category) ?? { category: l.category, cents: 0, items: 0 };
+            c.cents += l.totalCents;
+            c.items += l.quantity;
+            categories.set(l.category, c);
+          }
+        }
+        const list = [...days.values()].sort((a, b) => a.date.localeCompare(b.date));
+        const sum = (k: keyof Omit<Day, "date">) => list.reduce((t, d) => t + d[k], 0);
+        const spots = [...teeTimes.values()].filter((t) => inRange(t.date) && t.status === "open").reduce((t, x) => t + x.maxPlayers, 0);
+        const worked = punches.filter((p) => p.clockOut && inRange(dayOf(p.clockIn)));
+        return {
+          from,
+          to,
+          revenue: {
+            greenFeesCents: sum("greenFeesCents"),
+            cartsAndExtrasCents: sum("cartsAndExtrasCents"),
+            proShopCents: sum("proShopCents"),
+            totalCents: sum("greenFeesCents") + sum("cartsAndExtrasCents") + sum("proShopCents"),
+            salesTaxCents: sum("taxCents"),
+            proShopRefundsCents: kept.filter((x) => x.status === "refunded").reduce((t, x) => t + x.totalCents, 0),
+            proShopByCategory: [...categories.values()].sort((a, b) => b.cents - a.cents),
+          },
+          collected: { ...collected, totalCents: Object.values(collected).reduce((t, c) => t + c, 0) },
+          rounds: { played, booked, noShows, openSpots: spots, occupancy: spots ? Math.round((booked / spots) * 1000) / 10 : null, bySource },
+          labor: {
+            hours: Math.round(worked.reduce((t, p) => t + (Date.parse(p.clockOut!) - Date.parse(p.clockIn)) / 3_600_000, 0) * 10) / 10,
+            people: new Set(worked.map((p) => p.staffId)).size,
+          },
+          days: list,
+        };
+      }),
+    dayClose: (date: string) => reply(() => demoClose(date)),
+    closeDay: (date: string, input: { countedCashCents: number; note?: string | null }) =>
+      reply(() => {
+        const expected = demoClose(date).expected;
+        if (closes.has(date) && role() !== "manager") throw conflict("already_closed", "This day is already closed. Ask a manager to close it again");
+        const overShortCents = input.countedCashCents - expected.cash;
+        if (overShortCents !== 0 && !input.note?.trim()) throw new ApiError(400, "note_required", "The drawer is over or short. Add a note saying why");
+        closes.set(date, {
+          expectedCashCents: expected.cash,
+          countedCashCents: input.countedCashCents,
+          overShortCents,
+          note: input.note?.trim() || null,
+          closedBy: account()?.name ?? null,
+          closedAt: new Date().toISOString(),
+        });
+        log("Closed the day");
+        return demoClose(date);
       }),
     posSettings: () => reply(() => ({ ...pos })),
     savePosSettings: (next: { salesTaxBps: number }) =>

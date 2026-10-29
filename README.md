@@ -146,6 +146,10 @@ Each row shows the time, filled spots, the groups (✓ checked in at the shop, �
 
 ![Pro shop register](docs/screenshots/pro-shop-register.png)
 
+**Reports and closing the day.** **Reports** starts with **Close the day**: it shows what the tee sheet and register took today by payment type, and staff count the cash drawer against it. If the drawer is over or short they must say why. Once a day is closed only a manager can count it again. Managers also see reports for today, yesterday, this or last week, or this or last month: revenue before tax (green fees, carts and extras, pro shop), money taken by payment type (prepaid online is shown apart, since the booking provider collected it), sales tax collected, pro shop sales by category, rounds played, occupancy, no-shows, players by booking source and staff hours, plus a day-by-day table. **Download CSV** saves the day-by-day table for the bookkeeper. Revenue counts on the day of the round; money taken counts on the day it was paid.
+
+![Reports](docs/screenshots/reports.png)
+
 **Calendar.** The 📅 button next to Today opens a month calendar to jump the tee sheet to any date.
 
 **Manager tools.** Signed in as a manager, the app shows a **Waiver** button where the manager can change the wording. Each save is a new version; drivers who already signed stay tied to the version they read.
