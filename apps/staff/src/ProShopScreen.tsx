@@ -416,13 +416,13 @@ function ProductEditor(props: { client: Client; product?: Product; categories: s
   const [cost, setCost] = useState(dollars(product?.costCents));
   const [taxable, setTaxable] = useState(product?.taxable ?? true);
   const [trackStock, setTrackStock] = useState(product?.trackStock ?? true);
-  const [stock, setStock] = useState("0");
+  const [stock, setStock] = useState(String(product?.stock ?? 0));
   const [reorder, setReorder] = useState(String(product?.reorderLevel ?? 0));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const priceCents = toCents(price);
   const costCents = cost.trim() ? toCents(cost) : null;
-  const valid = name.trim() && priceCents !== undefined && costCents !== undefined && /^\d+$/.test(reorder) && (product || /^\d+$/.test(stock));
+  const valid = name.trim() && priceCents !== undefined && costCents !== undefined && /^\d+$/.test(reorder) && (!trackStock || /^\d+$/.test(stock));
 
   async function run(fn: () => Promise<unknown>) {
     setBusy(true);
@@ -447,7 +447,12 @@ function ProductEditor(props: { client: Client; product?: Product; categories: s
       trackStock,
       reorderLevel: Number(reorder),
     };
-    return run(() => (product ? client.updateProduct(product.id, input) : client.addProduct({ ...input, stock: trackStock ? Number(stock) : 0 })));
+    return run(async () => {
+      if (!product) return client.addProduct({ ...input, stock: trackStock ? Number(stock) : 0 });
+      await client.updateProduct(product.id, input);
+      // A new number here is a shelf count; sales keep taking it down on their own after this.
+      if (trackStock && Number(stock) !== product.stock) await client.changeStock(product.id, { kind: "count", quantity: Number(stock), note: "Set by manager" });
+    });
   }
 
   return (
@@ -478,19 +483,20 @@ function ProductEditor(props: { client: Client; product?: Product; categories: s
       </View>
       {trackStock && (
         <View style={styles.row}>
-          {!product && <Field label="In stock now" value={stock} onChangeText={setStock} keyboardType="number-pad" />}
+          <Field label="In stock now" value={stock} onChangeText={setStock} keyboardType="number-pad" />
           <Field label="Reorder when stock reaches" value={reorder} onChangeText={setReorder} keyboardType="number-pad" />
         </View>
       )}
+      {trackStock && <Text style={styles.muted}>Each sale at the register takes this down automatically, and a refund puts it back.</Text>}
       {error && <Text role="alert" style={styles.error}>{error}</Text>}
       <View style={[styles.choices, { marginTop: 16 }]}>
         <Button label={busy ? "Saving…" : "Save"} primary disabled={busy || !valid} onPress={save} />
         <Button label="Cancel" disabled={busy} onPress={onClose} />
         {product &&
           (product.active ? (
-            <Button label="Remove from sale" danger disabled={busy} onPress={() => run(() => client.updateProduct(product.id, { active: false }))} />
+            <Button label="Remove item" danger disabled={busy} onPress={() => run(() => client.updateProduct(product.id, { active: false }))} />
           ) : (
-            <Button label="Sell again" disabled={busy} onPress={() => run(() => client.updateProduct(product.id, { active: true }))} />
+            <Button label="Bring item back" disabled={busy} onPress={() => run(() => client.updateProduct(product.id, { active: true }))} />
           ))}
       </View>
     </Sheet>
