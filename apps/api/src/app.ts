@@ -7,6 +7,23 @@ import { lookupApiKey, type ApiKeyContext } from "./keys.ts";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { buildMcpServer } from "./mcp.ts";
 import { importTeeSheet, listImports } from "./imports.ts";
+import {
+  actOnSwap,
+  clockIn,
+  clockOut,
+  copyWeek,
+  createShift,
+  deleteShift,
+  editPunch,
+  getSchedulingSettings,
+  listShifts,
+  listSwaps,
+  myClock,
+  requestSwap,
+  saveSchedulingSettings,
+  timesheets,
+  updateShift,
+} from "./scheduling.ts";
 import { deleteSync, getSync, runSync, saveSync, type FetchReport } from "./sync.ts";
 import { createGolfer, getGolfer, linkGolfer, searchGolfers, updateGolfer } from "./golfers.ts";
 import {
@@ -71,6 +88,16 @@ const ACTIONS: Record<string, string> = {
   "PUT /v1/courses/:slug/bookings/:id/golfer": "Linked a golfer account",
   "PATCH /v1/courses/:slug/staff/:id": "Changed a staff account",
   "POST /v1/courses/:slug/employee-types": "Added an employee type",
+  "POST /v1/courses/:slug/shifts": "Added a shift",
+  "PATCH /v1/courses/:slug/shifts/:id": "Changed a shift",
+  "DELETE /v1/courses/:slug/shifts/:id": "Removed a shift",
+  "POST /v1/courses/:slug/shifts/copy-week": "Copied a week of shifts",
+  "POST /v1/courses/:slug/clock/in": "Clocked in",
+  "POST /v1/courses/:slug/clock/out": "Clocked out",
+  "PATCH /v1/courses/:slug/punches/:id": "Corrected a time punch",
+  "POST /v1/courses/:slug/swaps": "Asked to swap a shift",
+  "POST /v1/courses/:slug/swaps/:id/:action": "Answered a shift swap",
+  "PUT /v1/courses/:slug/settings/scheduling": "Changed scheduling settings",
   "PATCH /v1/courses/:slug/employee-types/:id": "Changed an employee type",
 };
 
@@ -146,6 +173,16 @@ const staffPatch = z.object({
   password: z.string().max(200).optional(),
   employeeTypeId: z.uuid().nullable().optional(),
 });
+const hhmm = z.string().regex(/^\d{2}:\d{2}$/);
+const shiftBody = z.object({
+  staffUserId: z.uuid().nullish(),
+  employeeTypeId: z.uuid().nullish(),
+  date: z.iso.date(),
+  start: hhmm,
+  end: hhmm,
+  note: z.string().max(500).nullish(),
+});
+const rangeQuery = z.object({ from: z.iso.date(), to: z.iso.date() });
 const typeBody = z.object({ name: z.string().trim().min(1).max(60) });
 const typePatch = z.object({ name: z.string().trim().min(1).max(60).optional(), active: z.boolean().optional() });
 const golferBody = z.object({
@@ -339,6 +376,88 @@ export function buildApp(db: Db, opts: { fetchReport?: FetchReport } = {}): Fast
   app.patch("/v1/courses/:slug/employee-types/:id", async (req) => {
     const course = await managedCourseFor(req);
     return updateEmployeeType(db, course.id, idParams.parse(req.params).id, typePatch.parse(req.body));
+  });
+
+  // Staff scheduling. Everyone sees the schedule; managers build it.
+  const signedIn = (req: { staff?: { user: StaffUser } }) => {
+    if (!req.staff) throw badRequest("no_account", "Sign in with your own account to use the time clock and swaps");
+    return req.staff.user;
+  };
+  app.get("/v1/courses/:slug/shifts", async (req) => {
+    const course = await courseFor(req);
+    const { from, to } = rangeQuery.parse(req.query);
+    return listShifts(db, course, from, to);
+  });
+  app.post("/v1/courses/:slug/shifts", async (req, reply) => {
+    const course = await managedCourseFor(req);
+    return reply.status(201).send(await createShift(db, course, shiftBody.parse(req.body)));
+  });
+  app.patch("/v1/courses/:slug/shifts/:id", async (req) => {
+    const course = await managedCourseFor(req);
+    return updateShift(db, course, idParams.parse(req.params).id, shiftBody.partial().parse(req.body));
+  });
+  app.delete("/v1/courses/:slug/shifts/:id", async (req) => {
+    const course = await managedCourseFor(req);
+    await deleteShift(db, course, idParams.parse(req.params).id);
+    return { ok: true };
+  });
+  app.post("/v1/courses/:slug/shifts/copy-week", async (req) => {
+    const course = await managedCourseFor(req);
+    const { from, to } = rangeQuery.parse(req.body);
+    return copyWeek(db, course, from, to);
+  });
+
+  app.get("/v1/courses/:slug/clock", async (req) => myClock(db, await courseFor(req), signedIn(req)));
+  app.post("/v1/courses/:slug/clock/in", async (req) => {
+    const course = await courseFor(req);
+    return clockIn(db, course, signedIn(req));
+  });
+  app.post("/v1/courses/:slug/clock/out", async (req) => {
+    const course = await courseFor(req);
+    return clockOut(db, course, signedIn(req));
+  });
+  app.get("/v1/courses/:slug/timesheets", async (req) => {
+    const course = await managedCourseFor(req);
+    const { from, to } = rangeQuery.parse(req.query);
+    return timesheets(db, course, from, to);
+  });
+  app.patch("/v1/courses/:slug/punches/:id", async (req) => {
+    const course = await managedCourseFor(req);
+    const patch = z.object({ clockIn: z.iso.datetime({ offset: true }).optional(), clockOut: z.iso.datetime({ offset: true }).nullable().optional() }).parse(req.body);
+    return editPunch(db, course, req.staff?.user.id, idParams.parse(req.params).id, patch);
+  });
+
+  app.get("/v1/courses/:slug/swaps", async (req) => {
+    const course = await courseFor(req);
+    return listSwaps(db, course, req.staff?.user, req.apiKey!.role === "manager");
+  });
+  app.post("/v1/courses/:slug/swaps", async (req, reply) => {
+    const course = await courseFor(req);
+    const body = z
+      .object({ offeredShiftId: z.uuid(), toUserId: z.uuid(), requestedShiftId: z.uuid().nullish(), message: z.string().max(500).nullish() })
+      .parse(req.body);
+    return reply.status(201).send(await requestSwap(db, course, signedIn(req), body));
+  });
+  app.post("/v1/courses/:slug/swaps/:id/:action", async (req) => {
+    const course = await courseFor(req);
+    const { id, action } = z.object({ id: z.uuid(), action: z.enum(["accept", "decline", "approve", "reject", "cancel"]) }).parse(req.params);
+    return actOnSwap(db, course, req.staff?.user, req.apiKey!.role === "manager", id, action);
+  });
+  // Coworkers to swap with: everyone signed in can see who works here, but not their emails.
+  app.get("/v1/courses/:slug/coworkers", async (req) => {
+    const course = await courseFor(req);
+    const { rows } = await db.query(
+      `SELECT u.id, u.name, et.name AS type FROM staff_users u LEFT JOIN employee_types et ON et.id = u.employee_type_id
+        WHERE u.course_id = $1 AND u.active ORDER BY lower(u.name)`,
+      [course.id],
+    );
+    return rows.map((r) => ({ id: r.id, name: r.name, employeeType: r.type }));
+  });
+
+  app.get("/v1/courses/:slug/settings/scheduling", async (req) => getSchedulingSettings(db, await courseFor(req)));
+  app.put("/v1/courses/:slug/settings/scheduling", async (req) => {
+    const course = await managedCourseFor(req);
+    return saveSchedulingSettings(db, course, z.object({ swapsNeedApproval: z.boolean() }).parse(req.body));
   });
 
   app.get("/v1/courses/:slug/activity", async (req) => listActivity(db, (await managedCourseFor(req)).id));
