@@ -155,6 +155,46 @@ describe("staff logins", () => {
     expect(log.find((a: { detail: { passwordReset?: boolean } }) => a.detail.passwordReset)).toBeTruthy();
     expect((await app.inject({ url: `${base}/activity`, headers: auth(secretKey) })).statusCode).toBe(403);
   });
+
+  it("gives each person an employee type, and managers add their own types", async () => {
+    const token = await managerToken();
+    const types = (await app.inject({ url: `${base}/employee-types`, headers: auth(token) })).json();
+    expect(types.map((t: { name: string }) => t.name)).toEqual(["Pro Shop", "Ranger/Starter", "Cart Attendant", "Bartender", "Food & Beverage", "Grounds Crew"]);
+
+    const add = (name: string) => app.inject({ method: "POST", url: `${base}/employee-types`, headers: auth(token), payload: { name } });
+    const golf = await add("Golf Instructor");
+    expect(golf.statusCode).toBe(201);
+    expect((await add("golf instructor")).json().error.code).toBe("type_exists");
+
+    const cart = types.find((t: { name: string }) => t.name === "Cart Attendant");
+    const created = await app.inject({
+      method: "POST",
+      url: `${base}/staff`,
+      headers: auth(token),
+      payload: { name: "Casey Carts", email: "casey@riverbend.example", role: "staff", password: "cart-barn-1", employeeTypeId: cart.id },
+    });
+    expect(created.json().employeeType).toEqual({ id: cart.id, name: "Cart Attendant" });
+    const casey = created.json().id;
+
+    const moved = await app.inject({ method: "PATCH", url: `${base}/staff/${casey}`, headers: auth(token), payload: { employeeTypeId: golf.json().id } });
+    expect(moved.json().employeeType.name).toBe("Golf Instructor");
+    const caseyToken = (await signIn("casey@riverbend.example", "cart-barn-1")).json().token;
+    expect((await app.inject({ url: `${base}/me`, headers: auth(caseyToken) })).json().user.employeeType.name).toBe("Golf Instructor");
+
+    // Renaming carries through to everyone with that type; removing hides it from new picks.
+    await app.inject({ method: "PATCH", url: `${base}/employee-types/${golf.json().id}`, headers: auth(token), payload: { name: "Teaching Pro" } });
+    const list = (await app.inject({ url: `${base}/staff`, headers: auth(token) })).json();
+    expect(list.find((u: { id: string }) => u.id === casey).employeeType.name).toBe("Teaching Pro");
+    const removed = await app.inject({ method: "PATCH", url: `${base}/employee-types/${golf.json().id}`, headers: auth(token), payload: { active: false } });
+    expect(removed.json()).toMatchObject({ active: false, staffCount: 1 });
+    const reuse = await app.inject({ method: "PATCH", url: `${base}/staff/${casey}`, headers: auth(token), payload: { employeeTypeId: golf.json().id } });
+    expect(reuse.json().error.code).toBe("invalid_employee_type");
+    expect((await add("Teaching Pro")).statusCode).toBe(201);
+
+    const cleared = await app.inject({ method: "PATCH", url: `${base}/staff/${casey}`, headers: auth(token), payload: { employeeTypeId: null } });
+    expect(cleared.json().employeeType).toBeNull();
+    expect((await app.inject({ url: `${base}/employee-types`, headers: auth(secretKey) })).statusCode).toBe(403);
+  });
 });
 
 async function seedKeyFor(role: "manager") {

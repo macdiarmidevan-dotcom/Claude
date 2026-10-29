@@ -11,11 +11,12 @@ interface Props {
   sheet: SheetTeeTime[];
   courseHoles: number;
   station: Station;
+  onOpenGolfer?: (golferId: string) => void;
   onChanged: () => void;
   onClose: () => void;
 }
 
-export function TeeTimePanel({ client, teeTime, sheet, courseHoles, station, onChanged, onClose }: Props) {
+export function TeeTimePanel({ client, teeTime, sheet, courseHoles, station, onOpenGolfer, onChanged, onClose }: Props) {
   const [error, setError] = useState<string>();
   const [moving, setMoving] = useState<SheetBooking>();
   // sendOff: the starter is sending the group off the tee; otherwise just editing carts.
@@ -62,7 +63,13 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, station, onC
       {active.map((b) => (
         <View key={b.id} style={styles.booking}>
           <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-            <Text style={styles.name}>{b.customerName}</Text>
+            {b.golferId && onOpenGolfer ? (
+              <Pressable accessibilityRole="link" accessibilityLabel={`Open ${b.customerName}'s golfer account`} onPress={() => onOpenGolfer(b.golferId!)} hitSlop={6}>
+                <Text style={[styles.name, styles.nameLink]}>{b.customerName} ›</Text>
+              </Pressable>
+            ) : (
+              <Text style={styles.name}>{b.customerName}</Text>
+            )}
             <Text style={[styles.badge, { color: statusColor[b.status], borderColor: statusColor[b.status] }]}>
               {statusLabel[b.status]}
             </Text>
@@ -74,7 +81,7 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, station, onC
           <PaymentLine booking={b} />
           {station === "proshop" && (
             <Text style={[styles.account, !b.golferId && { color: colors.warn }]}>
-              {b.golferId ? "✓ On golfer account" : "No golfer account linked yet"}
+              {b.golferId ? "✓ On golfer account (tap the name to open it)" : "No golfer account linked yet"}
             </Text>
           )}
           {b.cartNumbers.length > 0 && (
@@ -437,6 +444,7 @@ const styles = StyleSheet.create({
   carts: { color: colors.greenText, fontWeight: "700", fontSize: 14, marginTop: 4 },
   payment: { fontWeight: "700", fontSize: 14, marginTop: 4 },
   warning: { color: colors.warn, fontSize: 14, marginTop: 4 },
+  nameLink: { color: colors.green, textDecorationLine: "underline" },
   account: { color: colors.greenText, fontSize: 14, marginTop: 4, fontWeight: "600" },
   skip: { color: colors.muted, fontSize: 14, textDecorationLine: "underline" },
   input: { borderWidth: 1, borderColor: colors.border, borderRadius: 8, padding: 12, fontSize: 16, marginBottom: 10, color: colors.text },
