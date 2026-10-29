@@ -44,7 +44,7 @@ export function StaffScreen({ client, me }: { client: Client; me: StaffUser | nu
       )}
       {error && <Text role="alert" style={styles.error}>{error}</Text>}
       {!people ? (
-        !error && <ActivityIndicator style={{ marginTop: 24 }} color={colors.green} />
+        !error && <ActivityIndicator style={{ marginTop: 24 }} color={colors.primary} />
       ) : (
         <View style={styles.list}>
           {people.map((p) => (
@@ -367,30 +367,30 @@ function when(iso: string) {
 }
 
 const styles = StyleSheet.create({
-  content: { padding: 24, maxWidth: 820 },
+  content: { padding: 16, maxWidth: 820 },
   row: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 6 },
-  h2: { fontSize: 20, fontWeight: "700", color: colors.text, marginBottom: 6 },
-  help: { color: colors.muted, fontSize: 15, lineHeight: 22, marginBottom: 12 },
+  h2: { fontSize: 17, fontWeight: "700", color: colors.text, marginBottom: 6 },
+  help: { color: colors.muted, fontSize: 14, lineHeight: 22, marginBottom: 12 },
   error: { color: colors.noShow, marginVertical: 8 },
   notice: { color: colors.checkedIn, marginVertical: 8 },
   list: { gap: 10 },
-  person: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: 10, padding: 14, marginBottom: 10 },
+  person: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: 3, padding: 14, marginBottom: 10 },
   personTop: { flexDirection: "row", flexWrap: "wrap", gap: 12, alignItems: "center" },
-  name: { fontSize: 16, fontWeight: "700", color: colors.text, marginBottom: 4 },
-  meta: { color: colors.muted, fontSize: 14 },
+  name: { fontSize: 14, fontWeight: "700", color: colors.text, marginBottom: 4 },
+  meta: { color: colors.muted, fontSize: 13 },
   actions: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   resetRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 12, alignItems: "center" },
-  input: { borderWidth: 1, borderColor: colors.border, borderRadius: 8, padding: 10, fontSize: 15, color: colors.text, backgroundColor: "#fff" },
-  fieldLabel: { fontSize: 13, fontWeight: "600", color: colors.muted, marginBottom: 6 },
-  small: { borderWidth: 1, borderColor: colors.border, borderRadius: 8, paddingHorizontal: 12, minHeight: 40, justifyContent: "center", backgroundColor: "#fff" },
-  smallPrimary: { backgroundColor: colors.green, borderColor: colors.green },
-  smallText: { color: colors.text, fontWeight: "600", fontSize: 14 },
-  button: { backgroundColor: colors.green, borderRadius: 10, paddingHorizontal: 18, minHeight: 44, justifyContent: "center" },
-  buttonText: { color: "#fff", fontSize: 15, fontWeight: "600" },
-  typeRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: 10, padding: 12 },
-  typeName: { fontSize: 15, fontWeight: "700", color: colors.text },
+  input: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, padding: 10, fontSize: 14, color: colors.text, backgroundColor: "#fff" },
+  fieldLabel: { fontSize: 12, fontWeight: "600", color: colors.muted, marginBottom: 6 },
+  small: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, paddingHorizontal: 12, minHeight: 34, justifyContent: "center", backgroundColor: "#fff" },
+  smallPrimary: { backgroundColor: colors.primary, borderColor: colors.primary },
+  smallText: { color: colors.text, fontWeight: "600", fontSize: 13 },
+  button: { backgroundColor: colors.primary, borderRadius: 3, paddingHorizontal: 12, minHeight: 36, justifyContent: "center" },
+  buttonText: { color: "#fff", fontSize: 14, fontWeight: "600" },
+  typeRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: 3, padding: 12 },
+  typeName: { fontSize: 14, fontWeight: "700", color: colors.text },
   activity: { flexDirection: "row", gap: 12, paddingVertical: 8, borderBottomWidth: 1, borderColor: colors.border, flexWrap: "wrap" },
-  activityTime: { color: colors.muted, fontSize: 14, width: 110 },
-  activityText: { color: colors.text, fontSize: 14, flex: 1, minWidth: 200 },
+  activityTime: { color: colors.muted, fontSize: 13, width: 110 },
+  activityText: { color: colors.text, fontSize: 13, flex: 1, minWidth: 200 },
   focusRing: { outlineColor: colors.focus, outlineWidth: 2, outlineStyle: "solid" } as object,
 });

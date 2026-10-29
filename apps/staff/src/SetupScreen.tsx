@@ -111,7 +111,7 @@ export function StationPicker({ value, onChange, dark }: { value: Station; onCha
     { id: "starter", label: "Starter" },
   ];
   return (
-    <View style={[styles.segment, dark && { borderColor: "#cfe3d5" }]}>
+    <View style={[styles.segment, dark && { borderColor: "#3a3d42" }]}>
       {options.map((o) => {
         const on = o.id === value;
         return (
@@ -120,9 +120,9 @@ export function StationPicker({ value, onChange, dark }: { value: Station; onCha
             accessibilityRole="button"
             accessibilityState={{ selected: on }}
             onPress={() => onChange(o.id)}
-            style={[styles.segmentItem, on && (dark ? { backgroundColor: "#fff" } : { backgroundColor: colors.green })]}
+            style={[styles.segmentItem, on && { backgroundColor: colors.primary }]}
           >
-            <Text style={{ fontWeight: "600", color: on ? (dark ? colors.green : "#fff") : dark ? "#fff" : colors.text }}>{o.label}</Text>
+            <Text style={{ fontWeight: "600", color: on ? "#fff" : dark ? colors.railText : colors.text }}>{o.label}</Text>
           </Pressable>
         );
       })}
@@ -141,18 +141,18 @@ function Field(props: { label: string } & React.ComponentProps<typeof TextInput>
 }
 
 const styles = StyleSheet.create({
-  page: { flex: 1, backgroundColor: colors.green, alignItems: "center", justifyContent: "center", padding: 16 },
-  card: { backgroundColor: colors.card, borderRadius: 14, padding: 24, width: "100%", maxWidth: 420 },
-  title: { fontSize: 26, fontWeight: "700", color: colors.green, marginBottom: 4 },
-  subtitle: { color: colors.muted, marginBottom: 20, fontSize: 15 },
-  label: { fontSize: 13, fontWeight: "600", color: colors.muted, marginBottom: 6 },
-  input: { borderWidth: 1, borderColor: colors.border, borderRadius: 8, padding: 12, fontSize: 16, color: colors.text },
+  page: { flex: 1, backgroundColor: colors.bg, alignItems: "center", justifyContent: "center", padding: 16 },
+  card: { backgroundColor: colors.card, borderRadius: 3, borderWidth: 1, borderColor: colors.border, padding: 24, width: "100%", maxWidth: 420 },
+  title: { fontSize: 20, fontWeight: "700", color: colors.text, marginBottom: 4 },
+  subtitle: { color: colors.muted, marginBottom: 20, fontSize: 14 },
+  label: { fontSize: 12, fontWeight: "600", color: colors.muted, marginBottom: 6 },
+  input: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, padding: 12, fontSize: 14, color: colors.text },
   error: { color: colors.noShow, marginBottom: 12 },
-  segment: { flexDirection: "row", borderWidth: 1, borderColor: colors.border, borderRadius: 10, overflow: "hidden", marginBottom: 14 },
-  segmentItem: { flex: 1, paddingVertical: 10, paddingHorizontal: 14, alignItems: "center" },
-  button: { backgroundColor: colors.green, borderRadius: 10, padding: 14, alignItems: "center", marginTop: 6 },
-  buttonText: { color: "#fff", fontSize: 16, fontWeight: "600" },
+  segment: { flexDirection: "row", borderWidth: 1, borderColor: colors.border, borderRadius: 3, overflow: "hidden", marginBottom: 14 },
+  segmentItem: { flex: 1, paddingVertical: 7, paddingHorizontal: 10, alignItems: "center" },
+  button: { backgroundColor: colors.primary, borderRadius: 3, paddingVertical: 10, alignItems: "center", marginTop: 6 },
+  buttonText: { color: "#fff", fontSize: 14, fontWeight: "600" },
   links: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", gap: 12, marginTop: 16 },
-  link: { color: colors.green, fontWeight: "600", textDecorationLine: "underline", fontSize: 14 },
-  hint: { color: colors.muted, fontSize: 13, marginTop: 12 },
+  link: { color: colors.primary, fontWeight: "600", textDecorationLine: "underline", fontSize: 13 },
+  hint: { color: colors.muted, fontSize: 12, marginTop: 12 },
 });

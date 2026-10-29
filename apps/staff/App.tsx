@@ -54,6 +54,6 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: colors.green },
+  root: { flex: 1, backgroundColor: colors.rail },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
 });

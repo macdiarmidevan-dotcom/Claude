@@ -10,8 +10,8 @@ import { colors, type WebPress, formatTime, money, slotColor, slotLabel, slotMar
 
 // Other devices' changes show up within this many seconds.
 const REFRESH_MS = 5000;
-const ROW_HEIGHT = 44;
-const HOUR_HEIGHT = 30;
+const ROW_HEIGHT = 32;
+const HOUR_HEIGHT = 24;
 
 type Line = { kind: "hour"; key: string; label: string } | { kind: "time"; key: string; teeTime: SheetTeeTime; index: number };
 
@@ -151,7 +151,7 @@ export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu,
       <View style={{ flex: 1, flexDirection: "row" }}>
         <View style={{ flex: 1, minWidth: 0 }}>
           {!sheet ? (
-            <ActivityIndicator style={{ marginTop: 40 }} color={colors.green} />
+            <ActivityIndicator style={{ marginTop: 40 }} color={colors.primary} />
           ) : sheet.length === 0 ? (
             <Text style={styles.empty}>No tee times on this day.</Text>
           ) : (
@@ -223,7 +223,7 @@ function WeekStrip({ date, today, compact, onPick }: { date: string; today: stri
         onPress={() => setCalendar(true)}
         style={({ focused }: WebPress) => [styles.todayButton, { marginLeft: 6 }, focused && styles.focusRing]}
       >
-        <Text style={styles.todayText}>{compact ? "📅" : `📅 ${new Date(`${date}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", year: "numeric", timeZone: "UTC" })}`}</Text>
+        <Text style={styles.todayText}>{compact ? "Cal" : `Calendar · ${new Date(`${date}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", year: "numeric", timeZone: "UTC" })}`}</Text>
       </Pressable>
       <WeekArrow label="‹" name="Previous week" onPress={() => onPick(addDays(date, -7))} />
       <View style={styles.days}>
@@ -239,7 +239,7 @@ function WeekStrip({ date, today, compact, onPick }: { date: string; today: stri
               onPress={() => onPick(d)}
               style={({ focused }: WebPress) => [styles.day, on && styles.dayOn, focused && styles.focusRing]}
             >
-              <Text style={[styles.dayText, on && { color: "#fff" }, d === today && !on && { color: colors.green }]}>
+              <Text style={[styles.dayText, on && { color: "#fff" }, d === today && !on && { color: colors.primary }]}>
                 {compact ? `${weekday.slice(0, 2)}\n${day}` : `${weekday} ${day}`}
               </Text>
             </Pressable>
@@ -324,7 +324,7 @@ function TeeTimeRow({ teeTime, priceCents, compact, selected, isNext, past, onPr
       ]}
     >
       <View style={[styles.timeCol, compact && { width: 58 }]}>
-        <Text style={[styles.rowTime, compact && { fontSize: 14 }]}>{formatTime(teeTime.localTime)}</Text>
+        <Text style={[styles.rowTime, compact && { fontSize: 13 }]}>{formatTime(teeTime.localTime)}</Text>
         {isNext && <Text style={styles.next}>NEXT</Text>}
       </View>
       {priceCents !== undefined && <Text style={styles.price}>{money(priceCents)}</Text>}
@@ -383,39 +383,39 @@ function TeeTimeRow({ teeTime, priceCents, compact, selected, isNext, past, onPr
 }
 
 const styles = StyleSheet.create({
-  empty: { color: colors.muted, textAlign: "center", marginTop: 40, paddingHorizontal: 24, fontSize: 15, lineHeight: 22 },
+  empty: { color: colors.muted, textAlign: "center", marginTop: 40, paddingHorizontal: 24, fontSize: 14, lineHeight: 22 },
   focusRing: { outlineColor: colors.focus, outlineWidth: 2, outlineStyle: "solid", outlineOffset: -2 } as object,
   week: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: colors.card, borderBottomWidth: 1, borderColor: colors.border, paddingHorizontal: 12, paddingVertical: 8 },
-  todayButton: { borderWidth: 1, borderColor: colors.green, borderRadius: 8, paddingHorizontal: 12, minHeight: 40, justifyContent: "center" },
-  todayText: { color: colors.green, fontWeight: "700", fontSize: 14 },
-  arrow: { width: 32, minHeight: 40, alignItems: "center", justifyContent: "center", borderRadius: 8 },
-  arrowText: { fontSize: 24, color: colors.green, lineHeight: 26 },
+  todayButton: { borderWidth: 1, borderColor: colors.primary, borderRadius: 3, paddingHorizontal: 12, minHeight: 34, justifyContent: "center" },
+  todayText: { color: colors.primary, fontWeight: "700", fontSize: 13 },
+  arrow: { width: 32, minHeight: 34, alignItems: "center", justifyContent: "center", borderRadius: 3 },
+  arrowText: { fontSize: 20, color: colors.primary, lineHeight: 26 },
   days: { flex: 1, flexDirection: "row", gap: 4 },
-  day: { flex: 1, minHeight: 40, borderRadius: 8, alignItems: "center", justifyContent: "center", paddingHorizontal: 2 },
+  day: { flex: 1, minHeight: 34, borderRadius: 3, alignItems: "center", justifyContent: "center", paddingHorizontal: 2 },
   dayOn: { backgroundColor: colors.text },
-  dayText: { fontSize: 13, fontWeight: "600", color: colors.text, textAlign: "center" },
-  legend: { flexDirection: "row", flexWrap: "wrap", gap: 14, paddingHorizontal: 16, paddingVertical: 8, backgroundColor: colors.bg, borderBottomWidth: 1, borderColor: colors.border },
+  dayText: { fontSize: 12, fontWeight: "600", color: colors.text, textAlign: "center" },
+  legend: { flexDirection: "row", flexWrap: "wrap", gap: 14, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: colors.bg, borderBottomWidth: 1, borderColor: colors.border },
   legendItem: { flexDirection: "row", alignItems: "center", gap: 6 },
-  legendSwatch: { width: 20, height: 16, borderRadius: 3, alignItems: "center", justifyContent: "center" },
+  legendSwatch: { width: 16, height: 14, borderRadius: 2, alignItems: "center", justifyContent: "center" },
   legendMark: { color: "#fff", fontSize: 10, fontWeight: "700" },
-  legendText: { fontSize: 13, color: colors.text },
+  legendText: { fontSize: 12, color: colors.text },
   hour: { height: HOUR_HEIGHT, justifyContent: "center", paddingHorizontal: 12, backgroundColor: colors.bg, borderBottomWidth: 1, borderColor: colors.border },
   hourText: { fontSize: 12, fontWeight: "700", color: colors.muted, letterSpacing: 0.5 },
   row: { height: ROW_HEIGHT, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12, backgroundColor: colors.card, borderBottomWidth: 1, borderColor: colors.border },
-  rowSelected: { backgroundColor: colors.greenLight },
+  rowSelected: { backgroundColor: colors.primaryLight },
   timeCol: { width: 70 },
-  rowTime: { fontSize: 15, fontWeight: "700", color: colors.text, fontVariant: ["tabular-nums"] },
-  next: { fontSize: 9, fontWeight: "800", color: colors.green, letterSpacing: 1 },
-  price: { width: 60, fontSize: 13, color: colors.muted, fontVariant: ["tabular-nums"] },
+  rowTime: { fontSize: 13, fontWeight: "600", color: colors.text, fontVariant: ["tabular-nums"] },
+  next: { fontSize: 9, fontWeight: "800", color: colors.primary, letterSpacing: 1 },
+  price: { width: 60, fontSize: 12, color: colors.muted, fontVariant: ["tabular-nums"] },
   slots: { flex: 1, flexDirection: "row", gap: 3, minWidth: 0 },
-  slot: { flex: 1, height: 28, borderRadius: 4, justifyContent: "center", paddingHorizontal: 6, minWidth: 0 },
+  slot: { flex: 1, height: 22, borderRadius: 2, justifyContent: "center", paddingHorizontal: 6, minWidth: 0 },
   slotOpen: { borderWidth: 1, borderColor: colors.border, borderStyle: "dashed", alignItems: "center" },
-  slotText: { color: "#fff", fontSize: 13, fontWeight: "600" },
+  slotText: { color: "#fff", fontSize: 12, fontWeight: "600" },
   openText: { color: colors.muted, fontSize: 12 },
-  blockedBar: { flex: 1, height: 28, borderRadius: 4, backgroundColor: colors.blocked, justifyContent: "center", paddingHorizontal: 10 },
-  blockedText: { color: colors.muted, fontStyle: "italic", fontSize: 13 },
+  blockedBar: { flex: 1, height: 22, borderRadius: 2, backgroundColor: colors.blocked, justifyContent: "center", paddingHorizontal: 10 },
+  blockedText: { color: colors.muted, fontStyle: "italic", fontSize: 12 },
   endCol: { width: 104, alignItems: "flex-end" },
-  pay: { fontWeight: "700", fontSize: 13 },
-  cart: { fontSize: 12, color: colors.greenText, fontWeight: "600" },
+  pay: { fontWeight: "700", fontSize: 12 },
+  cart: { fontSize: 12, color: colors.primaryText, fontWeight: "600" },
   side: { width: 400, borderLeftWidth: 1, borderColor: colors.border, backgroundColor: colors.card },
 });

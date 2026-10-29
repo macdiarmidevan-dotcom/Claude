@@ -55,7 +55,7 @@ export function WaiverEditor({ client, onClose }: { client: Client; onClose: () 
           </Pressable>
         </View>
         {!current && !error ? (
-          <ActivityIndicator style={{ marginTop: 40 }} color={colors.green} />
+          <ActivityIndicator style={{ marginTop: 40 }} color={colors.primary} />
         ) : (
           <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
             {current && (
@@ -105,16 +105,16 @@ export function WaiverEditor({ client, onClose }: { client: Client; onClose: () 
 
 const styles = StyleSheet.create({
   page: { flex: 1, backgroundColor: colors.bg },
-  header: { backgroundColor: colors.green, paddingHorizontal: 20, paddingTop: 18, paddingBottom: 14, flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  headerText: { color: "#fff", fontSize: 18, fontWeight: "700" },
-  close: { color: "#cfe3d5", fontSize: 16 },
-  body: { padding: 20, paddingBottom: 60, width: "100%", maxWidth: 720, alignSelf: "center" },
-  note: { color: colors.muted, fontSize: 14, lineHeight: 20, marginBottom: 16 },
-  label: { fontSize: 13, fontWeight: "700", color: colors.muted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 },
-  input: { borderWidth: 1, borderColor: colors.border, borderRadius: 8, padding: 12, fontSize: 16, backgroundColor: colors.card, marginBottom: 16, color: colors.text },
+  header: { backgroundColor: colors.primary, paddingHorizontal: 20, paddingTop: 18, paddingBottom: 14, flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  headerText: { color: "#fff", fontSize: 16, fontWeight: "700" },
+  close: { color: "#cfe3d5", fontSize: 14 },
+  body: { padding: 16, paddingBottom: 60, width: "100%", maxWidth: 720, alignSelf: "center" },
+  note: { color: colors.muted, fontSize: 13, lineHeight: 20, marginBottom: 16 },
+  label: { fontSize: 12, fontWeight: "700", color: colors.muted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 },
+  input: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, padding: 12, fontSize: 14, backgroundColor: colors.card, marginBottom: 16, color: colors.text },
   bodyInput: { minHeight: 320, lineHeight: 22 },
   error: { color: colors.noShow, marginBottom: 12 },
   saved: { color: colors.checkedIn, fontWeight: "600", marginBottom: 12 },
-  save: { backgroundColor: colors.green, borderRadius: 10, padding: 16, alignItems: "center", marginBottom: 16 },
-  saveText: { color: "#fff", fontSize: 17, fontWeight: "700" },
+  save: { backgroundColor: colors.primary, borderRadius: 3, padding: 16, alignItems: "center", marginBottom: 16 },
+  saveText: { color: "#fff", fontSize: 15, fontWeight: "700" },
 });
