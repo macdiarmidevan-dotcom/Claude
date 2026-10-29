@@ -40,6 +40,18 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
   const [me, setMe] = useState<Me>();
   const isManager = me?.role === "manager";
   const [editingWaiver, setEditingWaiver] = useState(false);
+  // Moving between a golfer's account and their bookings on the tee sheet.
+  const [jumpTo, setJumpTo] = useState<{ date: string; bookingId: string }>();
+  const [golferId, setGolferId] = useState<string>();
+  const openGolfer = (id: string) => {
+    setGolferId(id);
+    setSection("customers");
+  };
+  const openBooking = (b: { bookingId: string; startsAt: string }) => {
+    const date = new Intl.DateTimeFormat("en-CA", { timeZone: course?.timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(b.startsAt));
+    setJumpTo({ date, bookingId: b.bookingId });
+    setSection("tee-sheet");
+  };
 
   useEffect(() => {
     client.course().then(setCourse).catch((e) => setError(e.message));
@@ -60,6 +72,7 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
 
   const go = (s: Section) => {
     setSection(s);
+    if (s === "customers") setGolferId(undefined);
     setMenuOpen(false);
   };
 
@@ -85,7 +98,15 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
       <View style={styles.main}>
         {section === "tee-sheet" ? (
           course ? (
-            <TeeSheetScreen client={client} course={course} station={settings.station} onSignOut={signOut} onOpenMenu={openMenu} />
+            <TeeSheetScreen
+              client={client}
+              course={course}
+              station={settings.station}
+              onSignOut={signOut}
+              onOpenMenu={openMenu}
+              onOpenGolfer={openGolfer}
+              jumpTo={jumpTo}
+            />
           ) : (
             <Header title="Tee sheet" onOpenMenu={openMenu} subtitle={error ?? "Loading…"} />
           )
@@ -97,7 +118,7 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
         ) : section === "customers" ? (
           <>
             <Header title="Golfers" onOpenMenu={openMenu} />
-            <GolfersScreen client={client} />
+            <GolfersScreen key={golferId ?? "search"} client={client} openId={golferId} onOpenBooking={openBooking} />
           </>
         ) : section === "staff" ? (
           <>

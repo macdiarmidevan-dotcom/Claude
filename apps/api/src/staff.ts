@@ -16,6 +16,8 @@ export interface StaffUser {
   name: string;
   email: string;
   role: KeyRole;
+  /** The job they do, such as Pro Shop or Cart Attendant. */
+  employeeType: { id: string; name: string } | null;
   active: boolean;
   lastLoginAt: string | null;
 }
@@ -41,9 +43,81 @@ const toUser = (r: any): StaffUser => ({
   name: r.name,
   email: r.email,
   role: r.role,
+  employeeType: r.employee_type_id ? { id: r.employee_type_id, name: r.employee_type_name } : null,
   active: r.active,
   lastLoginAt: r.last_login_at?.toISOString() ?? null,
 });
+
+// Staff rows with their employee type's name, for toUser.
+const USERS = `SELECT u.*, et.name AS employee_type_name FROM staff_users u LEFT JOIN employee_types et ON et.id = u.employee_type_id`;
+
+async function getUser(db: DbClient, id: string) {
+  const { rows } = await db.query(`${USERS} WHERE u.id = $1`, [id]);
+  return toUser(rows[0]);
+}
+
+export const DEFAULT_EMPLOYEE_TYPES = ["Pro Shop", "Ranger/Starter", "Cart Attendant", "Bartender", "Food & Beverage", "Grounds Crew"];
+
+export async function addDefaultEmployeeTypes(db: DbClient, courseId: string) {
+  for (const [i, name] of DEFAULT_EMPLOYEE_TYPES.entries()) {
+    await db.query("INSERT INTO employee_types (course_id, name, position) VALUES ($1, $2, $3)", [courseId, name, i + 1]);
+  }
+}
+
+export interface EmployeeType {
+  id: string;
+  name: string;
+  active: boolean;
+  /** How many active accounts have this type. */
+  staffCount: number;
+}
+
+export async function listEmployeeTypes(db: DbClient, courseId: string): Promise<EmployeeType[]> {
+  const { rows } = await db.query(
+    `SELECT et.*, (SELECT count(*)::int FROM staff_users u WHERE u.employee_type_id = et.id AND u.active) AS staff_count
+       FROM employee_types et WHERE et.course_id = $1
+      ORDER BY et.active DESC, et.position, lower(et.name)`,
+    [courseId],
+  );
+  return rows.map((r) => ({ id: r.id, name: r.name, active: r.active, staffCount: r.staff_count }));
+}
+
+const typeTaken = (err: unknown) => (err as { code?: string }).code === "23505";
+
+export async function createEmployeeType(db: DbClient, courseId: string, name: string): Promise<EmployeeType> {
+  try {
+    const { rows } = await db.query(
+      `INSERT INTO employee_types (course_id, name, position)
+       VALUES ($1, $2, (SELECT COALESCE(max(position), 0) + 1 FROM employee_types WHERE course_id = $1)) RETURNING *`,
+      [courseId, name.trim()],
+    );
+    return { id: rows[0].id, name: rows[0].name, active: true, staffCount: 0 };
+  } catch (err) {
+    if (typeTaken(err)) throw conflict("type_exists", `There's already a type called ${name.trim()}`);
+    throw err;
+  }
+}
+
+/** Renames a type, or removes it (active: false). People who had a removed type keep it until they're changed. */
+export async function updateEmployeeType(db: DbClient, courseId: string, id: string, patch: { name?: string; active?: boolean }) {
+  try {
+    const { rowCount } = await db.query(
+      "UPDATE employee_types SET name = COALESCE($3, name), active = COALESCE($4, active) WHERE id = $1 AND course_id = $2",
+      [id, courseId, patch.name?.trim() ?? null, patch.active ?? null],
+    );
+    if (!rowCount) throw notFound("Employee type");
+  } catch (err) {
+    if (typeTaken(err)) throw conflict("type_exists", `There's already a type called ${patch.name?.trim()}`);
+    throw err;
+  }
+  return (await listEmployeeTypes(db, courseId)).find((t) => t.id === id)!;
+}
+
+async function checkType(db: DbClient, courseId: string, typeId: string | null | undefined) {
+  if (!typeId) return;
+  const { rows } = await db.query("SELECT 1 FROM employee_types WHERE id = $1 AND course_id = $2 AND active", [typeId, courseId]);
+  if (!rows[0]) throw badRequest("invalid_employee_type", "Choose one of the course's employee types");
+}
 
 // Slows down password guessing: after 5 wrong tries an email is locked for 15 minutes.
 const failures = new Map<string, { count: number; until: number }>();
@@ -54,7 +128,7 @@ export async function login(db: DbClient, courseId: string, email: string, passw
   if (f && f.count >= 5 && f.until > Date.now()) {
     throw new AppError(429, "too_many_attempts", "Too many wrong passwords. Try again in 15 minutes or ask a manager to reset it");
   }
-  const { rows } = await db.query("SELECT * FROM staff_users WHERE course_id = $1 AND lower(email) = lower($2)", [courseId, email.trim()]);
+  const { rows } = await db.query(`${USERS} WHERE u.course_id = $1 AND lower(u.email) = lower($2)`, [courseId, email.trim()]);
   const row = rows[0];
   // Check a password even when there's no such person, so timing doesn't reveal who has an account.
   const ok = await checkPassword(password, row?.password_hash ?? "scrypt$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=");
@@ -86,7 +160,7 @@ export async function lookupSession(db: DbClient, token: string): Promise<Sessio
     `UPDATE staff_sessions s SET expires_at = now() + $2::interval
        FROM staff_users u
       WHERE s.token_hash = $1 AND u.id = s.user_id AND s.revoked_at IS NULL AND s.expires_at > now() AND u.active
-      RETURNING s.id AS session_id, u.*`,
+      RETURNING s.id AS session_id, u.*, (SELECT name FROM employee_types WHERE id = u.employee_type_id) AS employee_type_name`,
     [hash(token), `${SESSION_DAYS} days`],
   );
   const r = rows[0];
@@ -98,18 +172,23 @@ export async function logout(db: DbClient, sessionId: string) {
 }
 
 export async function listStaff(db: DbClient, courseId: string): Promise<StaffUser[]> {
-  const { rows } = await db.query("SELECT * FROM staff_users WHERE course_id = $1 ORDER BY active DESC, lower(name)", [courseId]);
+  const { rows } = await db.query(`${USERS} WHERE u.course_id = $1 ORDER BY u.active DESC, lower(u.name)`, [courseId]);
   return rows.map(toUser);
 }
 
-export async function createStaff(db: DbClient, courseId: string, input: { name: string; email: string; role: KeyRole; password: string }) {
+export async function createStaff(
+  db: DbClient,
+  courseId: string,
+  input: { name: string; email: string; role: KeyRole; password: string; employeeTypeId?: string | null },
+) {
   validatePassword(input.password);
+  await checkType(db, courseId, input.employeeTypeId);
   try {
     const { rows } = await db.query(
-      "INSERT INTO staff_users (course_id, name, email, role, password_hash) VALUES ($1, $2, $3, $4, $5) RETURNING *",
-      [courseId, input.name.trim(), input.email.trim().toLowerCase(), input.role, await hashPassword(input.password)],
+      "INSERT INTO staff_users (course_id, name, email, role, password_hash, employee_type_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
+      [courseId, input.name.trim(), input.email.trim().toLowerCase(), input.role, await hashPassword(input.password), input.employeeTypeId ?? null],
     );
-    return toUser(rows[0]);
+    return getUser(db, rows[0].id);
   } catch (err) {
     if ((err as { code?: string }).code === "23505") throw conflict("email_taken", "Someone here already uses that email");
     throw err;
@@ -125,7 +204,7 @@ export async function updateStaff(
   courseId: string,
   actorId: string | undefined,
   id: string,
-  patch: { name?: string; role?: KeyRole; active?: boolean; password?: string },
+  patch: { name?: string; role?: KeyRole; active?: boolean; password?: string; employeeTypeId?: string | null },
 ) {
   const { rows } = await db.query("SELECT * FROM staff_users WHERE id = $1 AND course_id = $2", [id, courseId]);
   const current = rows[0];
@@ -140,16 +219,26 @@ export async function updateStaff(
     if (others[0].n === 0) throw conflict("last_manager", "The course needs at least one active manager");
   }
   if (patch.password !== undefined) validatePassword(patch.password);
-  const { rows: updated } = await db.query(
+  await checkType(db, courseId, patch.employeeTypeId);
+  await db.query(
     `UPDATE staff_users SET name = COALESCE($2, name), role = COALESCE($3, role), active = COALESCE($4, active),
-            password_hash = COALESCE($5, password_hash)
-      WHERE id = $1 RETURNING *`,
-    [id, patch.name?.trim() ?? null, patch.role ?? null, patch.active ?? null, patch.password ? await hashPassword(patch.password) : null],
+            password_hash = COALESCE($5, password_hash),
+            employee_type_id = CASE WHEN $6 THEN $7::uuid ELSE employee_type_id END
+      WHERE id = $1`,
+    [
+      id,
+      patch.name?.trim() ?? null,
+      patch.role ?? null,
+      patch.active ?? null,
+      patch.password ? await hashPassword(patch.password) : null,
+      patch.employeeTypeId !== undefined,
+      patch.employeeTypeId ?? null,
+    ],
   );
   if (patch.active === false || patch.password !== undefined) {
     await db.query("UPDATE staff_sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL", [id]);
   }
-  return toUser(updated[0]);
+  return getUser(db, id);
 }
 
 export async function changeOwnPassword(db: DbClient, user: StaffUser, sessionId: string, current: string, next: string) {

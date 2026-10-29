@@ -22,19 +22,31 @@ interface Props {
   onSignOut: () => void;
   /** Present on narrow screens, where the menu is folded away. */
   onOpenMenu?: () => void;
+  /** Opens a golfer's account from a name on the tee sheet. */
+  onOpenGolfer?: (golferId: string) => void;
+  /** Shows this booking's day and opens its tee time, e.g. from a golfer's account. */
+  jumpTo?: { date: string; bookingId: string };
 }
 
-export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu }: Props) {
+export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu, onOpenGolfer, jumpTo }: Props) {
   const { width } = useWindowDimensions();
   const sideBySide = width >= 1100; // laptops and desktops: grid and details side by side
   const compact = width < 600; // phones
 
-  const [date, setDate] = useState(() => todayIn(course.timeZone));
+  const [date, setDate] = useState(() => jumpTo?.date ?? todayIn(course.timeZone));
   const [sheet, setSheet] = useState<SheetTeeTime[]>();
   const [selectedId, setSelectedId] = useState<string>();
   const [error, setError] = useState<string>();
   const listRef = useRef<FlatList<Line>>(null);
   const scrolledFor = useRef<string | undefined>(undefined);
+  // The booking to open once its day has loaded.
+  const pending = useRef(jumpTo?.bookingId);
+
+  useEffect(() => {
+    if (!jumpTo) return;
+    pending.current = jumpTo.bookingId;
+    setDate(jumpTo.date);
+  }, [jumpTo]);
 
   const load = useCallback(async () => {
     try {
@@ -87,9 +99,14 @@ export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu 
 
   // Jump to the next tee time once per day viewed, so starters land where the action is.
   useEffect(() => {
-    if (!sheet || scrolledFor.current === date) return;
+    if (!sheet) return;
+    const wanted = pending.current ? sheet.findIndex((t) => t.bookings.some((b) => b.id === pending.current)) : -1;
+    if (wanted !== -1) {
+      pending.current = undefined;
+      setSelectedId(sheet[wanted]!.id);
+    } else if (scrolledFor.current === date) return;
     scrolledFor.current = date;
-    const target = lines.findIndex((l) => l.kind === "time" && l.index === nextIndex);
+    const target = lines.findIndex((l) => l.kind === "time" && l.index === (wanted !== -1 ? wanted : nextIndex));
     if (target > 1) setTimeout(() => listRef.current?.scrollToIndex({ index: target - 2, animated: false }), 50);
   }, [sheet, date, lines, nextIndex]);
 
@@ -117,6 +134,7 @@ export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu 
       sheet={sheet}
       courseHoles={course.holes}
       station={station}
+      onOpenGolfer={onOpenGolfer}
       onChanged={load}
       onClose={() => setSelectedId(undefined)}
     />

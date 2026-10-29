@@ -160,13 +160,14 @@ function GolferForm(props: {
 }
 
 /** The Customers section: find any golfer and see their rounds. */
-export function GolfersScreen({ client }: { client: Client }) {
+export function GolfersScreen({ client, openId, onOpenBooking }: { client: Client; openId?: string; onOpenBooking?: OpenBooking }) {
   const [q, setQ] = useState("");
   const { results, error } = useSearch(client, q);
-  const [open, setOpen] = useState<string>();
+  const [open, setOpen] = useState<string | undefined>(openId);
   const [adding, setAdding] = useState(false);
+  useEffect(() => setOpen(openId), [openId]);
 
-  if (open) return <GolferDetail client={client} id={open} onBack={() => setOpen(undefined)} />;
+  if (open) return <GolferDetail client={client} id={open} onBack={() => setOpen(undefined)} onOpenBooking={onOpenBooking} />;
 
   return (
     <ScrollView contentContainerStyle={styles.page} keyboardShouldPersistTaps="handled">
@@ -218,8 +219,11 @@ export function GolfersScreen({ client }: { client: Client }) {
   );
 }
 
+/** Opens the tee sheet at a booking. */
+export type OpenBooking = (booking: { bookingId: string; startsAt: string }) => void;
+
 /** One golfer's account: totals, contact details and every booking, newest first. */
-export function GolferDetail({ client, id, onBack }: { client: Client; id: string; onBack?: () => void }) {
+export function GolferDetail({ client, id, onBack, onOpenBooking }: { client: Client; id: string; onBack?: () => void; onOpenBooking?: OpenBooking }) {
   const [g, setG] = useState<GolferProfile>();
   const [error, setError] = useState<string>();
   const [editing, setEditing] = useState(false);
@@ -278,8 +282,16 @@ export function GolferDetail({ client, id, onBack }: { client: Client; id: strin
         <Text style={styles.help}>No bookings yet.</Text>
       ) : (
         <View style={{ maxWidth: 820 }}>
+          {onOpenBooking && <Text style={styles.help}>Tap a round to see it on the tee sheet.</Text>}
           {g.history.map((h) => (
-            <View key={h.bookingId} style={styles.historyRow}>
+            <Pressable
+              key={h.bookingId}
+              accessibilityRole="link"
+              accessibilityLabel={`${dateTime(h.startsAt)}, ${h.holes} holes. Open on the tee sheet`}
+              disabled={!onOpenBooking || h.bookingId.startsWith("past-")}
+              onPress={() => onOpenBooking?.(h)}
+              style={({ hovered, focused }: WebPress) => [styles.historyRow, hovered && { backgroundColor: colors.greenLight }, focused && styles.focusRing]}
+            >
               <Text style={[styles.historyCell, { width: 230 }]}>{dateTime(h.startsAt)}</Text>
               <Text style={[styles.historyCell, { flex: 1, minWidth: 140 }]}>
                 {h.holes} holes · {h.players} {h.players === 1 ? "player" : "players"}
@@ -288,7 +300,8 @@ export function GolferDetail({ client, id, onBack }: { client: Client; id: strin
                 {h.status === "teed_off" || h.status === "checked_in" ? "Played" : statusLabel[h.status]}
               </Text>
               <Text style={[styles.historyCell, { width: 80, textAlign: "right" }]}>{money(h.paidCents)}</Text>
-            </View>
+              {onOpenBooking && <Text style={[styles.historyCell, { color: colors.green }]} aria-hidden>›</Text>}
+            </Pressable>
           ))}
         </View>
       )}

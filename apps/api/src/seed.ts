@@ -3,7 +3,7 @@ import { riverBend, riverBendAddOns, riverBendRates, riverBendTeeSheet } from "@
 import { createPool, withTransaction, type Db } from "./db.ts";
 import { randomBytes } from "node:crypto";
 import { createApiKey } from "./keys.ts";
-import { createStaff } from "./staff.ts";
+import { addDefaultEmployeeTypes, createStaff } from "./staff.ts";
 import { migrate } from "./migrate.ts";
 
 const PLACEHOLDER_WAIVER = `SAMPLE TEXT, NOT LEGAL ADVICE. Replace with the course's own reviewed waiver.
@@ -62,6 +62,10 @@ export async function seedRiverBend(db: Db) {
 
     const secretKey = await createApiKey(client, courseId, "secret", "River Bend staff");
     const managerKey = await createApiKey(client, courseId, "secret", "River Bend manager", "manager");
+    // The migration gave existing courses the standard employee types; a new course gets them here.
+    const { rows: types } = await client.query("SELECT 1 FROM employee_types WHERE course_id = $1 LIMIT 1", [courseId]);
+    if (!types[0]) await addDefaultEmployeeTypes(client, courseId);
+
     // A first manager account to sign in with and add everyone else. The password is random and shown once.
     const managerPassword = randomBytes(9).toString("base64url");
     const manager = await createStaff(client, courseId, {
