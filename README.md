@@ -66,6 +66,19 @@ POST /v1/courses/river-bend/bookings
 - **No double-booking.** A booking locks its tee time row for the transaction, so simultaneous requests for the last spots can't overbook.
 - **Rates.** The most specific matching rule wins (residency, age group, time window), and ties go to the lower price. Holidays use weekend rates. 18 holes on a 9-hole course is the 9-hole rate plus the replay rate.
 
+## AI assistant
+
+Managers can ask Claude, ChatGPT or another MCP client about the course: "how many rounds today?", "who still owes?", "is Mike Sullivan booked this week?", "what did we take last week?". Add a custom connector with the address `https://<your server>/v1/courses/<course>/mcp` and the manager key as a Bearer token.
+
+| Tool | Answers |
+| --- | --- |
+| `day_summary` | Groups, players, checked in, on course, no-shows, open spots, occupancy, money booked, collected and owed, carts out |
+| `list_groups` | The day's groups in tee time order, filtered to unpaid, not checked in, checked in, on course or no-shows |
+| `find_golfer` | A golfer's bookings 30 days either side of today |
+| `revenue` | Green fees, add-ons and payments by method per day, up to 92 days |
+
+Every tool only reads. Changes still go through the staff app.
+
 ## Staff app
 
 Each device is set to **Pro shop** or **Starter** (switchable in the top bar). Check-in has two steps: the pro shop takes payment and checks the group in, then the starter checks them in at the tee box and assigns carts. The starter can't send off a group the pro shop hasn't checked in.
