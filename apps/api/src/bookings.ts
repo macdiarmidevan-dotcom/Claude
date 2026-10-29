@@ -276,7 +276,7 @@ export async function getBooking(db: DbClient, course: Course, id: string): Prom
 
 // Which statuses each status can be reached from.
 const transitions: Record<string, string[]> = {
-  cancelled: ["confirmed"],
+  cancelled: ["confirmed", "no_show"],
   no_show: ["confirmed"],
   checked_in: ["confirmed", "no_show"],
   teed_off: ["checked_in"],
@@ -303,6 +303,22 @@ async function changeStatus(
     }
     throw conflict("invalid_status", `Can't change a ${current.status} booking to ${status}`);
   }
+}
+
+/**
+ * A no-show group that turns up late goes back to booked, so the pro shop can check them in as
+ * usual. Refused if their spots were given away in the meantime.
+ */
+export async function undoNoShow(db: Db, course: Course, id: string): Promise<Booking> {
+  await withTransaction(db, async (client) => {
+    const { rows } = await client.query("SELECT tee_time_id, status FROM bookings WHERE id = $1 AND course_id = $2 FOR UPDATE", [id, course.id]);
+    if (!rows[0]) throw notFound("Booking");
+    if (rows[0].status !== "no_show") throw conflict("invalid_status", "This group isn't marked as a no-show");
+    const teeTime = await lockTeeTime(client, course, rows[0].tee_time_id, true);
+    if (teeTime.bookedPlayers > teeTime.maxPlayers) throw conflict("not_enough_spots", "Their spots have been taken. Move them to another time instead");
+    await client.query("UPDATE bookings SET status = 'confirmed' WHERE id = $1", [id]);
+  });
+  return getBooking(db, course, id);
 }
 
 export async function setBookingStatus(
@@ -484,6 +500,53 @@ export async function moveBooking(db: Db, course: Course, id: string, toTeeTimeI
       throw conflict("not_enough_spots", `Only ${spotsLeft} spot${spotsLeft === 1 ? "" : "s"} left at that time`);
     }
     await client.query("UPDATE bookings SET tee_time_id = $2 WHERE id = $1", [id, toTeeTimeId]);
+  });
+  return getBooking(db, course, id);
+}
+
+/**
+ * Takes some players off a group, e.g. two of a foursome didn't come. The group's bill drops by
+ * their green fees and carts (guests come off first). Only for groups that haven't checked in,
+ * and not below what they've already paid, since that would need a refund.
+ */
+export async function removePlayers(db: Db, course: Course, id: string, count: number): Promise<Booking> {
+  await withTransaction(db, async (client) => {
+    const { rows } = await client.query("SELECT players, holes, status FROM bookings WHERE id = $1 AND course_id = $2 FOR UPDATE", [id, course.id]);
+    const booking = rows[0];
+    if (!booking) throw notFound("Booking");
+    if (booking.status !== "confirmed" && booking.status !== "no_show") throw conflict("invalid_status", "Only groups that haven't checked in can lose players");
+    if (count >= booking.players) throw badRequest("whole_group", "To take everyone off, remove the whole group");
+    const { rows: lines } = await client.query(
+      "SELECT id, kind, code, description, quantity, unit_cents FROM booking_lines WHERE booking_id = $1 ORDER BY (description LIKE 'Guest:%') DESC, unit_cents DESC",
+      [id],
+    );
+    const players = booking.players - count;
+    // Each player pays one first-loop green fee plus a replay fee per extra loop, so those come
+    // off for each player removed, guests' first.
+    const replays = new Set((await getRates(client, course.id)).filter((r) => r.isReplay).map((r) => r.id));
+    const takeOff = (pick: (l: { kind: string; code: string; description: string }) => boolean, units: number) => {
+      for (const l of lines.filter(pick)) {
+        const take = Math.min(units, l.quantity);
+        l.quantity -= take;
+        units -= take;
+      }
+    };
+    const isGuest = (l: { description: string }) => l.description.startsWith("Guest:");
+    const guests = lines.filter((l) => isGuest(l) && l.kind === "green_fee" && !replays.has(l.code)).reduce((s, l) => s + l.quantity, 0);
+    takeOff((l) => l.kind === "green_fee" && !replays.has(l.code), count);
+    takeOff((l) => l.kind === "green_fee" && replays.has(l.code), count * (booking.holes / course.holes - 1));
+    // Carts beyond one per remaining player come off too.
+    // Guests who rode take their carts with them, and nobody's left with more than one cart each.
+    takeOff((l) => l.code === "gas_cart" && isGuest(l), Math.min(count, guests));
+    takeOff((l) => l.code === "gas_cart", Math.max(0, lines.filter((x) => x.code === "gas_cart").reduce((s, l) => s + l.quantity, 0) - players));
+    for (const l of lines) {
+      if (l.quantity === 0) await client.query("DELETE FROM booking_lines WHERE id = $1", [l.id]);
+      else await client.query("UPDATE booking_lines SET quantity = $2, total_cents = $2 * unit_cents WHERE id = $1", [l.id, l.quantity]);
+    }
+    const total = lines.reduce((s, l) => s + l.quantity * l.unit_cents, 0);
+    const { rows: paid } = await client.query("SELECT COALESCE(sum(amount_cents), 0)::int AS paid FROM booking_payments WHERE booking_id = $1", [id]);
+    if (paid[0].paid > total) throw conflict("already_paid", "They've already paid for those players. Refund them first");
+    await client.query("UPDATE bookings SET players = $2, total_cents = $3 WHERE id = $1", [id, players, total]);
   });
   return getBooking(db, course, id);
 }
