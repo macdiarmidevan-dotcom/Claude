@@ -10,6 +10,7 @@ import { ChangePassword, StaffScreen } from "./StaffScreen";
 import { GolfersScreen } from "./Golfers";
 import { ScheduleScreen } from "./ScheduleScreen";
 import { ProShopScreen } from "./ProShopScreen";
+import { CardPaymentSettings, CardReaderProvider } from "./CardReader";
 import { ReportsScreen } from "./ReportsScreen";
 import { colors, type WebPress } from "./theme";
 
@@ -96,6 +97,7 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
   const current = SECTIONS.find((s) => s.id === section)!;
 
   return (
+    <CardReaderProvider client={client} terminalId={settings.terminalId}>
     <View style={styles.page}>
       {rail && menu}
       <View style={styles.main}>
@@ -152,6 +154,13 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
                 <StationPicker value={settings.station} onChange={(station) => onChangeSettings({ ...settings, station })} />
               </View>
               <Text style={styles.help}>The pro shop takes payment and checks groups in. The starter sends them off the first tee and assigns carts.</Text>
+              <Text style={[styles.label, { marginTop: 24 }]}>Card payments</Text>
+              <CardPaymentSettings
+                client={client}
+                isManager={isManager}
+                terminalId={settings.terminalId}
+                onPickTerminal={(terminalId) => onChangeSettings({ ...settings, terminalId })}
+              />
               <Text style={[styles.label, { marginTop: 24 }]}>Cart waiver</Text>
               {isManager ? (
                 <Pressable accessibilityRole="button" onPress={() => setEditingWaiver(true)} style={styles.button}>
@@ -196,6 +205,7 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
       )}
       {editingWaiver && <WaiverEditor client={client} onClose={() => setEditingWaiver(false)} />}
     </View>
+    </CardReaderProvider>
   );
 }
 

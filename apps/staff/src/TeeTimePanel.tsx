@@ -4,6 +4,7 @@ import { quotePlayer } from "@golf/core";
 import type { ScrollViewInstance } from "react-native";
 import type { Client, Course, RoundChoice, GolferAccount, PaymentMethod, Product, SalePaymentMethod, SheetBooking, SheetTeeTime, Station, Waiver } from "./api";
 import { WaiverModal } from "./WaiverModal";
+import { CardChargeModal, useCardReader } from "./CardReader";
 import { GolferPicker, useSearch } from "./Golfers";
 import { colors, type WebPress, formatTime, money, paymentMethodLabel, statusColor, statusLabel } from "./theme";
 
@@ -217,9 +218,9 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, course, stat
               client={client}
               booking={b}
               price={price}
-              onPay={(method, items, round) => {
+              onPay={(method, items, round, cardPaymentId) => {
                 setPayingFor(undefined);
-                run(() => client.checkIn(b.id, method, items, round));
+                run(() => client.checkIn(b.id, method, items, round, cardPaymentId));
               }}
               onCancel={() => setPayingFor(undefined)}
             />
@@ -468,7 +469,12 @@ function CheckoutForm({
   client: Client;
   booking: SheetBooking;
   price: PriceFn;
-  onPay: (m: PaymentMethod | undefined, items?: { lines: { productId: string; quantity: number }[]; paymentMethod: SalePaymentMethod }, round?: RoundChoice) => void;
+  onPay: (
+    m: PaymentMethod | undefined,
+    items?: { lines: { productId: string; quantity: number }[]; paymentMethod: SalePaymentMethod },
+    round?: RoundChoice,
+    cardPaymentId?: string,
+  ) => void;
   onCancel: () => void;
 }) {
   const [products, setProducts] = useState<Product[]>();
@@ -500,6 +506,14 @@ function CheckoutForm({
   const itemsSubtotal = cart.reduce((s, x) => s + x.product.priceCents * x.quantity, 0);
   const itemsTax = Math.round((cart.filter((x) => x.product.taxable).reduce((s, x) => s + x.product.priceCents * x.quantity, 0) * taxBps) / 10_000);
   const total = owed + itemsSubtotal + itemsTax;
+  const roundMethod = owed > 0 ? method : undefined;
+  const itemsWith = owed > 0 ? payItemsWith : itemMethod;
+  // One tap on the reader pays everything going on the card.
+  const cardCents = (roundMethod === "card" ? owed : 0) + (cart.length && itemsWith === "card" ? itemsSubtotal + itemsTax : 0);
+  const reader = useCardReader();
+  const [charging, setCharging] = useState(false);
+  const pay = (cardPaymentId?: string) =>
+    onPay(roundMethod, cart.length ? { lines: cart.map((x) => ({ productId: x.product.id, quantity: x.quantity })), paymentMethod: itemsWith } : undefined, round, cardPaymentId);
   const match = q.trim().toLowerCase();
   // Quick picks: drinks and snacks first, since that's what golfers grab on the way out.
   const shown = (products ?? [])
@@ -596,20 +610,30 @@ function CheckoutForm({
           </View>
         </>
       )}
+      {cardCents > 0 && reader.needsReader && (
+        <Text style={[styles.warning, { marginTop: 10 }]}>Pick this device's card reader in Settings to send cards to it. Until then, run the card on another terminal.</Text>
+      )}
       <View style={styles.actions}>
         <Action
           label={total > 0 ? `Take ${money(total)} & check in` : "Check in"}
           primary
-          onPress={() =>
-            onPay(
-              owed > 0 ? method : undefined,
-              cart.length ? { lines: cart.map((x) => ({ productId: x.product.id, quantity: x.quantity })), paymentMethod: owed > 0 ? payItemsWith : itemMethod } : undefined,
-              round,
-            )
-          }
+          onPress={() => (cardCents > 0 && reader.terminal ? setCharging(true) : pay())}
         />
         <Action label="Back" onPress={onCancel} />
       </View>
+      {charging && reader.terminal && (
+        <CardChargeModal
+          client={client}
+          terminal={reader.terminal}
+          amountCents={cardCents}
+          description={`Check-in: ${booking.customerName}`}
+          onPaid={(p) => {
+            setCharging(false);
+            pay(p.id);
+          }}
+          onClose={() => setCharging(false)}
+        />
+      )}
     </View>
   );
 }

@@ -3,6 +3,7 @@ import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Switch, Te
 import type { Client, GolferAccount, Me, Product, ProductInput, Sale, SalePaymentMethod, SalesDay, StockMovement } from "./api";
 import { addDays, dayParts, todayIn } from "./dates";
 import { useSearch } from "./Golfers";
+import { CardChargeModal, useCardReader } from "./CardReader";
 import { colors, money, radius, type WebPress } from "./theme";
 
 type Tab = "register" | "inventory" | "sales";
@@ -127,7 +128,12 @@ function Register({ client, products, onSold }: { client: Client; products: Prod
   const subtotal = ticket.reduce((s, l) => s + l.unitCents * l.quantity, 0);
   const tax = method === "comp" ? 0 : Math.round((ticket.filter((l) => l.taxable).reduce((s, l) => s + l.unitCents * l.quantity, 0) * taxBps) / 10_000);
 
-  async function charge() {
+  const reader = useCardReader();
+  const [charging, setCharging] = useState(false);
+
+  async function charge(cardPaymentId?: string) {
+    // On a connected reader the card is taken first; the sale is recorded once it goes through.
+    if (method === "card" && reader.terminal && !cardPaymentId) return setCharging(true);
     setBusy(true);
     setError(undefined);
     try {
@@ -135,6 +141,7 @@ function Register({ client, products, onSold }: { client: Client; products: Prod
         lines: ticket.map((l) => (l.productId ? { productId: l.productId, quantity: l.quantity } : { description: l.description, unitCents: l.unitCents, quantity: l.quantity, taxable: l.taxable })),
         paymentMethod: method,
         golferId: golfer?.id ?? null,
+        ...(cardPaymentId ? { cardPaymentId } : {}),
       });
       setDone(sale);
       setTicket([]);
@@ -233,11 +240,27 @@ function Register({ client, products, onSold }: { client: Client; products: Prod
               <Chip key={m.id} label={m.label} on={method === m.id} onPress={() => setMethod(m.id)} />
             ))}
           </View>
+          {method === "card" && reader.needsReader && (
+            <Text style={[styles.small, { color: colors.warn, marginTop: 8 }]}>Pick this device's card reader in Settings to send cards to it.</Text>
+          )}
           {error && <Text role="alert" style={styles.error}>{error}</Text>}
           <View style={[styles.choices, { marginTop: 14 }]}>
-            <Button label={busy ? "Charging…" : `Charge ${money(subtotal + tax)}`} primary disabled={busy} onPress={charge} />
+            <Button label={busy ? "Charging…" : `Charge ${money(subtotal + tax)}`} primary disabled={busy} onPress={() => charge()} />
             <Button label="Clear" disabled={busy} onPress={() => setTicket([])} />
           </View>
+          {charging && reader.terminal && (
+            <CardChargeModal
+              client={client}
+              terminal={reader.terminal}
+              amountCents={subtotal + tax}
+              description="Pro shop sale"
+              onPaid={(p) => {
+                setCharging(false);
+                charge(p.id);
+              }}
+              onClose={() => setCharging(false)}
+            />
+          )}
         </>
       )}
     </View>
