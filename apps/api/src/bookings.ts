@@ -1,10 +1,10 @@
-import { DateTime } from "luxon";
+import type { DateTime } from "luxon";
 import { NoRateError, quotePlayer, type PlayerProfile } from "@golf/core";
 import { withTransaction, type Db, type DbClient } from "./db.ts";
 import { badRequest, conflict, notFound } from "./errors.ts";
 import { getAddOns, getHolidays, getRates, toTeeTime, type Course, type TeeTime } from "./courses.ts";
 
-export type BookingSource = "web" | "widget" | "api" | "staff" | "golfnow";
+export type BookingSource = "staff" | "phone" | "teeitup" | "golfnow";
 
 export interface QuoteRequest {
   teeTimeId: string;
@@ -35,28 +35,6 @@ export interface CreateBookingRequest extends QuoteRequest {
   notes?: string | undefined;
 }
 
-/**
- * Resident rates need proof of residency. Staff can apply them directly; online,
- * they only apply once staff have verified the customer, otherwise players pay nonresident rates.
- */
-async function applyResidencyPolicy(
-  client: DbClient,
-  course: Course,
-  players: PlayerProfile[],
-  trustResidency: boolean,
-  email: string | undefined,
-): Promise<PlayerProfile[]> {
-  if (trustResidency || !players.some((p) => p.residency === "resident")) return players;
-  if (email) {
-    const { rows } = await client.query<{ residency_verified: boolean }>(
-      "SELECT residency_verified FROM customers WHERE organization_id = $1 AND email = $2",
-      [course.organizationId, normalizeEmail(email)],
-    );
-    if (rows[0]?.residency_verified) return players;
-  }
-  return players.map((p) => ({ ...p, residency: "nonresident" }));
-}
-
 const normalizeEmail = (email: string) => email.trim().toLowerCase();
 
 export interface Booking {
@@ -70,6 +48,7 @@ export interface Booking {
   source: BookingSource;
   totalCents: number;
   lines: QuoteLine[];
+  cartNumbers: string[];
   notes: string | null;
   createdAt: string;
 }
@@ -143,25 +122,9 @@ async function buildQuote(client: DbClient, course: Course, req: QuoteRequest, t
   return { teeTime, holes: req.holes, lines, totalCents: lines.reduce((s, l) => s + l.totalCents, 0) };
 }
 
-export async function quote(
-  db: Db,
-  course: Course,
-  req: QuoteRequest & { email?: string | undefined },
-  trustResidency: boolean,
-): Promise<Quote> {
+export async function quote(db: Db, course: Course, req: QuoteRequest): Promise<Quote> {
   const teeTime = await lockTeeTime(db, course, req.teeTimeId, false);
-  const players = await applyResidencyPolicy(db, course, req.players, trustResidency, req.email);
-  return buildQuote(db, course, { ...req, players }, teeTime);
-}
-
-/** Checks the booking window for golfer-facing sources. Staff can book any time. */
-function checkBookingWindow(course: Course, teeTime: TeeTime, source: BookingSource, now: DateTime) {
-  if (source === "staff") return;
-  const startsAt = DateTime.fromISO(teeTime.startsAt);
-  if (startsAt <= now) throw conflict("tee_time_passed", "This tee time has already started");
-  if (startsAt > now.plus({ days: course.bookingWindowDays })) {
-    throw conflict("outside_booking_window", `Tee times open ${course.bookingWindowDays} days ahead`);
-  }
+  return buildQuote(db, course, req, teeTime);
 }
 
 /**
@@ -172,20 +135,16 @@ export async function createBooking(
   db: Db,
   course: Course,
   req: CreateBookingRequest,
-  trustResidency: boolean,
-  now = DateTime.now(),
 ): Promise<Booking> {
   const id = await withTransaction(db, async (client) => {
     const teeTime = await lockTeeTime(client, course, req.teeTimeId, true);
     if (teeTime.status === "blocked") throw conflict("tee_time_blocked", "This tee time isn't available");
-    checkBookingWindow(course, teeTime, req.source, now);
     const spotsLeft = teeTime.maxPlayers - teeTime.bookedPlayers;
     if (req.players.length > spotsLeft) {
       throw conflict("not_enough_spots", `Only ${spotsLeft} spot${spotsLeft === 1 ? "" : "s"} left at this time`);
     }
 
-    const players = await applyResidencyPolicy(client, course, req.players, trustResidency, req.customer.email);
-    const q = await buildQuote(client, course, { ...req, players }, teeTime);
+    const q = await buildQuote(client, course, req, teeTime);
 
     const email = normalizeEmail(req.customer.email);
     const { rows: customers } = await client.query<{ id: string }>(
@@ -253,6 +212,7 @@ export async function getBooking(db: DbClient, course: Course, id: string): Prom
       unitCents: l.unit_cents,
       totalCents: l.total_cents,
     })),
+    cartNumbers: r.cart_numbers,
     notes: r.notes,
     createdAt: r.created_at.toISOString(),
   };
@@ -283,6 +243,44 @@ export async function setBookingStatus(
   return getBooking(db, course, rows[0].id);
 }
 
+/**
+ * Moves a booking to another tee time (staff only), e.g. when a starter sends a group
+ * off early. Both tee times are locked, in a fixed order so two moves can't deadlock.
+ */
+export async function moveBooking(db: Db, course: Course, id: string, toTeeTimeId: string): Promise<Booking> {
+  await withTransaction(db, async (client) => {
+    const { rows } = await client.query(
+      "SELECT tee_time_id, players, status FROM bookings WHERE id = $1 AND course_id = $2 FOR UPDATE",
+      [id, course.id],
+    );
+    const booking = rows[0];
+    if (!booking) throw notFound("Booking");
+    if (booking.status === "cancelled") throw conflict("invalid_status", "Can't move a cancelled booking");
+    if (booking.tee_time_id === toTeeTimeId) return;
+
+    const [first, second] = [booking.tee_time_id, toTeeTimeId].sort();
+    await lockTeeTime(client, course, first, true);
+    await lockTeeTime(client, course, second, true);
+    const target = await lockTeeTime(client, course, toTeeTimeId, false);
+    if (target.status === "blocked") throw conflict("tee_time_blocked", "That tee time is blocked");
+    const spotsLeft = target.maxPlayers - target.bookedPlayers;
+    if (booking.players > spotsLeft) {
+      throw conflict("not_enough_spots", `Only ${spotsLeft} spot${spotsLeft === 1 ? "" : "s"} left at that time`);
+    }
+    await client.query("UPDATE bookings SET tee_time_id = $2 WHERE id = $1", [id, toTeeTimeId]);
+  });
+  return getBooking(db, course, id);
+}
+
+export async function setCartNumbers(db: Db, course: Course, id: string, cartNumbers: string[]): Promise<Booking> {
+  const { rowCount } = await db.query(
+    "UPDATE bookings SET cart_numbers = $3 WHERE id = $1 AND course_id = $2 AND status <> 'cancelled'",
+    [id, course.id, cartNumbers],
+  );
+  if (!rowCount) throw notFound("Booking");
+  return getBooking(db, course, id);
+}
+
 export async function updateTeeTime(
   db: Db,
   course: Course,
@@ -300,7 +298,7 @@ export async function updateTeeTime(
 
 export async function listBookingsForDay(db: DbClient, course: Course, start: DateTime, end: DateTime) {
   const { rows } = await db.query(
-    `SELECT b.id, b.tee_time_id, b.players, b.holes, b.status, b.source, b.total_cents, c.name, c.phone
+    `SELECT b.id, b.tee_time_id, b.players, b.holes, b.status, b.source, b.total_cents, b.cart_numbers, c.name, c.phone
        FROM bookings b JOIN customers c ON c.id = b.customer_id JOIN tee_times t ON t.id = b.tee_time_id
       WHERE b.course_id = $1 AND t.starts_at >= $2 AND t.starts_at < $3 AND b.status <> 'cancelled'
       ORDER BY b.created_at`,
@@ -316,5 +314,6 @@ export async function listBookingsForDay(db: DbClient, course: Course, start: Da
     status: r.status,
     source: r.source,
     totalCents: r.total_cents,
+    cartNumbers: r.cart_numbers as string[],
   }));
 }

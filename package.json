@@ -8,7 +8,8 @@
     "test": "pnpm -r test",
     "dev:api": "pnpm --filter @golf/api dev",
     "db:migrate": "pnpm --filter @golf/api db:migrate",
-    "db:seed": "pnpm --filter @golf/api db:seed"
+    "db:seed": "pnpm --filter @golf/api db:seed",
+    "dev:staff": "pnpm --filter @golf/staff web"
   },
   "devDependencies": {
     "typescript": "~5.9.3"

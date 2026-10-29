@@ -4,7 +4,7 @@ import { createPool, withTransaction, type Db } from "./db.ts";
 import { createApiKey } from "./keys.ts";
 import { migrate } from "./migrate.ts";
 
-/** Creates River Bend with its rates, add-ons and tee sheet, plus one public and one secret API key. */
+/** Creates River Bend with its rates, add-ons and tee sheet, plus a staff API key. */
 export async function seedRiverBend(db: Db) {
   return withTransaction(db, async (client) => {
     const existing = await client.query("SELECT id FROM courses WHERE slug = $1", [riverBend.slug]);
@@ -43,18 +43,16 @@ export async function seedRiverBend(db: Db) {
       ]);
     }
 
-    const publicKey = await createApiKey(client, courseId, "public", "River Bend website");
     const secretKey = await createApiKey(client, courseId, "secret", "River Bend staff");
-    return { courseId, publicKey, secretKey };
+    return { courseId, secretKey };
   });
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const db = createPool();
   await migrate(db);
-  const { publicKey, secretKey } = await seedRiverBend(db);
-  console.log("Seeded River Bend Golf Club. Save these keys, they won't be shown again:");
-  console.log(`  Public key (website): ${publicKey}`);
-  console.log(`  Secret key (staff):   ${secretKey}`);
+  const { secretKey } = await seedRiverBend(db);
+  console.log("Seeded River Bend Golf Club. Save this key, it won't be shown again:");
+  console.log(`  Secret key (staff): ${secretKey}`);
   await db.end();
 }
