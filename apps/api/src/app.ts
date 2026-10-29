@@ -7,6 +7,7 @@ import { lookupApiKey, type ApiKeyContext } from "./keys.ts";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { buildMcpServer } from "./mcp.ts";
 import { importTeeSheet, listImports } from "./imports.ts";
+import { createGolfer, getGolfer, linkGolfer, searchGolfers, updateGolfer } from "./golfers.ts";
 import {
   changeOwnPassword,
   createStaff,
@@ -58,6 +59,9 @@ const ACTIONS: Record<string, string> = {
   "PUT /v1/courses/:slug/waiver": "Changed the cart waiver",
   "POST /v1/courses/:slug/imports": "Imported the tee sheet",
   "POST /v1/courses/:slug/staff": "Added a staff account",
+  "POST /v1/courses/:slug/golfers": "Created a golfer account",
+  "PATCH /v1/courses/:slug/golfers/:id": "Changed a golfer account",
+  "PUT /v1/courses/:slug/bookings/:id/golfer": "Linked a golfer account",
   "PATCH /v1/courses/:slug/staff/:id": "Changed a staff account",
 };
 
@@ -131,6 +135,17 @@ const staffPatch = z.object({
   active: z.boolean().optional(),
   password: z.string().max(200).optional(),
 });
+const golferBody = z.object({
+  name: z.string().trim().min(1).max(200),
+  email: z.string().trim().max(200),
+  phone: z.string().trim().max(40),
+  bookingId: z.uuid().optional(),
+});
+const golferPatch = z.object({
+  name: z.string().trim().min(1).max(200).optional(),
+  email: z.string().trim().max(200).optional(),
+  phone: z.string().trim().max(40).optional(),
+});
 const passwordBody = z.object({ current: z.string().max(200), next: z.string().max(200) });
 const paymentBody = z.object({ amountCents: z.number().int().positive(), method: paymentMethod });
 const idParams = z.object({ slug: z.string(), id: z.uuid() });
@@ -187,12 +202,12 @@ export function buildApp(db: Db): FastifyInstance {
     if (action === "Imported the tee sheet" && body.dryRun) return;
     const params = req.params as { id?: string };
     const detail: Record<string, unknown> = {};
-    for (const k of ["method", "amountCents", "cartNumbers", "status", "note", "teeTimeId", "source", "fileName", "name", "role", "active"]) {
+    for (const k of ["method", "amountCents", "cartNumbers", "status", "note", "teeTimeId", "source", "fileName", "name", "role", "active", "golferId"]) {
       if (body[k] !== undefined) detail[k] = body[k];
     }
     if (body.payment?.method) detail.method = body.payment.method;
     if (body.password !== undefined && req.routeOptions.url?.includes("/staff")) detail.passwordReset = true;
-    const bookingId = req.routeOptions.url?.includes("/bookings/:id") ? params.id : undefined;
+    const bookingId = req.routeOptions.url?.includes("/bookings/:id") ? params.id : typeof body.bookingId === "string" ? body.bookingId : undefined;
     await logActivity(db, {
       courseId: req.apiKey.courseId,
       userId: req.staff?.user.id,
@@ -259,6 +274,30 @@ export function buildApp(db: Db): FastifyInstance {
     const course = await managedCourseFor(req);
     const { id } = idParams.parse(req.params);
     return updateStaff(db, course.id, req.staff?.user.id, id, staffPatch.parse(req.body));
+  });
+
+  // Golfer accounts: created at a golfer's first check-in, then found by name.
+  app.get("/v1/courses/:slug/golfers", async (req) => {
+    const course = await courseFor(req);
+    const { q } = z.object({ q: z.string().max(200).default("") }).parse(req.query);
+    return searchGolfers(db, course, q);
+  });
+  app.post("/v1/courses/:slug/golfers", async (req, reply) => {
+    const course = await courseFor(req);
+    return reply.status(201).send(await createGolfer(db, course, req.staff?.user.id, golferBody.parse(req.body)));
+  });
+  app.get("/v1/courses/:slug/golfers/:id", async (req) => {
+    const course = await courseFor(req);
+    return getGolfer(db, course, idParams.parse(req.params).id);
+  });
+  app.patch("/v1/courses/:slug/golfers/:id", async (req) => {
+    const course = await courseFor(req);
+    return updateGolfer(db, course, idParams.parse(req.params).id, golferPatch.parse(req.body));
+  });
+  app.put("/v1/courses/:slug/bookings/:id/golfer", async (req) => {
+    const course = await courseFor(req);
+    const { golferId } = z.object({ golferId: z.uuid() }).parse(req.body);
+    return linkGolfer(db, course, idParams.parse(req.params).id, golferId);
   });
 
   app.get("/v1/courses/:slug/activity", async (req) => listActivity(db, (await managedCourseFor(req)).id));

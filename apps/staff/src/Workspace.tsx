@@ -7,6 +7,7 @@ import { WaiverEditor } from "./WaiverEditor";
 import { Header } from "./Header";
 import { ImportScreen } from "./ImportScreen";
 import { ChangePassword, StaffScreen } from "./StaffScreen";
+import { GolfersScreen } from "./Golfers";
 import { colors, type WebPress } from "./theme";
 
 type Section = "tee-sheet" | "import" | "staff" | "customers" | "reports" | "schedule" | "inventory" | "settings";
@@ -15,7 +16,7 @@ const SECTIONS: { id: Section; label: string; icon: string; soon?: string; manag
   { id: "tee-sheet", label: "Tee sheet", icon: "▦" },
   { id: "import", label: "Import tee sheet", icon: "⇩", managers: true },
   { id: "staff", label: "Staff accounts", icon: "☺", managers: true },
-  { id: "customers", label: "Customers", icon: "◉", soon: "Golfer profiles, punch cards, memberships and loyalty points." },
+  { id: "customers", label: "Golfers", icon: "◉" },
   { id: "reports", label: "Reports", icon: "▤", soon: "Daily sales, rounds played, occupancy and payment types. Managers can already ask the AI assistant for these." },
   { id: "schedule", label: "Staff schedule", icon: "◷", soon: "Shifts, time clock and shift swaps that the other employee accepts." },
   { id: "inventory", label: "Pro shop", icon: "▣", soon: "Products, stock counts, reorder alerts and the point of sale." },
@@ -92,6 +93,11 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
           <>
             <Header title="Import tee sheet" onOpenMenu={openMenu} />
             <ImportScreen client={client} />
+          </>
+        ) : section === "customers" ? (
+          <>
+            <Header title="Golfers" onOpenMenu={openMenu} />
+            <GolfersScreen client={client} />
           </>
         ) : section === "staff" ? (
           <>
