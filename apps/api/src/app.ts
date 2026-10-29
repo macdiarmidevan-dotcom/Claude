@@ -4,6 +4,8 @@ import { z, ZodError } from "zod";
 import type { Db } from "./db.ts";
 import { AppError, notFound } from "./errors.ts";
 import { lookupApiKey, type ApiKeyContext } from "./keys.ts";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { buildMcpServer } from "./mcp.ts";
 import { dayRange, getAddOns, getCourseBySlug, getTeeSheet, type Course } from "./courses.ts";
 import {
   createBooking,
@@ -138,6 +140,24 @@ export function buildApp(db: Db): FastifyInstance {
     await courseFor(req);
     return { role: req.apiKey!.role };
   });
+
+  // The AI assistant connector (MCP over streamable HTTP). Managers only, since it shows revenue.
+  // Stateless: each request gets its own server, so nothing is held between calls.
+  app.post("/v1/courses/:slug/mcp", async (req, reply) => {
+    const course = await managedCourseFor(req);
+    const server = buildMcpServer(db, course);
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+    reply.raw.on("close", () => {
+      transport.close();
+      server.close();
+    });
+    await server.connect(transport);
+    reply.hijack();
+    await transport.handleRequest(req.raw, reply.raw, req.body);
+  });
+  app.get("/v1/courses/:slug/mcp", async (_req, reply) =>
+    reply.status(405).send({ error: { code: "method_not_allowed", message: "Use POST" } }),
+  );
 
   // The liability waiver each cart driver signs.
   app.get("/v1/courses/:slug/waiver", async (req) => {
