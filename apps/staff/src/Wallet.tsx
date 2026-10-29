@@ -62,8 +62,8 @@ export function WalletSection({ client, golferId, isManager }: { client: Client;
       {error && <Text role="alert" style={styles.error}>{error}</Text>}
       <View style={styles.row}>
         <View style={[styles.box, { flex: 1, minWidth: 260 }]}>
-          <Text style={styles.title}>Punch cards and passes</Text>
-          {shown.length === 0 && <Text style={styles.help}>None yet.</Text>}
+          <Text style={styles.title}>Punch cards, passes and rain checks</Text>
+          {shown.length === 0 && !wallet.rainChecks.some((r) => r.status === "active" && r.remainingCents > 0) && <Text style={styles.help}>None yet.</Text>}
           {shown.map((p) => (
             <View key={p.id} style={styles.pass}>
               <View style={{ flex: 1 }}>
@@ -71,6 +71,18 @@ export function WalletSection({ client, golferId, isManager }: { client: Client;
                 <Text style={styles.help}>{passSummary(p)}</Text>
               </View>
               {isManager && <SmallButton label="Cancel" onPress={() => run(() => client.cancelPass(golferId, p.id))} />}
+            </View>
+          ))}
+          {wallet.rainChecks.filter((r) => r.status === "active" && r.remainingCents > 0).map((r) => (
+            <View key={r.id} style={styles.pass}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.strong, !r.usable && { color: colors.muted }]}>Rain check {r.code}</Text>
+                <Text style={styles.help}>
+                  {money(r.remainingCents)} left of {money(r.amountCents)} ·{" "}
+                  {r.expiresAt ? `${r.usable ? "good until" : "expired"} ${new Date(r.expiresAt).toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" })}` : "no end date"}
+                </Text>
+              </View>
+              {isManager && r.remainingCents === r.amountCents && <SmallButton label="Void" onPress={() => run(async () => (await client.voidRainCheck(r.id), client.wallet(golferId)))} />}
             </View>
           ))}
           {selling ? (

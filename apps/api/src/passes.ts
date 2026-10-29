@@ -4,6 +4,7 @@ import { badRequest, conflict, notFound } from "./errors.ts";
 import { changePoints, loyaltyRates } from "./loyalty.ts";
 import { useCardPayment } from "./payments.ts";
 import { insertSale, type SalePaymentMethod } from "./pos.ts";
+import { listRainChecks } from "./rainchecks.ts";
 
 // Punch cards and season passes. Managers set up what the course sells; the pro shop sells one to
 // a golfer's account (rung up as a pro shop sale) and uses it at check-in to pay for rounds.
@@ -114,6 +115,7 @@ export async function getWallet(db: DbClient, course: Course, golferId: string) 
   const points = golfer.loyalty_points as number;
   return {
     passes: passes.map((p) => toGolferPass(p)),
+    rainChecks: await listRainChecks(db, course, { golferId }),
     loyalty: {
       enabled: rates.pointsPerDollar > 0,
       points,

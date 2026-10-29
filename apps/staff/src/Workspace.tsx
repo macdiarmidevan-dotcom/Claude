@@ -111,6 +111,7 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
               onOpenMenu={openMenu}
               onOpenGolfer={openGolfer}
               jumpTo={jumpTo}
+              isManager={isManager}
             />
           ) : (
             <Header title="Tee sheet" onOpenMenu={openMenu} subtitle={error ?? "Loading…"} />

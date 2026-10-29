@@ -26,7 +26,7 @@ export interface Course {
 }
 
 export type BookingStatus = "confirmed" | "checked_in" | "teed_off" | "cancelled" | "no_show";
-export type PaymentMethod = "card" | "cash" | "prepaid" | "punch_card" | "season_pass" | "loyalty" | "gift_card" | "comp";
+export type PaymentMethod = "card" | "cash" | "prepaid" | "punch_card" | "season_pass" | "loyalty" | "rain_check" | "gift_card" | "comp";
 
 export interface PaymentSummary {
   status: "paid" | "partial" | "unpaid";
@@ -328,8 +328,27 @@ export interface LoyaltySettings {
   rewardCents: number;
 }
 
+export interface RainCheck {
+  id: string;
+  code: string;
+  bookingId: string;
+  golferId: string | null;
+  name: string;
+  players: number;
+  holesUnplayed: number;
+  amountCents: number;
+  remainingCents: number;
+  expiresAt: string | null;
+  status: "active" | "void";
+  note: string | null;
+  issuedBy: string | null;
+  issuedAt: string;
+  usable: boolean;
+}
+
 export interface Wallet {
   passes: GolferPass[];
+  rainChecks: RainCheck[];
   loyalty: LoyaltySettings & {
     enabled: boolean;
     points: number;
@@ -342,6 +361,8 @@ export interface Wallet {
 export interface Redemption {
   pass?: { golferPassId: string; rounds: number };
   points?: number;
+  /** A rain check's code. */
+  rainCheck?: string;
 }
 
 export interface Product {
@@ -412,7 +433,7 @@ export interface SalesDay {
   };
 }
 
-export type MoneyMethod = "cash" | "card" | "gift_card" | "punch_card" | "season_pass" | "loyalty" | "prepaid" | "comp";
+export type MoneyMethod = "cash" | "card" | "gift_card" | "punch_card" | "season_pass" | "loyalty" | "rain_check" | "prepaid" | "comp";
 
 export interface Report {
   from: string;
@@ -581,6 +602,15 @@ function createHttpClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "ap
       request<Wallet>(`/golfers/${golferId}/passes`, { method: "POST", body: sale }),
     cancelPass: (golferId: string, passId: string) => request<Wallet>(`/golfers/${golferId}/passes/${passId}/cancel`, { method: "POST" }),
     adjustPoints: (golferId: string, change: number, note: string) => request<Wallet>(`/golfers/${golferId}/points`, { method: "POST", body: { change, note } }),
+    issueRainCheck: (bookingId: string, input: { players: number; holesPlayed: number; includeCart?: boolean; amountCents?: number; note?: string | null }) =>
+      request<RainCheck>(`/bookings/${bookingId}/rain-checks`, { method: "POST", body: input }),
+    bookingRainChecks: (bookingId: string) => request<RainCheck[]>(`/bookings/${bookingId}/rain-checks`),
+    findRainCheck: (code: string) => request<RainCheck>(`/rain-checks/${encodeURIComponent(code.trim().toUpperCase())}`),
+    voidRainCheck: (id: string) => request<RainCheck>(`/rain-checks/${id}/void`, { method: "POST" }),
+    refundRound: (bookingId: string, input: { amountCents: number; method: "cash" | "card"; reason: string }) =>
+      request(`/bookings/${bookingId}/refund`, { method: "POST", body: input }),
+    rainCheckSettings: () => request<{ rainCheckDays: number }>("/settings/rain-checks"),
+    saveRainCheckSettings: (s: { rainCheckDays: number }) => request<{ rainCheckDays: number }>("/settings/rain-checks", { method: "PUT", body: s }),
     posSettings: () => request<{ salesTaxBps: number }>("/settings/pos"),
     savePosSettings: (settings: { salesTaxBps: number }) => request<{ salesTaxBps: number }>("/settings/pos", { method: "PUT", body: settings }),
     report: (from: string, to: string) => request<Report>(`/reports?from=${from}&to=${to}`),

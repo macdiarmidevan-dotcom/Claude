@@ -7,6 +7,7 @@ import { insertSale, type SaleLineInput, type SalePaymentMethod } from "./pos.ts
 import { useCardPayment } from "./payments.ts";
 import { earnPoints } from "./loyalty.ts";
 import { redeemPass, redeemPoints } from "./passes.ts";
+import { redeemRainCheck } from "./rainchecks.ts";
 
 export type BookingSource = "staff" | "phone" | "teeitup" | "golfnow" | "import";
 
@@ -68,7 +69,7 @@ export interface WaiverSignature {
   signature: string;
 }
 
-export type PaymentMethod = "card" | "cash" | "prepaid" | "punch_card" | "season_pass" | "loyalty" | "gift_card" | "comp";
+export type PaymentMethod = "card" | "cash" | "prepaid" | "punch_card" | "season_pass" | "loyalty" | "rain_check" | "gift_card" | "comp";
 
 export interface PaymentSummary {
   status: "paid" | "partial" | "unpaid";
@@ -378,6 +379,8 @@ export async function checkIn(
     pass?: { golferPassId: string; rounds: number } | undefined;
     /** Loyalty points spent on money off the round. */
     points?: number | undefined;
+    /** A rain check's code, put toward the round. */
+    rainCheck?: string | undefined;
     staffId?: string | undefined;
   },
 ): Promise<Booking> {
@@ -407,6 +410,10 @@ export async function checkIn(
     if (opts.points) {
       const b = await getBooking(client, course, id);
       await redeemPoints(client, course, { id, customerId: golferId!, balanceCents: b.payment.balanceCents }, opts.points, opts.staffId);
+    }
+    if (opts.rainCheck) {
+      const b = await getBooking(client, course, id);
+      await redeemRainCheck(client, course, { id, balanceCents: b.payment.balanceCents }, opts.rainCheck, opts.staffId);
     }
     const booking = await getBooking(client, course, id);
     const roundOnCard = opts.payment?.method === "card" ? booking.payment.balanceCents : 0;
