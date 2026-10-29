@@ -79,7 +79,7 @@ export function GolferPicker({ client, booking, onLinked, onCancel }: { client: 
               accessibilityLabel={`Link ${g.name}, ${g.phone}, ${g.roundsPlayed} rounds`}
               disabled={busy}
               onPress={() => link(g)}
-              style={({ hovered, focused }: WebPress) => [styles.result, hovered && { backgroundColor: colors.greenLight }, focused && styles.focusRing]}
+              style={({ hovered, focused }: WebPress) => [styles.result, hovered && { backgroundColor: colors.primaryLight }, focused && styles.focusRing]}
             >
               <View style={{ flex: 1 }}>
                 <Text style={styles.resultName}>{g.name}</Text>
@@ -190,7 +190,7 @@ export function GolfersScreen({ client, openId, onOpenBooking }: { client: Clien
             key={g.id}
             accessibilityRole="link"
             onPress={() => setOpen(g.id)}
-            style={({ hovered, focused }: WebPress) => [styles.result, hovered && { backgroundColor: colors.greenLight }, focused && styles.focusRing]}
+            style={({ hovered, focused }: WebPress) => [styles.result, hovered && { backgroundColor: colors.primaryLight }, focused && styles.focusRing]}
           >
             <View style={{ flex: 1 }}>
               <Text style={styles.resultName}>{g.name}</Text>
@@ -232,7 +232,7 @@ export function GolferDetail({ client, id, onBack, onOpenBooking }: { client: Cl
     client.golfer(id).then(setG).catch((e) => setError(e.message));
   }, [client, id]);
 
-  if (!g) return error ? <Text role="alert" style={[styles.error, { padding: 20 }]}>{error}</Text> : <ActivityIndicator style={{ marginTop: 40 }} color={colors.green} />;
+  if (!g) return error ? <Text role="alert" style={[styles.error, { padding: 16 }]}>{error}</Text> : <ActivityIndicator style={{ marginTop: 40 }} color={colors.primary} />;
 
   return (
     <ScrollView contentContainerStyle={styles.page}>
@@ -290,7 +290,7 @@ export function GolferDetail({ client, id, onBack, onOpenBooking }: { client: Cl
               accessibilityLabel={`${dateTime(h.startsAt)}, ${h.holes} holes. Open on the tee sheet`}
               disabled={!onOpenBooking || h.bookingId.startsWith("past-")}
               onPress={() => onOpenBooking?.(h)}
-              style={({ hovered, focused }: WebPress) => [styles.historyRow, hovered && { backgroundColor: colors.greenLight }, focused && styles.focusRing]}
+              style={({ hovered, focused }: WebPress) => [styles.historyRow, hovered && { backgroundColor: colors.primaryLight }, focused && styles.focusRing]}
             >
               <Text style={[styles.historyCell, { width: 230 }]}>{dateTime(h.startsAt)}</Text>
               <Text style={[styles.historyCell, { flex: 1, minWidth: 140 }]}>
@@ -300,7 +300,7 @@ export function GolferDetail({ client, id, onBack, onOpenBooking }: { client: Cl
                 {h.status === "teed_off" || h.status === "checked_in" ? "Played" : statusLabel[h.status]}
               </Text>
               <Text style={[styles.historyCell, { width: 80, textAlign: "right" }]}>{money(h.paidCents)}</Text>
-              {onOpenBooking && <Text style={[styles.historyCell, { color: colors.green }]} aria-hidden>›</Text>}
+              {onOpenBooking && <Text style={[styles.historyCell, { color: colors.primary }]} aria-hidden>›</Text>}
             </Pressable>
           ))}
         </View>
@@ -347,29 +347,29 @@ const dateTime = (iso: string) =>
   new Date(iso).toLocaleString([], { weekday: "short", month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
 
 const styles = StyleSheet.create({
-  page: { padding: 24 },
-  box: { borderWidth: 1, borderColor: colors.border, borderRadius: 10, padding: 14, marginTop: 10, backgroundColor: colors.bg },
-  boxTitle: { fontSize: 16, fontWeight: "700", color: colors.text, marginBottom: 6 },
-  help: { color: colors.muted, fontSize: 14, lineHeight: 20, marginBottom: 10 },
+  page: { padding: 16 },
+  box: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, padding: 14, marginTop: 10, backgroundColor: colors.bg },
+  boxTitle: { fontSize: 14, fontWeight: "700", color: colors.text, marginBottom: 6 },
+  help: { color: colors.muted, fontSize: 13, lineHeight: 20, marginBottom: 10 },
   error: { color: colors.noShow, marginVertical: 6 },
-  input: { borderWidth: 1, borderColor: colors.border, borderRadius: 8, padding: 11, fontSize: 16, color: colors.text, backgroundColor: "#fff", marginBottom: 8 },
-  label: { fontSize: 13, fontWeight: "600", color: colors.muted, marginBottom: 4 },
-  result: { flexDirection: "row", alignItems: "center", gap: 12, padding: 12, minHeight: 52, borderRadius: 8, borderWidth: 1, borderColor: colors.border, backgroundColor: "#fff", marginBottom: 6 },
-  resultName: { fontSize: 16, fontWeight: "700", color: colors.text },
-  meta: { color: colors.muted, fontSize: 14 },
+  input: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, padding: 11, fontSize: 14, color: colors.text, backgroundColor: "#fff", marginBottom: 8 },
+  label: { fontSize: 12, fontWeight: "600", color: colors.muted, marginBottom: 4 },
+  result: { flexDirection: "row", alignItems: "center", gap: 12, padding: 12, minHeight: 44, borderRadius: 3, borderWidth: 1, borderColor: colors.border, backgroundColor: "#fff", marginBottom: 6 },
+  resultName: { fontSize: 14, fontWeight: "700", color: colors.text },
+  meta: { color: colors.muted, fontSize: 13 },
   actions: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 8 },
-  button: { borderWidth: 1, borderColor: colors.border, borderRadius: 8, paddingHorizontal: 14, minHeight: 44, justifyContent: "center", backgroundColor: "#fff", alignSelf: "flex-start" },
-  buttonPrimary: { backgroundColor: colors.green, borderColor: colors.green },
-  buttonText: { color: colors.text, fontWeight: "600", fontSize: 15 },
-  link: { color: colors.green, fontWeight: "600", textDecorationLine: "underline", fontSize: 15 },
-  h1: { fontSize: 26, fontWeight: "700", color: colors.text, marginBottom: 6 },
-  h2: { fontSize: 18, fontWeight: "700", color: colors.text, marginTop: 24, marginBottom: 8 },
+  button: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, paddingHorizontal: 14, minHeight: 36, justifyContent: "center", backgroundColor: "#fff", alignSelf: "flex-start" },
+  buttonPrimary: { backgroundColor: colors.primary, borderColor: colors.primary },
+  buttonText: { color: colors.text, fontWeight: "600", fontSize: 14 },
+  link: { color: colors.primary, fontWeight: "600", textDecorationLine: "underline", fontSize: 14 },
+  h1: { fontSize: 20, fontWeight: "700", color: colors.text, marginBottom: 6 },
+  h2: { fontSize: 16, fontWeight: "700", color: colors.text, marginTop: 24, marginBottom: 8 },
   contact: { gap: 4 },
   stats: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginTop: 18 },
-  stat: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: 10, paddingVertical: 12, paddingHorizontal: 16, minWidth: 120 },
-  statValue: { fontSize: 24, fontWeight: "700", color: colors.text },
-  statLabel: { color: colors.muted, fontSize: 13, marginTop: 2 },
+  stat: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: 3, paddingVertical: 8, paddingHorizontal: 12, minWidth: 120 },
+  statValue: { fontSize: 20, fontWeight: "700", color: colors.text },
+  statLabel: { color: colors.muted, fontSize: 12, marginTop: 2 },
   historyRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, paddingVertical: 10, borderBottomWidth: 1, borderColor: colors.border },
-  historyCell: { color: colors.text, fontSize: 14 },
+  historyCell: { color: colors.text, fontSize: 13 },
   focusRing: { outlineColor: colors.focus, outlineWidth: 2, outlineStyle: "solid" } as object,
 });

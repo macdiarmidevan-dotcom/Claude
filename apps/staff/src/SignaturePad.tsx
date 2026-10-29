@@ -82,13 +82,13 @@ const styles = StyleSheet.create({
     width: "100%",
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: 10,
+    borderRadius: 3,
     backgroundColor: "#fdfdfb",
     overflow: "hidden",
     // Stops the browser scrolling the page while signing on the web.
     touchAction: "none",
   } as object,
-  hint: { position: "absolute", alignSelf: "center", top: "40%", color: colors.muted, fontSize: 15 },
+  hint: { position: "absolute", alignSelf: "center", top: "40%", color: colors.muted, fontSize: 14 },
   line: { position: "absolute", left: 24, right: 24, bottom: "22%", height: 1, backgroundColor: colors.border },
   clear: { alignSelf: "flex-end", paddingVertical: 8 },
 });
