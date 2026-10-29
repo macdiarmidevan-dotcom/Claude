@@ -9,6 +9,7 @@ import { ImportScreen } from "./ImportScreen";
 import { ChangePassword, StaffScreen } from "./StaffScreen";
 import { GolfersScreen } from "./Golfers";
 import { ScheduleScreen } from "./ScheduleScreen";
+import { ProShopScreen } from "./ProShopScreen";
 import { colors, type WebPress } from "./theme";
 
 type Section = "tee-sheet" | "import" | "staff" | "customers" | "reports" | "schedule" | "inventory" | "settings";
@@ -20,7 +21,7 @@ const SECTIONS: { id: Section; label: string; soon?: string; managers?: boolean 
   { id: "customers", label: "Golfers" },
   { id: "reports", label: "Reports", soon: "Daily sales, rounds played, occupancy and payment types. Managers can already ask the AI assistant for these." },
   { id: "schedule", label: "Staff schedule" },
-  { id: "inventory", label: "Pro shop", soon: "Products, stock counts, reorder alerts and the point of sale." },
+  { id: "inventory", label: "Pro shop" },
   { id: "settings", label: "Settings" },
 ];
 
@@ -130,6 +131,11 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
           <>
             <Header title="Staff schedule" onOpenMenu={openMenu} />
             {course && <ScheduleScreen client={client} me={me} timeZone={course.timeZone} />}
+          </>
+        ) : section === "inventory" ? (
+          <>
+            <Header title="Pro shop" onOpenMenu={openMenu} />
+            {course && <ProShopScreen client={client} me={me} timeZone={course.timeZone} />}
           </>
         ) : section === "settings" ? (
           <>

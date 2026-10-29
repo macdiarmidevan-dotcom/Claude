@@ -239,6 +239,76 @@ export interface Swap {
   createdAt: string;
 }
 
+export type SalePaymentMethod = "card" | "cash" | "gift_card" | "comp";
+
+export interface Product {
+  id: string;
+  name: string;
+  sku: string | null;
+  category: string;
+  priceCents: number;
+  costCents: number | null;
+  taxable: boolean;
+  trackStock: boolean;
+  stock: number;
+  reorderLevel: number;
+  /** Stock is at or below the reorder level. */
+  low: boolean;
+  active: boolean;
+}
+
+export interface ProductInput {
+  name: string;
+  sku?: string | null;
+  category?: string;
+  priceCents: number;
+  costCents?: number | null;
+  taxable?: boolean;
+  trackStock?: boolean;
+  reorderLevel?: number;
+  stock?: number;
+}
+
+export interface StockMovement {
+  id: string;
+  change: number;
+  stockAfter: number;
+  reason: "sale" | "refund" | "receive" | "count" | "adjust";
+  saleNumber: number | null;
+  note: string | null;
+  staff: string | null;
+  at: string;
+}
+
+export type SaleLineInput = { productId: string; quantity: number } | { description: string; unitCents: number; quantity: number; taxable?: boolean };
+
+export interface Sale {
+  id: string;
+  number: number;
+  at: string;
+  staff: string | null;
+  golfer: { id: string; name: string } | null;
+  subtotalCents: number;
+  taxCents: number;
+  totalCents: number;
+  paymentMethod: SalePaymentMethod;
+  status: "completed" | "refunded";
+  lines: { productId: string | null; description: string; category: string; quantity: number; unitCents: number; totalCents: number; taxable: boolean }[];
+}
+
+export interface SalesDay {
+  sales: Sale[];
+  summary: {
+    count: number;
+    subtotalCents: number;
+    taxCents: number;
+    totalCents: number;
+    refundedCents: number;
+    byMethod: Partial<Record<SalePaymentMethod, number>>;
+    byCategory: Record<string, number>;
+  };
+}
+
 export interface Coworker {
   id: string;
   name: string;
@@ -332,6 +402,20 @@ function createHttpClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "ap
     schedulingSettings: () => request<{ swapsNeedApproval: boolean }>("/settings/scheduling"),
     saveSchedulingSettings: (settings: { swapsNeedApproval: boolean }) =>
       request<{ swapsNeedApproval: boolean }>("/settings/scheduling", { method: "PUT", body: settings }),
+    products: (opts: { q?: string; all?: boolean } = {}) =>
+      request<Product[]>(`/products?q=${encodeURIComponent(opts.q ?? "")}${opts.all ? "&all=1" : ""}`),
+    addProduct: (input: ProductInput) => request<Product>("/products", { method: "POST", body: input }),
+    updateProduct: (id: string, patch: Partial<Omit<ProductInput, "stock">> & { active?: boolean }) =>
+      request<Product>(`/products/${id}`, { method: "PATCH", body: patch }),
+    productHistory: (id: string) => request<StockMovement[]>(`/products/${id}/history`),
+    changeStock: (id: string, change: { kind: "receive" | "count" | "adjust"; quantity: number; note?: string | null }) =>
+      request<Product>(`/products/${id}/stock`, { method: "POST", body: change }),
+    sell: (sale: { lines: SaleLineInput[]; paymentMethod: SalePaymentMethod; golferId?: string | null }) =>
+      request<Sale>("/sales", { method: "POST", body: sale }),
+    sales: (date: string) => request<SalesDay>(`/sales?date=${date}`),
+    refundSale: (id: string) => request<Sale>(`/sales/${id}/refund`, { method: "POST" }),
+    posSettings: () => request<{ salesTaxBps: number }>("/settings/pos"),
+    savePosSettings: (settings: { salesTaxBps: number }) => request<{ salesTaxBps: number }>("/settings/pos", { method: "PUT", body: settings }),
     searchGolfers: (q: string) => request<GolferAccount[]>(`/golfers?q=${encodeURIComponent(q)}`),
     golfer: (id: string) => request<GolferProfile>(`/golfers/${id}`),
     /** Creates a golfer's account, usually at their first check-in, and links that booking. */

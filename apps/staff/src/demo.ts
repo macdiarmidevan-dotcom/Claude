@@ -9,6 +9,12 @@ import {
   type GolferProfile,
   type Role,
   type EmployeeType,
+  type Product,
+  type ProductInput,
+  type Sale,
+  type SaleLineInput,
+  type SalePaymentMethod,
+  type StockMovement,
   type Punch,
   type Shift,
   type ShiftInput,
@@ -105,6 +111,42 @@ function seedSchedule() {
   }
 }
 
+// The demo pro shop, kept outside the client like the schedule so stock carries between sign-ins.
+const products: Product[] = [];
+const movements = new Map<string, StockMovement[]>();
+const sales: Sale[] = [];
+const pos = { salesTaxBps: 725 };
+
+function seedProducts() {
+  if (products.length) return;
+  const list: [string, string, string, number, number, number, number, boolean?][] = [
+    // name, sku, category, price, cost, stock, reorder at, taxable
+    ["Titleist Pro V1 (dozen)", "TPV1", "Balls", 5499, 3800, 14, 6],
+    ["Callaway Supersoft (dozen)", "CSS12", "Balls", 2499, 1550, 22, 8],
+    ["Srixon Soft Feel sleeve", "SSF3", "Balls", 999, 560, 4, 6],
+    ["FootJoy WeatherSof glove", "FJWS", "Gloves", 2299, 1200, 18, 10],
+    ["FootJoy StaSof glove", "FJSS", "Gloves", 2799, 1500, 3, 5],
+    ["River Bend logo cap", "RBCAP", "Apparel", 2800, 1100, 25, 8],
+    ["River Bend polo", "RBPOLO", "Apparel", 6500, 2800, 11, 6],
+    ["Wooden tees (bag of 50)", "TEE50", "Accessories", 399, 120, 40, 15],
+    ["Divot tool with ball marker", "DIVOT", "Accessories", 899, 300, 16, 6],
+    ["Rain umbrella", "UMB", "Accessories", 3499, 1600, 5, 3],
+    ["Bottled water", "H2O", "Food & drink", 250, 60, 48, 24],
+    ["Gatorade", "GATR", "Food & drink", 350, 110, 30, 18],
+    ["Hot dog", "HOTDOG", "Food & drink", 500, 140, 0, 0, true],
+    ["Range bucket, small", "RNGS", "Range", 800, 0, 0, 0, false],
+    ["Range bucket, large", "RNGL", "Range", 1400, 0, 0, 0, false],
+  ];
+  for (const [name, sku, category, priceCents, costCents, stock, reorderLevel, taxable] of list) {
+    const tracked = !["Range"].includes(category) && sku !== "HOTDOG";
+    products.push({ id: `pr-${sku}`, name, sku, category, priceCents, costCents, taxable: taxable ?? true, trackStock: tracked, stock: tracked ? stock : 0, reorderLevel, low: false, active: true });
+  }
+  for (const p of products) refreshLow(p);
+}
+function refreshLow(p: Product) {
+  p.low = p.trackStock && p.active && p.stock <= p.reorderLevel;
+}
+
 export async function demoSignIn(email: string, password: string) {
   await new Promise((r) => setTimeout(r, 200));
   const a = accounts.find((x) => x.email === email.trim().toLowerCase());
@@ -186,6 +228,13 @@ export function createDemoClient(apiKey: string): Client {
     offered.staffId = w.toId;
     if (requested) requested.staffId = w.fromId;
     w.status = "approved";
+  }
+  function move(p: Product, change: number, reason: StockMovement["reason"], saleNumber: number | null, note: string | null) {
+    p.stock += change;
+    refreshLow(p);
+    const list = movements.get(p.id) ?? [];
+    list.unshift({ id: id(), change, stockAfter: p.stock, reason, saleNumber, note, staff: account()?.name ?? null, at: new Date().toISOString() });
+    movements.set(p.id, list);
   }
   const log = (action: string, golfer?: string) =>
     activity.unshift({ actor: account()?.name ?? "Shared device key", action, golfer: golfer ?? null, bookingId: null, detail: {}, at: new Date().toISOString() });
@@ -805,6 +854,138 @@ export function createDemoClient(apiKey: string): Client {
         scheduling.swapsNeedApproval = next.swapsNeedApproval;
         log("Changed scheduling settings");
         return { ...scheduling };
+      }),
+    products: (opts: { q?: string; all?: boolean } = {}) =>
+      reply(() => {
+        seedProducts();
+        const q = opts.q?.trim().toLowerCase() ?? "";
+        return products
+          .filter((p) => (opts.all || p.active) && (!q || p.name.toLowerCase().includes(q) || p.sku?.toLowerCase() === q))
+          .sort((a, b) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name))
+          .map((p) => ({ ...p }));
+      }),
+    addProduct: (input: ProductInput) =>
+      reply(() => {
+        managerOnly();
+        seedProducts();
+        if (input.sku && products.some((p) => p.sku?.toLowerCase() === input.sku!.toLowerCase())) throw conflict("sku_taken", "Another product already uses that SKU");
+        const p: Product = {
+          id: id(),
+          name: input.name.trim(),
+          sku: input.sku?.trim() || null,
+          category: input.category?.trim() || "Other",
+          priceCents: input.priceCents,
+          costCents: input.costCents ?? null,
+          taxable: input.taxable ?? true,
+          trackStock: input.trackStock ?? true,
+          stock: input.trackStock === false ? 0 : (input.stock ?? 0),
+          reorderLevel: input.reorderLevel ?? 0,
+          low: false,
+          active: true,
+        };
+        refreshLow(p);
+        products.push(p);
+        if (p.stock) move(p, p.stock, "receive", null, "Starting stock");
+        log("Added a product");
+        return { ...p };
+      }),
+    updateProduct: (productId: string, patch: Partial<Omit<ProductInput, "stock">> & { active?: boolean }) =>
+      reply(() => {
+        managerOnly();
+        const p = products.find((x) => x.id === productId)!;
+        if (patch.sku && products.some((x) => x.id !== p.id && x.sku?.toLowerCase() === patch.sku!.toLowerCase())) throw conflict("sku_taken", "Another product already uses that SKU");
+        Object.assign(p, Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)));
+        refreshLow(p);
+        log("Changed a product");
+        return { ...p };
+      }),
+    productHistory: (productId: string) => reply(() => movements.get(productId) ?? []),
+    changeStock: (productId: string, change: { kind: "receive" | "count" | "adjust"; quantity: number; note?: string | null }) =>
+      reply(() => {
+        if (change.kind !== "receive") managerOnly();
+        if (change.kind === "adjust" && !change.note?.trim()) throw new ApiError(400, "note_required", "Say why the stock is being adjusted");
+        const p = products.find((x) => x.id === productId)!;
+        const after = change.kind === "count" ? change.quantity : p.stock + change.quantity;
+        move(p, after - p.stock, change.kind, null, change.note?.trim() || null);
+        log("Changed stock");
+        return { ...p };
+      }),
+    sell: (input: { lines: SaleLineInput[]; paymentMethod: SalePaymentMethod; golferId?: string | null }) =>
+      reply(() => {
+        if (!input.lines.length) throw new ApiError(400, "empty_sale", "Add something to the sale first");
+        const lines = input.lines.map((l) => {
+          if ("productId" in l) {
+            const p = products.find((x) => x.id === l.productId)!;
+            return { productId: p.id, description: p.name, category: p.category, quantity: l.quantity, unitCents: p.priceCents, totalCents: p.priceCents * l.quantity, taxable: p.taxable };
+          }
+          return { productId: null, description: l.description, category: "Other", quantity: l.quantity, unitCents: l.unitCents, totalCents: l.unitCents * l.quantity, taxable: l.taxable ?? true };
+        });
+        const subtotalCents = lines.reduce((t, l) => t + l.totalCents, 0);
+        const taxCents = input.paymentMethod === "comp" ? 0 : Math.round((lines.filter((l) => l.taxable).reduce((t, l) => t + l.totalCents, 0) * pos.salesTaxBps) / 10_000);
+        const g = input.golferId ? golfers.find((x) => x.id === input.golferId) : undefined;
+        const sale: Sale = {
+          id: id(),
+          number: sales.length + 1001,
+          at: new Date().toISOString(),
+          staff: account()?.name ?? null,
+          golfer: g ? { id: g.id, name: g.name } : null,
+          subtotalCents,
+          taxCents,
+          totalCents: subtotalCents + taxCents,
+          paymentMethod: input.paymentMethod,
+          status: "completed",
+          lines,
+        };
+        sales.unshift(sale);
+        for (const l of lines) {
+          const p = products.find((x) => x.id === l.productId);
+          if (p?.trackStock) move(p, -l.quantity, "sale", sale.number, null);
+        }
+        log("Made a sale", g?.name);
+        return sale;
+      }),
+    sales: (date: string) =>
+      reply(() => {
+        const list = sales.filter((x) => new Intl.DateTimeFormat("en-CA", { timeZone: riverBend.timeZone }).format(new Date(x.at)) === date);
+        const kept = list.filter((x) => x.status === "completed");
+        const sum = (l: { totalCents: number }[]) => l.reduce((t, x) => t + x.totalCents, 0);
+        const byMethod: Partial<Record<SalePaymentMethod, number>> = {};
+        for (const x of kept) byMethod[x.paymentMethod] = (byMethod[x.paymentMethod] ?? 0) + x.totalCents;
+        const byCategory: Record<string, number> = {};
+        for (const l of kept.flatMap((x) => x.lines)) byCategory[l.category] = (byCategory[l.category] ?? 0) + l.totalCents;
+        return {
+          sales: list,
+          summary: {
+            count: kept.length,
+            subtotalCents: kept.reduce((t, x) => t + x.subtotalCents, 0),
+            taxCents: kept.reduce((t, x) => t + x.taxCents, 0),
+            totalCents: sum(kept),
+            refundedCents: sum(list.filter((x) => x.status === "refunded")),
+            byMethod,
+            byCategory,
+          },
+        };
+      }),
+    refundSale: (saleId: string) =>
+      reply(() => {
+        managerOnly();
+        const sale = sales.find((x) => x.id === saleId)!;
+        if (sale.status === "refunded") throw conflict("already_refunded", "This sale was already refunded");
+        sale.status = "refunded";
+        for (const l of sale.lines) {
+          const p = products.find((x) => x.id === l.productId);
+          if (p?.trackStock) move(p, l.quantity, "refund", sale.number, null);
+        }
+        log("Refunded a sale", sale.golfer?.name);
+        return sale;
+      }),
+    posSettings: () => reply(() => ({ ...pos })),
+    savePosSettings: (next: { salesTaxBps: number }) =>
+      reply(() => {
+        managerOnly();
+        pos.salesTaxBps = next.salesTaxBps;
+        log("Changed sales tax");
+        return { ...pos };
       }),
     activity: () =>
       reply(() => {

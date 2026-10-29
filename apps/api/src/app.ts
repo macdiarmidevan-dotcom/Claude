@@ -24,6 +24,19 @@ import {
   timesheets,
   updateShift,
 } from "./scheduling.ts";
+import {
+  changeStock,
+  createProduct,
+  createSale,
+  getPosSettings,
+  getSale,
+  listProducts,
+  listSales,
+  productHistory,
+  refundSale,
+  savePosSettings,
+  updateProduct,
+} from "./pos.ts";
 import { deleteSync, getSync, runSync, saveSync, type FetchReport } from "./sync.ts";
 import { createGolfer, getGolfer, linkGolfer, searchGolfers, updateGolfer } from "./golfers.ts";
 import {
@@ -100,6 +113,12 @@ const ACTIONS: Record<string, string> = {
   "POST /v1/courses/:slug/swaps": "Asked to swap a shift",
   "POST /v1/courses/:slug/swaps/:id/:action": "Answered a shift swap",
   "PUT /v1/courses/:slug/settings/scheduling": "Changed scheduling settings",
+  "POST /v1/courses/:slug/products": "Added a product",
+  "PATCH /v1/courses/:slug/products/:id": "Changed a product",
+  "POST /v1/courses/:slug/products/:id/stock": "Changed stock",
+  "POST /v1/courses/:slug/sales": "Made a sale",
+  "POST /v1/courses/:slug/sales/:id/refund": "Refunded a sale",
+  "PUT /v1/courses/:slug/settings/pos": "Changed sales tax",
   "PATCH /v1/courses/:slug/employee-types/:id": "Changed an employee type",
 };
 
@@ -465,6 +484,68 @@ export function buildApp(db: Db, opts: { fetchReport?: FetchReport } = {}): Fast
   app.put("/v1/courses/:slug/settings/scheduling", async (req) => {
     const course = await managedCourseFor(req);
     return saveSchedulingSettings(db, course, z.object({ swapsNeedApproval: z.boolean() }).parse(req.body));
+  });
+
+  // Pro shop: products, stock and the register. Anyone can sell and receive deliveries;
+  // managers set prices, count and adjust stock, and refund.
+  const money = z.number().int().min(0).max(10_000_000);
+  const productBody = z.object({
+    name: z.string().trim().min(1).max(200),
+    sku: z.string().trim().max(60).nullish(),
+    category: z.string().trim().max(60).optional(),
+    priceCents: money,
+    costCents: money.nullish(),
+    taxable: z.boolean().optional(),
+    trackStock: z.boolean().optional(),
+    reorderLevel: z.number().int().min(0).max(100_000).optional(),
+    stock: z.number().int().min(0).max(100_000).optional(),
+  });
+  app.get("/v1/courses/:slug/products", async (req) => {
+    const course = await courseFor(req);
+    const { q, all } = z.object({ q: z.string().max(100).optional(), all: z.enum(["1", "0"]).optional() }).parse(req.query);
+    return listProducts(db, course, { q, includeInactive: all === "1" });
+  });
+  app.post("/v1/courses/:slug/products", async (req, reply) => {
+    const course = await managedCourseFor(req);
+    return reply.status(201).send(await createProduct(db, course, req.staff?.user.id, productBody.parse(req.body)));
+  });
+  app.patch("/v1/courses/:slug/products/:id", async (req) => {
+    const course = await managedCourseFor(req);
+    const patch = productBody.omit({ stock: true }).partial().extend({ active: z.boolean().optional() }).parse(req.body);
+    return updateProduct(db, course, idParams.parse(req.params).id, patch);
+  });
+  app.get("/v1/courses/:slug/products/:id/history", async (req) => productHistory(db, await courseFor(req), idParams.parse(req.params).id));
+  app.post("/v1/courses/:slug/products/:id/stock", async (req) => {
+    const body = z
+      .object({ kind: z.enum(["receive", "count", "adjust"]), quantity: z.number().int().min(-100_000).max(100_000), note: z.string().max(300).nullish() })
+      .parse(req.body);
+    const course = body.kind === "receive" ? await courseFor(req) : await managedCourseFor(req);
+    return changeStock(db, course, req.staff?.user.id, idParams.parse(req.params).id, body);
+  });
+  app.post("/v1/courses/:slug/sales", async (req, reply) => {
+    const course = await courseFor(req);
+    const line = z.union([
+      z.object({ productId: z.uuid(), quantity: z.number().int().min(1).max(999) }),
+      z.object({ description: z.string().max(200), unitCents: money, quantity: z.number().int().min(1).max(999), taxable: z.boolean().optional() }),
+    ]);
+    const body = z
+      .object({ lines: z.array(line).max(100), paymentMethod: z.enum(["card", "cash", "gift_card", "comp"]), golferId: z.uuid().nullish() })
+      .parse(req.body);
+    return reply.status(201).send(await createSale(db, course, req.staff?.user.id, body));
+  });
+  app.get("/v1/courses/:slug/sales", async (req) => {
+    const course = await courseFor(req);
+    return listSales(db, course, z.object({ date: z.iso.date() }).parse(req.query).date);
+  });
+  app.get("/v1/courses/:slug/sales/:id", async (req) => getSale(db, await courseFor(req), idParams.parse(req.params).id));
+  app.post("/v1/courses/:slug/sales/:id/refund", async (req) => {
+    const course = await managedCourseFor(req);
+    return refundSale(db, course, req.staff?.user.id, idParams.parse(req.params).id);
+  });
+  app.get("/v1/courses/:slug/settings/pos", async (req) => getPosSettings(db, await courseFor(req)));
+  app.put("/v1/courses/:slug/settings/pos", async (req) => {
+    const course = await managedCourseFor(req);
+    return savePosSettings(db, course, z.object({ salesTaxBps: z.number().int().min(0).max(2000) }).parse(req.body));
   });
 
   app.get("/v1/courses/:slug/activity", async (req) => listActivity(db, (await managedCourseFor(req)).id));
