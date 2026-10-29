@@ -49,9 +49,44 @@ export interface Booking {
   totalCents: number;
   lines: QuoteLine[];
   cartNumbers: string[];
+  payment: PaymentSummary;
+  waivers: { cartNumber: string; driverName: string; signedAt: string }[];
+  checkedInAt: string | null;
+  teedOffAt: string | null;
   notes: string | null;
   createdAt: string;
 }
+
+export interface WaiverSignature {
+  cartNumber: string;
+  driverName: string;
+  /** SVG path data of the drawn signature. */
+  signature: string;
+}
+
+export type PaymentMethod = "card" | "cash" | "prepaid" | "punch_card" | "gift_card" | "comp";
+
+export interface PaymentSummary {
+  status: "paid" | "partial" | "unpaid";
+  paidCents: number;
+  balanceCents: number;
+  methods: PaymentMethod[];
+}
+
+function paymentSummary(totalCents: number, paidCents: number, methods: PaymentMethod[] | null): PaymentSummary {
+  const balanceCents = Math.max(0, totalCents - paidCents);
+  return {
+    status: balanceCents === 0 ? "paid" : paidCents > 0 ? "partial" : "unpaid",
+    paidCents,
+    balanceCents,
+    methods: methods ?? [],
+  };
+}
+
+// Paid amount and methods for a booking, as SQL columns on a query that has bookings as "b".
+const PAYMENT_COLUMNS = `
+  (SELECT COALESCE(SUM(amount_cents), 0)::int FROM booking_payments WHERE booking_id = b.id) AS paid_cents,
+  (SELECT array_agg(DISTINCT method) FROM booking_payments WHERE booking_id = b.id) AS payment_methods`;
 
 async function lockTeeTime(client: DbClient, course: Course, teeTimeId: string, forUpdate: boolean) {
   const { rows } = await client.query(
@@ -175,7 +210,7 @@ export async function createBooking(
 
 export async function getBooking(db: DbClient, course: Course, id: string): Promise<Booking> {
   const { rows } = await db.query(
-    `SELECT b.*, c.name AS customer_name, c.email, c.phone,
+    `SELECT b.*, c.name AS customer_name, c.email, c.phone, ${PAYMENT_COLUMNS},
             t.id AS t_id, t.starts_at, t.max_players, t.status AS t_status, t.note AS t_note,
             (SELECT COALESCE(SUM(players), 0)::int FROM bookings
               WHERE tee_time_id = t.id AND status <> 'cancelled') AS booked
@@ -187,6 +222,12 @@ export async function getBooking(db: DbClient, course: Course, id: string): Prom
   );
   const r = rows[0];
   if (!r) throw notFound("Booking");
+  const { rows: waivers } = await db.query(
+    `SELECT w.cart_number, w.driver_name, w.signed_at, cw.version
+       FROM cart_waivers w JOIN course_waivers cw ON cw.id = w.waiver_id
+      WHERE w.booking_id = $1 ORDER BY w.cart_number`,
+    [id],
+  );
   const { rows: lines } = await db.query(
     "SELECT kind, code, description, quantity, unit_cents, total_cents FROM booking_lines WHERE booking_id = $1 ORDER BY kind DESC, code",
     [id],
@@ -213,34 +254,120 @@ export async function getBooking(db: DbClient, course: Course, id: string): Prom
       totalCents: l.total_cents,
     })),
     cartNumbers: r.cart_numbers,
+    payment: paymentSummary(r.total_cents, r.paid_cents, r.payment_methods),
+    waivers: waivers.map((w) => ({
+      cartNumber: w.cart_number,
+      driverName: w.driver_name,
+      signedAt: w.signed_at.toISOString(),
+      waiverVersion: w.version,
+    })),
+    checkedInAt: r.checked_in_at?.toISOString() ?? null,
+    teedOffAt: r.teed_off_at?.toISOString() ?? null,
     notes: r.notes,
     createdAt: r.created_at.toISOString(),
   };
 }
 
+// Which statuses each status can be reached from.
 const transitions: Record<string, string[]> = {
   cancelled: ["confirmed"],
-  checked_in: ["confirmed", "no_show"],
   no_show: ["confirmed"],
+  checked_in: ["confirmed", "no_show"],
+  teed_off: ["checked_in"],
 };
+
+async function changeStatus(
+  client: DbClient,
+  course: Course,
+  id: string,
+  status: "cancelled" | "no_show" | "checked_in" | "teed_off",
+): Promise<void> {
+  const { rowCount } = await client.query(
+    `UPDATE bookings SET status = $3,
+        cancelled_at  = CASE WHEN $3 = 'cancelled'  THEN now() ELSE cancelled_at END,
+        checked_in_at = CASE WHEN $3 = 'checked_in' THEN now() ELSE checked_in_at END,
+        teed_off_at   = CASE WHEN $3 = 'teed_off'   THEN now() ELSE teed_off_at END
+      WHERE id = $1 AND course_id = $2 AND status = ANY($4::text[])`,
+    [id, course.id, status, transitions[status]],
+  );
+  if (!rowCount) {
+    const current = await getBooking(client, course, id); // throws 404 if missing
+    if (status === "teed_off" && current.status === "confirmed") {
+      throw conflict("not_checked_in", "Send this group to the pro shop to check in first");
+    }
+    throw conflict("invalid_status", `Can't change a ${current.status} booking to ${status}`);
+  }
+}
 
 export async function setBookingStatus(
   db: Db,
   course: Course,
   id: string,
-  status: "cancelled" | "checked_in" | "no_show",
+  status: "cancelled" | "no_show",
 ): Promise<Booking> {
-  const { rowCount, rows } = await db.query(
-    `UPDATE bookings SET status = $3, cancelled_at = CASE WHEN $3 = 'cancelled' THEN now() ELSE cancelled_at END
-      WHERE id = $1 AND course_id = $2 AND status = ANY($4::text[])
-      RETURNING id`,
-    [id, course.id, status, transitions[status]],
-  );
-  if (!rowCount) {
-    const current = await getBooking(db, course, id); // throws 404 if missing
-    throw conflict("invalid_status", `Can't change a ${current.status} booking to ${status}`);
+  await changeStatus(db, course, id, status);
+  return getBooking(db, course, id);
+}
+
+/** Records a payment against a booking. Overpaying is refused so the balance never goes negative. */
+async function addPayment(client: DbClient, course: Course, id: string, amountCents: number, method: PaymentMethod) {
+  const booking = await getBooking(client, course, id);
+  if (amountCents > booking.payment.balanceCents) {
+    throw badRequest("overpayment", `The balance is only ${booking.payment.balanceCents} cents`);
   }
-  return getBooking(db, course, rows[0].id);
+  await client.query("INSERT INTO booking_payments (booking_id, amount_cents, method) VALUES ($1, $2, $3)", [
+    id,
+    amountCents,
+    method,
+  ]);
+}
+
+export async function recordPayment(db: Db, course: Course, id: string, amountCents: number, method: PaymentMethod) {
+  await withTransaction(db, (client) => addPayment(client, course, id, amountCents, method));
+  return getBooking(db, course, id);
+}
+
+/**
+ * Pro shop check-in. The group must be paid in full: pass `payment` to take the
+ * remaining balance in the same step.
+ */
+export async function checkIn(
+  db: Db,
+  course: Course,
+  id: string,
+  opts: {
+    payment?: { method: PaymentMethod } | undefined;
+    cartNumbers?: string[] | undefined;
+    waivers?: WaiverSignature[] | undefined;
+  },
+): Promise<Booking> {
+  await withTransaction(db, async (client) => {
+    await client.query("SELECT id FROM bookings WHERE id = $1 AND course_id = $2 FOR UPDATE", [id, course.id]);
+    const booking = await getBooking(client, course, id);
+    if (opts.payment && booking.payment.balanceCents > 0) {
+      await addPayment(client, course, id, booking.payment.balanceCents, opts.payment.method);
+    } else if (booking.payment.balanceCents > 0) {
+      throw conflict("payment_required", `This group still owes ${booking.payment.balanceCents} cents`);
+    }
+    if (opts.cartNumbers) await updateCarts(client, course, id, opts.cartNumbers, opts.waivers);
+    await changeStatus(client, course, id, "checked_in");
+  });
+  return getBooking(db, course, id);
+}
+
+/** Starter check-in at the first tee. Only groups the pro shop has checked in can go. */
+export async function teeOff(
+  db: Db,
+  course: Course,
+  id: string,
+  cartNumbers?: string[],
+  waivers?: WaiverSignature[],
+): Promise<Booking> {
+  await withTransaction(db, async (client) => {
+    if (cartNumbers) await updateCarts(client, course, id, cartNumbers, waivers);
+    await changeStatus(client, course, id, "teed_off");
+  });
+  return getBooking(db, course, id);
 }
 
 /**
@@ -272,12 +399,88 @@ export async function moveBooking(db: Db, course: Course, id: string, toTeeTimeI
   return getBooking(db, course, id);
 }
 
-export async function setCartNumbers(db: Db, course: Course, id: string, cartNumbers: string[]): Promise<Booking> {
-  const { rowCount } = await db.query(
-    "UPDATE bookings SET cart_numbers = $3 WHERE id = $1 AND course_id = $2 AND status <> 'cancelled'",
-    [id, course.id, cartNumbers],
+export async function getActiveWaiver(db: DbClient, course: Course) {
+  const { rows } = await db.query(
+    "SELECT id, version, title, body FROM course_waivers WHERE course_id = $1 AND active",
+    [course.id],
+  );
+  return rows[0] as { id: string; version: number; title: string; body: string } | undefined;
+}
+
+/**
+ * Replaces the wording drivers sign. The old version stays on file so every signed
+ * waiver still points at the exact text that driver agreed to.
+ */
+export async function updateWaiver(db: Db, course: Course, waiver: { title: string; body: string }) {
+  return withTransaction(db, async (client) => {
+    // Lock the course's waivers so two managers saving at once can't both take the next version.
+    const { rows } = await client.query<{ version: number }>(
+      "SELECT version FROM course_waivers WHERE course_id = $1 ORDER BY version DESC FOR UPDATE",
+      [course.id],
+    );
+    const version = (rows[0]?.version ?? 0) + 1;
+    await client.query("UPDATE course_waivers SET active = false WHERE course_id = $1 AND active", [course.id]);
+    await client.query("INSERT INTO course_waivers (course_id, version, title, body) VALUES ($1, $2, $3, $4)", [
+      course.id,
+      version,
+      waiver.title,
+      waiver.body,
+    ]);
+    return (await getActiveWaiver(client, course))!;
+  });
+}
+
+/**
+ * Assigns carts to a booking. Every cart needs a signed waiver from its driver,
+ * either already on file for this booking or passed in `waivers`.
+ */
+async function updateCarts(
+  client: DbClient,
+  course: Course,
+  id: string,
+  cartNumbers: string[],
+  waivers: WaiverSignature[] = [],
+) {
+  const { rowCount } = await client.query(
+    "SELECT 1 FROM bookings WHERE id = $1 AND course_id = $2 AND status <> 'cancelled' FOR UPDATE",
+    [id, course.id],
   );
   if (!rowCount) throw notFound("Booking");
+
+  if (cartNumbers.length > 0) {
+    const waiver = await getActiveWaiver(client, course);
+    if (!waiver) throw conflict("no_waiver", "Set up the course's cart waiver before assigning carts");
+    for (const w of waivers.filter((w) => cartNumbers.includes(w.cartNumber))) {
+      await client.query(
+        `INSERT INTO cart_waivers (booking_id, waiver_id, cart_number, driver_name, signature)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (booking_id, cart_number)
+           DO UPDATE SET waiver_id = EXCLUDED.waiver_id, driver_name = EXCLUDED.driver_name,
+                         signature = EXCLUDED.signature, signed_at = now()`,
+        [id, waiver.id, w.cartNumber, w.driverName, w.signature],
+      );
+    }
+    const { rows } = await client.query<{ cart_number: string }>(
+      "SELECT cart_number FROM cart_waivers WHERE booking_id = $1",
+      [id],
+    );
+    const signed = new Set(rows.map((r) => r.cart_number));
+    const missing = cartNumbers.filter((c) => !signed.has(c));
+    if (missing.length > 0) {
+      throw conflict("waiver_required", `The driver of cart ${missing.join(", ")} needs to sign the waiver`);
+    }
+  }
+  await client.query("UPDATE bookings SET cart_numbers = $2 WHERE id = $1", [id, cartNumbers]);
+}
+
+export async function setCartNumbers(
+  db: Db,
+  course: Course,
+  id: string,
+  cartNumbers: string[],
+  waivers?: WaiverSignature[],
+): Promise<Booking> {
+  await withTransaction(db, (client) => updateCarts(client, course, id, cartNumbers, waivers));
   return getBooking(db, course, id);
 }
 
@@ -298,7 +501,9 @@ export async function updateTeeTime(
 
 export async function listBookingsForDay(db: DbClient, course: Course, start: DateTime, end: DateTime) {
   const { rows } = await db.query(
-    `SELECT b.id, b.tee_time_id, b.players, b.holes, b.status, b.source, b.total_cents, b.cart_numbers, c.name, c.phone
+    `SELECT b.id, b.tee_time_id, b.players, b.holes, b.status, b.source, b.total_cents, b.cart_numbers, c.name, c.phone,
+            ${PAYMENT_COLUMNS},
+            (SELECT array_agg(cart_number) FROM cart_waivers WHERE booking_id = b.id) AS signed_carts
        FROM bookings b JOIN customers c ON c.id = b.customer_id JOIN tee_times t ON t.id = b.tee_time_id
       WHERE b.course_id = $1 AND t.starts_at >= $2 AND t.starts_at < $3 AND b.status <> 'cancelled'
       ORDER BY b.created_at`,
@@ -315,5 +520,8 @@ export async function listBookingsForDay(db: DbClient, course: Course, start: Da
     source: r.source,
     totalCents: r.total_cents,
     cartNumbers: r.cart_numbers as string[],
+    payment: paymentSummary(r.total_cents, r.paid_cents, r.payment_methods),
+    // Carts whose driver has signed the waiver for this booking.
+    signedCarts: (r.signed_carts ?? []) as string[],
   }));
 }

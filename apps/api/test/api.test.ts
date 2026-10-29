@@ -14,6 +14,7 @@ let db: Db;
 let app: FastifyInstance;
 let publicKey: string;
 let secretKey: string;
+let managerKey: string;
 
 // Next Tuesday at least a day out, so it gets weekday rates.
 const now = DateTime.now().setZone("America/Chicago");
@@ -23,6 +24,8 @@ const date = tuesday.toISODate()!;
 
 const auth = (key: string) => ({ authorization: `Bearer ${key}` });
 const golfer = { name: "Pat Golfer", email: "pat@example.com" };
+const signature = "M10 100 L40 60 L80 120 L120 70";
+const signed = (...carts: string[]) => carts.map((cartNumber) => ({ cartNumber, driverName: "Pat Golfer", signature }));
 
 async function teeTimeAt(localTime: string): Promise<string> {
   const res = await app.inject({ url: `/v1/courses/river-bend/tee-sheet?date=${date}`, headers: auth(secretKey) });
@@ -41,6 +44,7 @@ beforeAll(async () => {
   await migrate(db);
   const seeded = await seedRiverBend(db);
   secretKey = seeded.secretKey;
+  managerKey = seeded.managerKey;
   // Public keys from before the scope change must not reach anything.
   publicKey = await createApiKey(db, seeded.courseId, "public");
   app = buildApp(db);
@@ -121,7 +125,7 @@ describe("booking", () => {
       method: "POST",
       url: `/v1/courses/river-bend/bookings/${id}/check-in`,
       headers: auth(secretKey),
-      payload: { cartNumbers: ["12"] },
+      payload: { cartNumbers: ["12"], waivers: signed("12"), payment: { method: "card" } },
     });
     expect(checkIn.json()).toMatchObject({ status: "checked_in", cartNumbers: ["12"] });
 
@@ -129,12 +133,13 @@ describe("booking", () => {
       method: "PUT",
       url: `/v1/courses/river-bend/bookings/${id}/carts`,
       headers: auth(secretKey),
-      payload: { cartNumbers: ["14", "15"] },
+      payload: { cartNumbers: ["14", "15"], waivers: signed("14", "15") },
     });
     expect(swap.json().cartNumbers).toEqual(["14", "15"]);
     const sheet = await app.inject({ url: `/v1/courses/river-bend/tee-sheet?date=${date}`, headers: auth(secretKey) });
     const row = sheet.json().teeTimes.find((t: { id: string }) => t.id === teeTimeId);
     expect(row.bookings[0].cartNumbers).toEqual(["14", "15"]);
+    expect(row.bookings[0].signedCarts).toEqual(expect.arrayContaining(["12", "14", "15"]));
   });
 
   it("won't overbook a tee time, even with simultaneous requests", async () => {
@@ -175,12 +180,105 @@ describe("booking", () => {
     expect(res.json().error.code).toBe("tee_time_blocked");
   });
 
-  it("checks golfers in and won't check in a cancelled booking", async () => {
-    const teeTimeId = await teeTimeAt("14:06");
+  it("won't assign a cart until its driver signs the waiver", async () => {
+    const waiver = await app.inject({ url: "/v1/courses/river-bend/waiver", headers: auth(secretKey) });
+    expect(waiver.json()).toMatchObject({ version: 1, title: "Golf Cart Rules and Liability Waiver" });
+
+    const teeTimeId = await teeTimeAt("14:30");
+    const { id } = (await book(secretKey, { teeTimeId, holes: 9, customer: golfer, players: [{}, {}, {}] })).json();
+    const carts = (payload: object) =>
+      app.inject({ method: "PUT", url: `/v1/courses/river-bend/bookings/${id}/carts`, headers: auth(secretKey), payload });
+
+    const unsigned = await carts({ cartNumbers: ["3", "4"], waivers: signed("3") });
+    expect(unsigned.statusCode).toBe(409);
+    expect(unsigned.json().error).toMatchObject({ code: "waiver_required", message: expect.stringContaining("cart 4") });
+    // Nothing is saved when any cart is missing a waiver.
+    const booking = await app.inject({ url: `/v1/courses/river-bend/bookings/${id}`, headers: auth(secretKey) });
+    expect(booking.json()).toMatchObject({ cartNumbers: [], waivers: [] });
+
+    const ok = await carts({ cartNumbers: ["3", "4"], waivers: signed("3", "4") });
+    expect(ok.json().cartNumbers).toEqual(["3", "4"]);
+    expect(ok.json().waivers.map((w: { cartNumber: string }) => w.cartNumber)).toEqual(["3", "4"]);
+    // A cart already signed for on this booking doesn't need signing again.
+    expect((await carts({ cartNumbers: ["4"] })).json().cartNumbers).toEqual(["4"]);
+    // Signatures must be drawn path data, not arbitrary markup.
+    const bad = await carts({ cartNumbers: ["5"], waivers: [{ cartNumber: "5", driverName: "X", signature: "<script>alert(1)</script>" }] });
+    expect(bad.statusCode).toBe(400);
+  });
+
+  it("lets only a manager reword the waiver, keeping the old version", async () => {
+    const me = (key: string) => app.inject({ url: "/v1/courses/river-bend/me", headers: auth(key) });
+    expect((await me(secretKey)).json()).toEqual({ role: "staff" });
+    expect((await me(managerKey)).json()).toEqual({ role: "manager" });
+
+    const teeTimeId = await teeTimeAt("13:58");
     const { id } = (await book(secretKey, { teeTimeId, holes: 9, customer: golfer, players: [{}] })).json();
-    const post = (action: string) =>
-      app.inject({ method: "POST", url: `/v1/courses/river-bend/bookings/${id}/${action}`, headers: auth(secretKey) });
-    expect((await post("check-in")).json().status).toBe("checked_in");
+    const before = await app.inject({ method: "PUT", url: `/v1/courses/river-bend/bookings/${id}/carts`, headers: auth(secretKey), payload: { cartNumbers: ["9"], waivers: signed("9") } });
+    expect(before.json().waivers[0].waiverVersion).toBe(1);
+
+    const wording = { title: "River Bend Cart Agreement", body: "Drivers must be 16 or older and follow all cart rules." };
+    const put = (key: string, payload: object) =>
+      app.inject({ method: "PUT", url: "/v1/courses/river-bend/waiver", headers: auth(key), payload });
+    const denied = await put(secretKey, wording);
+    expect(denied.statusCode).toBe(403);
+    expect(denied.json().error.code).toBe("manager_only");
+    expect((await put(managerKey, { title: "", body: "" })).statusCode).toBe(400);
+
+    const updated = await put(managerKey, wording);
+    expect(updated.statusCode).toBe(200);
+    expect(updated.json()).toMatchObject({ version: 2, ...wording });
+    const current = await app.inject({ url: "/v1/courses/river-bend/waiver", headers: auth(secretKey) });
+    expect(current.json()).toMatchObject({ version: 2, title: wording.title });
+    // The driver who already signed is still tied to the wording they agreed to.
+    const booking = await app.inject({ url: `/v1/courses/river-bend/bookings/${id}`, headers: auth(secretKey) });
+    expect(booking.json().waivers[0].waiverVersion).toBe(1);
+  });
+
+  it("shows whether a group has paid", async () => {
+    const teeTimeId = await teeTimeAt("14:06");
+    const { id, totalCents, payment } = (await book(secretKey, { teeTimeId, holes: 9, customer: golfer, players: [{}, {}] })).json();
+    expect(totalCents).toBe(5800);
+    expect(payment).toEqual({ status: "unpaid", paidCents: 0, balanceCents: 5800, methods: [] });
+
+    const pay = (amountCents: number, method: string) =>
+      app.inject({
+        method: "POST",
+        url: `/v1/courses/river-bend/bookings/${id}/payments`,
+        headers: auth(secretKey),
+        payload: { amountCents, method },
+      });
+    expect((await pay(2900, "cash")).json().payment).toMatchObject({ status: "partial", balanceCents: 2900 });
+    expect((await pay(5000, "card")).json().error.code).toBe("overpayment");
+    expect((await pay(2900, "card")).json().payment).toEqual({
+      status: "paid",
+      paidCents: 5800,
+      balanceCents: 0,
+      methods: expect.arrayContaining(["cash", "card"]),
+    });
+
+    const sheet = await app.inject({ url: `/v1/courses/river-bend/tee-sheet?date=${date}`, headers: auth(secretKey) });
+    const row = sheet.json().teeTimes.find((t: { id: string }) => t.id === teeTimeId);
+    expect(row.bookings[0].payment.status).toBe("paid");
+  });
+
+  it("checks in at the pro shop (with payment) before the starter sends the group off", async () => {
+    const teeTimeId = await teeTimeAt("14:14");
+    const { id } = (await book(secretKey, { teeTimeId, holes: 9, customer: golfer, players: [{}] })).json();
+    const post = (action: string, payload?: object) =>
+      app.inject({ method: "POST", url: `/v1/courses/river-bend/bookings/${id}/${action}`, headers: auth(secretKey), payload });
+
+    // The starter can't send off a group the pro shop hasn't checked in.
+    expect((await post("tee-off")).json().error.code).toBe("not_checked_in");
+    // The pro shop can't check in a group that still owes money...
+    expect((await post("check-in")).json().error.code).toBe("payment_required");
+    // ...so it takes the balance as part of check-in.
+    const checkedIn = (await post("check-in", { payment: { method: "card" } })).json();
+    expect(checkedIn).toMatchObject({ status: "checked_in", payment: { status: "paid", methods: ["card"] } });
+    expect(checkedIn.checkedInAt).toBeTruthy();
+
+    const off = (await post("tee-off", { cartNumbers: ["7"], waivers: signed("7") })).json();
+    expect(off).toMatchObject({ status: "teed_off", cartNumbers: ["7"] });
+    expect(off.teedOffAt).toBeTruthy();
     expect((await post("cancel")).statusCode).toBe(409);
   });
 

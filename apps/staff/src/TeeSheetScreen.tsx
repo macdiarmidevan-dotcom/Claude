@@ -3,13 +3,16 @@ import { ActivityIndicator, FlatList, Modal, Pressable, StyleSheet, Text, useWin
 import { ApiError, createClient, type Course, type Settings, type SheetTeeTime } from "./api";
 import { addDays, formatDate, nowIn, todayIn } from "./dates";
 import { TeeTimePanel } from "./TeeTimePanel";
-import { colors, formatTime, statusColor } from "./theme";
+import { StationPicker } from "./SetupScreen";
+import { WaiverEditor } from "./WaiverEditor";
+import { colors, formatTime, money, statusColor } from "./theme";
 
 // Other devices' changes show up within this many seconds.
 const REFRESH_MS = 5000;
 
-export function TeeSheetScreen({ settings, onSignOut }: { settings: Settings; onSignOut: () => void }) {
-  const client = useMemo(() => createClient(settings), [settings]);
+export function TeeSheetScreen({ settings, onChangeSettings, onSignOut }: { settings: Settings; onChangeSettings: (s: Settings) => void; onSignOut: () => void }) {
+  const { apiUrl, courseSlug, apiKey } = settings;
+  const client = useMemo(() => createClient({ apiUrl, courseSlug, apiKey }), [apiUrl, courseSlug, apiKey]);
   const { width } = useWindowDimensions();
   const wide = width >= 900; // iPad landscape and desktop: list and details side by side
 
@@ -19,6 +22,8 @@ export function TeeSheetScreen({ settings, onSignOut }: { settings: Settings; on
   const [selectedId, setSelectedId] = useState<string>();
   const [error, setError] = useState<string>();
   const [lastSync, setLastSync] = useState<Date>();
+  const [isManager, setIsManager] = useState(false);
+  const [editingWaiver, setEditingWaiver] = useState(false);
   const listRef = useRef<FlatList<SheetTeeTime>>(null);
   const scrolledFor = useRef<string | undefined>(undefined);
 
@@ -30,6 +35,10 @@ export function TeeSheetScreen({ settings, onSignOut }: { settings: Settings; on
         setDate(todayIn(c.timeZone));
       })
       .catch((e) => setError(e.message));
+    client
+      .me()
+      .then((me) => setIsManager(me.role === "manager"))
+      .catch(() => setIsManager(false));
   }, [client]);
 
   const load = useCallback(async () => {
@@ -74,6 +83,12 @@ export function TeeSheetScreen({ settings, onSignOut }: { settings: Settings; on
     return { players, capacity };
   }, [sheet]);
 
+  const stationPicker = (
+    <View style={{ width: 200, marginBottom: -14 }}>
+      <StationPicker dark value={settings.station} onChange={(station) => onChangeSettings({ ...settings, station })} />
+    </View>
+  );
+
   const panel = selected && course && sheet && (
     <TeeTimePanel
       key={selected.id}
@@ -81,6 +96,7 @@ export function TeeSheetScreen({ settings, onSignOut }: { settings: Settings; on
       teeTime={selected}
       sheet={sheet}
       courseHoles={course.holes}
+      station={settings.station}
       onChanged={load}
       onClose={() => setSelectedId(undefined)}
     />
@@ -95,10 +111,20 @@ export function TeeSheetScreen({ settings, onSignOut }: { settings: Settings; on
             {error ?? (lastSync ? `${totals.players} golfers booked · ${Math.max(0, totals.capacity - totals.players)} spots open` : " ")}
           </Text>
         </View>
-        <Pressable accessibilityRole="button" onPress={onSignOut} hitSlop={8}>
-          <Text style={styles.signOut}>Sign out</Text>
-        </Pressable>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 14 }}>
+          {width >= 600 && stationPicker}
+          {isManager && (
+            <Pressable accessibilityRole="button" onPress={() => setEditingWaiver(true)} hitSlop={8}>
+              <Text style={styles.signOut}>Waiver</Text>
+            </Pressable>
+          )}
+          <Pressable accessibilityRole="button" onPress={onSignOut} hitSlop={8}>
+            <Text style={styles.signOut}>Sign out</Text>
+          </Pressable>
+        </View>
       </View>
+      {width < 600 && <View style={styles.stationRow}>{stationPicker}</View>}
+      {editingWaiver && <WaiverEditor client={client} onClose={() => setEditingWaiver(false)} />}
 
       {date && (
         <View style={styles.dateBar}>
@@ -153,9 +179,15 @@ export function TeeSheetScreen({ settings, onSignOut }: { settings: Settings; on
 
 const ROW_HEIGHT = 64;
 
+// ✓ checked in at the pro shop, ⛳ sent off the first tee, ✕ no-show.
+const STATUS_MARK: Record<string, string> = { checked_in: "✓ ", teed_off: "⛳ ", no_show: "✕ " };
+
 function TeeTimeRow({ teeTime, selected, isNext, past, onPress }: { teeTime: SheetTeeTime; selected: boolean; isNext: boolean; past: boolean; onPress: () => void }) {
   const active = teeTime.bookings.filter((b) => b.status !== "cancelled");
   const blocked = teeTime.status === "blocked";
+  // No-shows aren't expected to pay, so they don't count toward what's owed.
+  const payable = active.filter((b) => b.status !== "no_show");
+  const owed = payable.reduce((sum, b) => sum + b.payment.balanceCents, 0);
   const slots = Array.from({ length: teeTime.maxPlayers }, (_, i) => i < teeTime.bookedPlayers);
   return (
     <Pressable
@@ -180,13 +212,19 @@ function TeeTimeRow({ teeTime, selected, isNext, past, onPress }: { teeTime: She
         ) : (
           active.map((b) => (
             <Text key={b.id} numberOfLines={1} style={styles.groupText}>
-              <Text style={{ color: statusColor[b.status], fontWeight: "700" }}>{b.status === "checked_in" ? "✓ " : b.status === "no_show" ? "✕ " : ""}</Text>
+              <Text style={{ color: statusColor[b.status], fontWeight: "700" }}>{STATUS_MARK[b.status] ?? ""}</Text>
               {b.customerName} ({b.players}){b.holes > 9 ? ` · ${b.holes}` : ""}
               {b.cartNumbers.length > 0 && <Text style={styles.cartTag}>{` · Cart ${b.cartNumbers.join(", ")}`}</Text>}
             </Text>
           ))
         )}
       </View>
+      {/* Payment sits in its own column so it stays visible when names are cut off on a phone. */}
+      {payable.length > 0 && (
+        <Text style={[styles.payCol, { color: owed > 0 ? colors.noShow : colors.checkedIn }]}>
+          {owed > 0 ? `Owes ${money(owed)}` : "Paid"}
+        </Text>
+      )}
     </Pressable>
   );
 }
@@ -205,6 +243,7 @@ const styles = StyleSheet.create({
   courseName: { color: "#fff", fontSize: 20, fontWeight: "700" },
   sync: { color: "#cfe3d5", fontSize: 13, marginTop: 2 },
   signOut: { color: "#cfe3d5", fontSize: 14 },
+  stationRow: { backgroundColor: colors.green, paddingHorizontal: 16, paddingBottom: 10, alignItems: "flex-start" },
   dateBar: { flexDirection: "row", alignItems: "center", backgroundColor: colors.card, borderBottomWidth: 1, borderColor: colors.border, paddingVertical: 6, paddingHorizontal: 8 },
   date: { fontSize: 17, fontWeight: "600", color: colors.text },
   today: { color: colors.green, fontSize: 13, marginTop: 2, fontWeight: "600" },
@@ -224,5 +263,6 @@ const styles = StyleSheet.create({
   openText: { color: colors.muted },
   groupText: { color: colors.text, fontSize: 15 },
   cartTag: { color: colors.greenText, fontWeight: "700" },
+  payCol: { fontWeight: "700", fontSize: 14, marginLeft: 8, textAlign: "right" },
   side: { width: 400, borderLeftWidth: 1, borderColor: colors.border, backgroundColor: colors.card },
 });

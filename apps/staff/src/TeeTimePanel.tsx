@@ -1,13 +1,15 @@
 import { useState } from "react";
 import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import type { Client, SheetBooking, SheetTeeTime } from "./api";
-import { colors, formatTime, money, statusColor, statusLabel } from "./theme";
+import type { Client, PaymentMethod, SheetBooking, SheetTeeTime, Station, Waiver } from "./api";
+import { WaiverModal } from "./WaiverModal";
+import { colors, formatTime, money, paymentMethodLabel, statusColor, statusLabel } from "./theme";
 
 interface Props {
   client: Client;
   teeTime: SheetTeeTime;
   sheet: SheetTeeTime[];
   courseHoles: number;
+  station: Station;
   onChanged: () => void;
   onClose: () => void;
 }
@@ -23,10 +25,14 @@ function confirm(title: string, message: string, action: string): Promise<boolea
   );
 }
 
-export function TeeTimePanel({ client, teeTime, sheet, courseHoles, onChanged, onClose }: Props) {
+export function TeeTimePanel({ client, teeTime, sheet, courseHoles, station, onChanged, onClose }: Props) {
   const [error, setError] = useState<string>();
   const [moving, setMoving] = useState<SheetBooking>();
-  const [cartsFor, setCartsFor] = useState<SheetBooking>();
+  // sendOff: the starter is sending the group off the tee; otherwise just editing carts.
+  const [cartsFor, setCartsFor] = useState<{ booking: SheetBooking; sendOff: boolean }>();
+  const [payingFor, setPayingFor] = useState<SheetBooking>();
+  // Carts waiting on their drivers' waiver signatures before they're saved.
+  const [signing, setSigning] = useState<{ booking: SheetBooking; carts: string[]; unsigned: string[]; sendOff: boolean; waiver: Waiver }>();
   const [note, setNote] = useState(teeTime.note ?? "");
   const spotsLeft = teeTime.maxPlayers - teeTime.bookedPlayers;
   const active = teeTime.bookings.filter((b) => b.status !== "cancelled");
@@ -71,17 +77,32 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, onChanged, o
             {b.players} {b.players === 1 ? "player" : "players"} · {b.holes} holes · {money(b.totalCents)}
             {b.customerPhone ? ` · ${b.customerPhone}` : ""}
           </Text>
+          <PaymentLine booking={b} />
           {b.cartNumbers.length > 0 && (
             <Text style={styles.carts}>
               {b.cartNumbers.length === 1 ? "Cart" : "Carts"} {b.cartNumbers.join(", ")}
             </Text>
           )}
-          {cartsFor?.id !== b.id && moving?.id !== b.id && (
+          {station === "starter" && b.status === "confirmed" && (
+            <Text style={styles.warning}>Not checked in at the pro shop yet</Text>
+          )}
+          {cartsFor?.booking.id !== b.id && moving?.id !== b.id && payingFor?.id !== b.id && (
             <View style={styles.actions}>
-              {b.status !== "checked_in" && <Action label="Check in" primary onPress={() => setCartsFor(b)} />}
-              {b.status === "checked_in" && <Action label="Change carts" onPress={() => setCartsFor(b)} />}
+              {station === "proshop" && (b.status === "confirmed" || b.status === "no_show") && (
+                <Action
+                  label={b.payment.balanceCents > 0 ? `Take ${money(b.payment.balanceCents)} & check in` : "Check in"}
+                  primary
+                  onPress={() => (b.payment.balanceCents > 0 ? setPayingFor(b) : run(() => client.checkIn(b.id)))}
+                />
+              )}
+              {station === "starter" && b.status === "checked_in" && (
+                <Action label="Send off the tee" primary onPress={() => setCartsFor({ booking: b, sendOff: true })} />
+              )}
+              {(b.status === "checked_in" || b.status === "teed_off") && (
+                <Action label={b.cartNumbers.length ? "Change carts" : "Add carts"} onPress={() => setCartsFor({ booking: b, sendOff: false })} />
+              )}
               {b.status === "confirmed" && <Action label="No-show" onPress={() => run(() => client.noShow(b.id))} />}
-              {b.status !== "checked_in" && <Action label="Move" onPress={() => setMoving(b)} />}
+              {(b.status === "confirmed" || b.status === "checked_in") && <Action label="Move" onPress={() => setMoving(b)} />}
               {b.status === "confirmed" && (
                 <Action
                   label="Cancel"
@@ -95,12 +116,32 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, onChanged, o
               )}
             </View>
           )}
-          {cartsFor?.id === b.id && (
+          {payingFor?.id === b.id && (
+            <PaymentForm
+              booking={b}
+              onPay={(method) => {
+                setPayingFor(undefined);
+                run(() => client.checkIn(b.id, method));
+              }}
+              onCancel={() => setPayingFor(undefined)}
+            />
+          )}
+          {cartsFor?.booking.id === b.id && (
             <CartForm
               booking={b}
-              onSave={(carts) => {
+              sendOff={cartsFor.sendOff}
+              onSave={async (carts) => {
+                const { sendOff } = cartsFor;
                 setCartsFor(undefined);
-                run(() => (b.status === "checked_in" ? client.setCarts(b.id, carts) : client.checkIn(b.id, carts)));
+                const unsigned = carts.filter((c) => !b.signedCarts.includes(c));
+                if (unsigned.length === 0) {
+                  return run(() => (sendOff ? client.teeOff(b.id, carts, []) : client.setCarts(b.id, carts, [])));
+                }
+                try {
+                  setSigning({ booking: b, carts, unsigned, sendOff, waiver: await client.waiver() });
+                } catch (e) {
+                  setError(e instanceof Error ? e.message : "Couldn't load the cart waiver");
+                }
               }}
               onCancel={() => setCartsFor(undefined)}
             />
@@ -119,10 +160,27 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, onChanged, o
         </View>
       ))}
 
+      {signing && (
+        <WaiverModal
+          waiver={signing.waiver}
+          carts={signing.unsigned}
+          onCancel={() => setSigning(undefined)}
+          onDone={(signatures) => {
+            const { booking, carts, sendOff } = signing;
+            setSigning(undefined);
+            run(() =>
+              sendOff ? client.teeOff(booking.id, carts, signatures) : client.setCarts(booking.id, carts, signatures),
+            );
+          }}
+        />
+      )}
+
       {teeTime.status === "open" && spotsLeft > 0 && (
         <WalkInForm
           maxPlayers={spotsLeft}
           courseHoles={courseHoles}
+          // Residency is checked and priced at the pro shop, so the starter doesn't pick a rate.
+          showRate={station === "proshop"}
           onSubmit={(name, players, holes, cart, resident) =>
             run(() =>
               client.book({
@@ -196,12 +254,12 @@ function MovePicker({ sheet, booking, onPick, onCancel }: { sheet: SheetTeeTime[
   );
 }
 
-function CartForm({ booking, onSave, onCancel }: { booking: SheetBooking; onSave: (carts: string[]) => void; onCancel: () => void }) {
+function CartForm({ booking, sendOff, onSave, onCancel }: { booking: SheetBooking; sendOff: boolean; onSave: (carts: string[]) => void; onCancel: () => void }) {
   const [value, setValue] = useState(booking.cartNumbers.join(", "));
   const carts = value.split(/[\s,]+/).filter(Boolean);
   return (
     <View style={{ marginTop: 10 }}>
-      <Text style={styles.muted}>Cart numbers (leave empty if walking)</Text>
+      <Text style={styles.muted}>Cart numbers (leave empty if walking). Each driver signs the cart waiver next.</Text>
       <TextInput
         style={[styles.input, { marginTop: 6 }]}
         placeholder="e.g. 12, 14"
@@ -211,14 +269,50 @@ function CartForm({ booking, onSave, onCancel }: { booking: SheetBooking; onSave
         autoFocus
       />
       <View style={styles.actions}>
-        <Action label={booking.status === "checked_in" ? "Save carts" : "Confirm check-in"} primary onPress={() => onSave(carts)} />
+        <Action label={sendOff ? "Send off" : "Save carts"} primary onPress={() => onSave(carts)} />
         <Action label="Back" onPress={onCancel} />
       </View>
     </View>
   );
 }
 
-function WalkInForm({ maxPlayers, courseHoles, onSubmit }: { maxPlayers: number; courseHoles: number; onSubmit: (name: string, players: number, holes: number, cart: boolean, resident: boolean) => void }) {
+function PaymentLine({ booking }: { booking: SheetBooking }) {
+  const { status, balanceCents, methods } = booking.payment;
+  if (status === "paid") {
+    const how = methods.map((m) => paymentMethodLabel[m] ?? m).join(" + ");
+    return <Text style={[styles.payment, { color: colors.checkedIn }]}>Paid{how ? ` (${how})` : ""}</Text>;
+  }
+  return (
+    <Text style={[styles.payment, { color: colors.noShow }]}>
+      {status === "partial" ? "Part paid, owes " : "Not paid, owes "}
+      {money(balanceCents)}
+    </Text>
+  );
+}
+
+const PAYMENT_OPTIONS: { method: PaymentMethod; label: string }[] = [
+  { method: "card", label: "Card" },
+  { method: "cash", label: "Cash" },
+  { method: "punch_card", label: "Punch card" },
+  { method: "gift_card", label: "Gift card" },
+  { method: "comp", label: "Comp" },
+];
+
+function PaymentForm({ booking, onPay, onCancel }: { booking: SheetBooking; onPay: (m: PaymentMethod) => void; onCancel: () => void }) {
+  return (
+    <View style={{ marginTop: 10 }}>
+      <Text style={styles.muted}>How is {booking.customerName} paying {money(booking.payment.balanceCents)}?</Text>
+      <View style={styles.actions}>
+        {PAYMENT_OPTIONS.map((o) => (
+          <Action key={o.method} label={o.label} primary={o.method === "card"} onPress={() => onPay(o.method)} />
+        ))}
+        <Action label="Back" onPress={onCancel} />
+      </View>
+    </View>
+  );
+}
+
+function WalkInForm({ maxPlayers, courseHoles, showRate, onSubmit }: { maxPlayers: number; courseHoles: number; showRate: boolean; onSubmit: (name: string, players: number, holes: number, cart: boolean, resident: boolean) => void }) {
   const [name, setName] = useState("");
   const [chosenPlayers, setPlayers] = useState(1);
   // Spots can fill while the form is open; never offer more than are left.
@@ -244,16 +338,18 @@ function WalkInForm({ maxPlayers, courseHoles, onSubmit }: { maxPlayers: number;
         <Toggle label="Walking" on={!cart} onPress={() => setCart(false)} />
         <Toggle label="Gas carts" on={cart} onPress={() => setCart(true)} />
       </Row>
-      <Row label="Rate">
-        <Toggle label="Nonresident" on={!resident} onPress={() => setResident(false)} />
-        <Toggle label="Resident" on={resident} onPress={() => setResident(true)} />
-      </Row>
+      {showRate && (
+        <Row label="Rate">
+          <Toggle label="Nonresident" on={!resident} onPress={() => setResident(false)} />
+          <Toggle label="Resident" on={resident} onPress={() => setResident(true)} />
+        </Row>
+      )}
       <Action
         label="Add to tee sheet"
         primary
         onPress={() => {
           if (!name.trim()) return;
-          onSubmit(name.trim(), players, holes, cart, resident);
+          onSubmit(name.trim(), players, holes, cart, showRate && resident);
           setName("");
         }}
       />
@@ -295,6 +391,8 @@ const styles = StyleSheet.create({
   chip: { borderWidth: 1, borderColor: colors.green, borderRadius: 16, paddingHorizontal: 12, paddingVertical: 8, marginRight: 6 },
   walkIn: { marginTop: 4 },
   carts: { color: colors.greenText, fontWeight: "700", fontSize: 14, marginTop: 4 },
+  payment: { fontWeight: "700", fontSize: 14, marginTop: 4 },
+  warning: { color: colors.warn, fontSize: 14, marginTop: 4 },
   input: { borderWidth: 1, borderColor: colors.border, borderRadius: 8, padding: 12, fontSize: 16, marginBottom: 10, color: colors.text },
   toggle: { borderWidth: 1, borderColor: colors.border, borderRadius: 8, minWidth: 44, minHeight: 40, paddingHorizontal: 12, alignItems: "center", justifyContent: "center", marginRight: 6, marginBottom: 4 },
   toggleOn: { backgroundColor: colors.green, borderColor: colors.green },

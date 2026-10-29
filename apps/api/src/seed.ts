@@ -4,6 +4,14 @@ import { createPool, withTransaction, type Db } from "./db.ts";
 import { createApiKey } from "./keys.ts";
 import { migrate } from "./migrate.ts";
 
+const PLACEHOLDER_WAIVER = `SAMPLE TEXT, NOT LEGAL ADVICE. Replace with the course's own reviewed waiver.
+
+By signing, I confirm that I am at least 16 years old and hold a valid driver's license, and that I will be the driver of this cart.
+
+I will follow all posted cart rules and the instructions of course staff, keep the cart on paths where marked, and stay off greens, tees and wet areas. No more than two riders and two bags per cart. I will not drive under the influence of alcohol or drugs.
+
+I understand that operating a golf cart involves risk of injury and property damage. I accept responsibility for the cart while it is assigned to me and for any damage caused by misuse, and I release the course and its operator from liability for injuries or damage caused by my own negligence, to the extent allowed by law.`;
+
 /** Creates River Bend with its rates, add-ons and tee sheet, plus a staff API key. */
 export async function seedRiverBend(db: Db) {
   return withTransaction(db, async (client) => {
@@ -43,16 +51,25 @@ export async function seedRiverBend(db: Db) {
       ]);
     }
 
+    // Placeholder wording: the course (Lisle Park District) must supply its own reviewed waiver text.
+    await client.query("INSERT INTO course_waivers (course_id, version, title, body) VALUES ($1, 1, $2, $3)", [
+      courseId,
+      "Golf Cart Rules and Liability Waiver",
+      PLACEHOLDER_WAIVER,
+    ]);
+
     const secretKey = await createApiKey(client, courseId, "secret", "River Bend staff");
-    return { courseId, secretKey };
+    const managerKey = await createApiKey(client, courseId, "secret", "River Bend manager", "manager");
+    return { courseId, secretKey, managerKey };
   });
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const db = createPool();
   await migrate(db);
-  const { secretKey } = await seedRiverBend(db);
-  console.log("Seeded River Bend Golf Club. Save this key, it won't be shown again:");
+  const { secretKey, managerKey } = await seedRiverBend(db);
+  console.log("Seeded River Bend Golf Club. Save these keys, they won't be shown again:");
   console.log(`  Secret key (staff): ${secretKey}`);
+  console.log(`  Secret key (manager): ${managerKey}`);
   await db.end();
 }

@@ -9,8 +9,13 @@ import {
   createBooking,
   getBooking,
   listBookingsForDay,
+  checkIn,
+  getActiveWaiver,
+  updateWaiver,
   moveBooking,
+  recordPayment,
   setCartNumbers,
+  teeOff,
   quote,
   setBookingStatus,
   updateTeeTime,
@@ -49,7 +54,30 @@ const teeTimePatch = z.object({
 });
 const moveBody = z.object({ teeTimeId: z.uuid() });
 const cartNumbers = z.array(z.string().trim().min(1).max(10)).max(8);
-const checkInBody = z.object({ cartNumbers: cartNumbers.optional() }).default({});
+const waiverSignature = z.object({
+  cartNumber: z.string().trim().min(1).max(10),
+  driverName: z.string().trim().min(1).max(200),
+  // SVG path data: move/line/curve commands and numbers only.
+  signature: z
+    .string()
+    .min(10)
+    .max(50_000)
+    .regex(/^[MLQCZmlqcz0-9.,\s-]+$/, "signature must be SVG path data"),
+});
+const waivers = z.array(waiverSignature).max(8).optional();
+const paymentMethod = z.enum(["card", "cash", "prepaid", "punch_card", "gift_card", "comp"]);
+const checkInBody = z.object({
+  cartNumbers: cartNumbers.optional(),
+  waivers,
+  payment: z.object({ method: paymentMethod }).optional(),
+});
+const teeOffBody = z.object({ cartNumbers: cartNumbers.optional(), waivers });
+const cartsBody = z.object({ cartNumbers, waivers });
+const waiverBody = z.object({
+  title: z.string().trim().min(1).max(200),
+  body: z.string().trim().min(20).max(50_000),
+});
+const paymentBody = z.object({ amountCents: z.number().int().positive(), method: paymentMethod });
 const idParams = z.object({ slug: z.string(), id: z.uuid() });
 const slugParams = z.object({ slug: z.string() });
 
@@ -97,6 +125,33 @@ export function buildApp(db: Db): FastifyInstance {
     if (req.apiKey!.kind !== "secret") throw new AppError(403, "forbidden", "This API needs a staff (sk_) key");
     return course;
   }
+
+  /** Like courseFor, but only a manager's key may make the change. */
+  async function managedCourseFor(req: FastifyRequest): Promise<Course> {
+    const course = await courseFor(req);
+    if (req.apiKey!.role !== "manager") throw new AppError(403, "manager_only", "Only a manager can change this");
+    return course;
+  }
+
+  // What this device's key is allowed to do, so the app only shows manager tools to managers.
+  app.get("/v1/courses/:slug/me", async (req) => {
+    await courseFor(req);
+    return { role: req.apiKey!.role };
+  });
+
+  // The liability waiver each cart driver signs.
+  app.get("/v1/courses/:slug/waiver", async (req) => {
+    const course = await courseFor(req);
+    const waiver = await getActiveWaiver(db, course);
+    if (!waiver) throw notFound("Waiver");
+    return waiver;
+  });
+
+  // A manager rewords the waiver. Drivers sign the new version from now on.
+  app.put("/v1/courses/:slug/waiver", async (req) => {
+    const course = await managedCourseFor(req);
+    return updateWaiver(db, course, waiverBody.parse(req.body));
+  });
 
   app.get("/v1/courses/:slug", async (req) => {
     const course = await courseFor(req);
@@ -147,18 +202,33 @@ export function buildApp(db: Db): FastifyInstance {
     return moveBooking(db, course, id, moveBody.parse(req.body).teeTimeId);
   });
 
+  // Pro shop check-in: takes any balance due, then marks the group checked in.
   app.post("/v1/courses/:slug/bookings/:id/check-in", async (req) => {
     const course = await courseFor(req);
     const { id } = idParams.parse(req.params);
-    const body = checkInBody.parse(req.body ?? {});
-    if (body.cartNumbers) await setCartNumbers(db, course, id, body.cartNumbers);
-    return setBookingStatus(db, course, id, "checked_in");
+    return checkIn(db, course, id, checkInBody.parse(req.body ?? {}));
+  });
+
+  // Starter check-in at the first tee.
+  app.post("/v1/courses/:slug/bookings/:id/tee-off", async (req) => {
+    const course = await courseFor(req);
+    const { id } = idParams.parse(req.params);
+    const body = teeOffBody.parse(req.body ?? {});
+    return teeOff(db, course, id, body.cartNumbers, body.waivers);
+  });
+
+  app.post("/v1/courses/:slug/bookings/:id/payments", async (req, reply) => {
+    const course = await courseFor(req);
+    const { id } = idParams.parse(req.params);
+    const { amountCents, method } = paymentBody.parse(req.body);
+    return reply.status(201).send(await recordPayment(db, course, id, amountCents, method));
   });
 
   app.put("/v1/courses/:slug/bookings/:id/carts", async (req) => {
     const course = await courseFor(req);
     const { id } = idParams.parse(req.params);
-    return setCartNumbers(db, course, id, z.object({ cartNumbers }).parse(req.body).cartNumbers);
+    const body = cartsBody.parse(req.body);
+    return setCartNumbers(db, course, id, body.cartNumbers, body.waivers);
   });
 
   for (const [action, status] of [
