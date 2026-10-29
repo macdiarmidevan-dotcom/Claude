@@ -205,62 +205,70 @@ export async function createSale(
   staffId: string | undefined,
   input: { lines: SaleLineInput[]; paymentMethod: SalePaymentMethod; golferId?: string | null },
 ) {
-  if (!input.lines.length) throw badRequest("empty_sale", "Add something to the sale first");
-  const id = await withTransaction(db, async (client) => {
-    if (input.golferId) {
-      const { rows } = await client.query("SELECT 1 FROM customers WHERE id = $1 AND organization_id = $2 AND account_created_at IS NOT NULL", [
-        input.golferId,
-        course.organizationId,
-      ]);
-      if (!rows[0]) throw notFound("Golfer account");
-    }
-    // Lock products in a fixed order so two registers selling the same items can't deadlock.
-    const productIds = [...new Set(input.lines.flatMap((l) => ("productId" in l ? [l.productId] : [])))].sort();
-    const products = new Map<string, any>();
-    for (const pid of productIds) {
-      const p = await productRow(client, course, pid, true);
-      if (!p.active) throw badRequest("product_inactive", `${p.name} is no longer sold`);
-      products.set(pid, p);
-    }
-    const lines = input.lines.map((l) => {
-      if ("productId" in l) {
-        const p = products.get(l.productId);
-        return { productId: p.id, description: p.name, category: p.category, quantity: l.quantity, unitCents: p.price_cents, taxable: p.taxable };
-      }
-      if (!l.description.trim()) throw badRequest("description_required", "Name the item");
-      return { productId: null, description: l.description.trim(), category: "Other", quantity: l.quantity, unitCents: l.unitCents, taxable: l.taxable ?? true };
-    });
-    const { rows: numbers } = await client.query(
-      "UPDATE courses SET next_sale_number = next_sale_number + 1 WHERE id = $1 RETURNING next_sale_number - 1 AS number, sales_tax_bps",
-      [course.id],
-    );
-    const subtotal = lines.reduce((s, l) => s + l.unitCents * l.quantity, 0);
-    // Comps are given away, so there's nothing to tax.
-    const taxable = lines.filter((l) => l.taxable).reduce((s, l) => s + l.unitCents * l.quantity, 0);
-    const tax = input.paymentMethod === "comp" ? 0 : taxOn(taxable, numbers[0].sales_tax_bps);
-
-    const { rows } = await client.query(
-      `INSERT INTO sales (course_id, number, staff_user_id, customer_id, subtotal_cents, tax_cents, total_cents, payment_method)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
-      [course.id, numbers[0].number, staffId ?? null, input.golferId ?? null, subtotal, tax, subtotal + tax, input.paymentMethod],
-    );
-    const saleId = rows[0].id as string;
-    for (const l of lines) {
-      await client.query(
-        `INSERT INTO sale_lines (sale_id, product_id, description, category, quantity, unit_cents, total_cents, taxable)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-        [saleId, l.productId, l.description, l.category, l.quantity, l.unitCents, l.unitCents * l.quantity, l.taxable],
-      );
-      const p = l.productId ? products.get(l.productId) : undefined;
-      if (p?.track_stock) {
-        p.stock -= l.quantity;
-        await client.query("UPDATE products SET stock = $2 WHERE id = $1", [p.id, p.stock]);
-        await recordMovement(client, p.id, -l.quantity, p.stock, "sale", saleId, null, staffId);
-      }
-    }
-    return saleId;
-  });
+  const id = await withTransaction(db, (client) => insertSale(client, course, staffId, input));
   return getSale(db, course, id);
+}
+
+/** Records a sale inside the caller's transaction, e.g. items bought at tee time check-in. */
+export async function insertSale(
+  client: DbClient,
+  course: Course,
+  staffId: string | undefined,
+  input: { lines: SaleLineInput[]; paymentMethod: SalePaymentMethod; golferId?: string | null },
+): Promise<string> {
+  if (!input.lines.length) throw badRequest("empty_sale", "Add something to the sale first");
+  if (input.golferId) {
+    const { rows } = await client.query("SELECT 1 FROM customers WHERE id = $1 AND organization_id = $2 AND account_created_at IS NOT NULL", [
+      input.golferId,
+      course.organizationId,
+    ]);
+    if (!rows[0]) throw notFound("Golfer account");
+  }
+  // Lock products in a fixed order so two registers selling the same items can't deadlock.
+  const productIds = [...new Set(input.lines.flatMap((l) => ("productId" in l ? [l.productId] : [])))].sort();
+  const products = new Map<string, any>();
+  for (const pid of productIds) {
+    const p = await productRow(client, course, pid, true);
+    if (!p.active) throw badRequest("product_inactive", `${p.name} is no longer sold`);
+    products.set(pid, p);
+  }
+  const lines = input.lines.map((l) => {
+    if ("productId" in l) {
+      const p = products.get(l.productId);
+      return { productId: p.id, description: p.name, category: p.category, quantity: l.quantity, unitCents: p.price_cents, taxable: p.taxable };
+    }
+    if (!l.description.trim()) throw badRequest("description_required", "Name the item");
+    return { productId: null, description: l.description.trim(), category: "Other", quantity: l.quantity, unitCents: l.unitCents, taxable: l.taxable ?? true };
+  });
+  const { rows: numbers } = await client.query(
+    "UPDATE courses SET next_sale_number = next_sale_number + 1 WHERE id = $1 RETURNING next_sale_number - 1 AS number, sales_tax_bps",
+    [course.id],
+  );
+  const subtotal = lines.reduce((s, l) => s + l.unitCents * l.quantity, 0);
+  // Comps are given away, so there's nothing to tax.
+  const taxable = lines.filter((l) => l.taxable).reduce((s, l) => s + l.unitCents * l.quantity, 0);
+  const tax = input.paymentMethod === "comp" ? 0 : taxOn(taxable, numbers[0].sales_tax_bps);
+
+  const { rows } = await client.query(
+    `INSERT INTO sales (course_id, number, staff_user_id, customer_id, subtotal_cents, tax_cents, total_cents, payment_method)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+    [course.id, numbers[0].number, staffId ?? null, input.golferId ?? null, subtotal, tax, subtotal + tax, input.paymentMethod],
+  );
+  const saleId = rows[0].id as string;
+  for (const l of lines) {
+    await client.query(
+      `INSERT INTO sale_lines (sale_id, product_id, description, category, quantity, unit_cents, total_cents, taxable)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [saleId, l.productId, l.description, l.category, l.quantity, l.unitCents, l.unitCents * l.quantity, l.taxable],
+    );
+    const p = l.productId ? products.get(l.productId) : undefined;
+    if (p?.track_stock) {
+      p.stock -= l.quantity;
+      await client.query("UPDATE products SET stock = $2 WHERE id = $1", [p.id, p.stock]);
+      await recordMovement(client, p.id, -l.quantity, p.stock, "sale", saleId, null, staffId);
+    }
+  }
+  return saleId;
 }
 
 export async function getSale(db: DbClient, course: Course, id: string) {

@@ -168,10 +168,16 @@ const waiverSignature = z.object({
 });
 const waivers = z.array(waiverSignature).max(8).optional();
 const paymentMethod = z.enum(["card", "cash", "prepaid", "punch_card", "gift_card", "comp"]);
+const saleLine = z.union([
+  z.object({ productId: z.uuid(), quantity: z.number().int().min(1).max(999) }),
+  z.object({ description: z.string().max(200), unitCents: z.number().int().min(0).max(10_000_000), quantity: z.number().int().min(1).max(999), taxable: z.boolean().optional() }),
+]);
+const salePaymentMethod = z.enum(["card", "cash", "gift_card", "comp"]);
 const checkInBody = z.object({
   cartNumbers: cartNumbers.optional(),
   waivers,
   payment: z.object({ method: paymentMethod }).optional(),
+  items: z.object({ lines: z.array(saleLine).max(100), paymentMethod: salePaymentMethod }).optional(),
 });
 const teeOffBody = z.object({ cartNumbers: cartNumbers.optional(), waivers });
 const cartsBody = z.object({ cartNumbers, waivers });
@@ -526,12 +532,8 @@ export function buildApp(db: Db, opts: { fetchReport?: FetchReport } = {}): Fast
   });
   app.post("/v1/courses/:slug/sales", async (req, reply) => {
     const course = await courseFor(req);
-    const line = z.union([
-      z.object({ productId: z.uuid(), quantity: z.number().int().min(1).max(999) }),
-      z.object({ description: z.string().max(200), unitCents: money, quantity: z.number().int().min(1).max(999), taxable: z.boolean().optional() }),
-    ]);
     const body = z
-      .object({ lines: z.array(line).max(100), paymentMethod: z.enum(["card", "cash", "gift_card", "comp"]), golferId: z.uuid().nullish() })
+      .object({ lines: z.array(saleLine).max(100), paymentMethod: salePaymentMethod, golferId: z.uuid().nullish() })
       .parse(req.body);
     return reply.status(201).send(await createSale(db, course, req.staff?.user.id, body));
   });
@@ -665,7 +667,7 @@ export function buildApp(db: Db, opts: { fetchReport?: FetchReport } = {}): Fast
   app.post("/v1/courses/:slug/bookings/:id/check-in", async (req) => {
     const course = await courseFor(req);
     const { id } = idParams.parse(req.params);
-    return checkIn(db, course, id, checkInBody.parse(req.body ?? {}));
+    return checkIn(db, course, id, { ...checkInBody.parse(req.body ?? {}), staffId: req.staff?.user.id });
   });
 
   // Starter check-in at the first tee.

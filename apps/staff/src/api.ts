@@ -395,8 +395,9 @@ function createHttpClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "ap
     setTeeTime: (id: string, patch: { status?: "open" | "blocked"; note?: string | null }) =>
       request(`/tee-times/${id}`, { method: "PATCH", body: patch }),
     book: (walkIn: WalkIn) => request(`/bookings`, { method: "POST", body: { ...walkIn, source: "staff" } }),
-    checkIn: (id: string, method?: PaymentMethod) =>
-      request(`/bookings/${id}/check-in`, { method: "POST", body: method ? { payment: { method } } : {} }),
+    /** Checks a group in, taking what's owed for the round and ringing up any items bought with it. */
+    checkIn: (id: string, method?: PaymentMethod, items?: { lines: SaleLineInput[]; paymentMethod: SalePaymentMethod }) =>
+      request(`/bookings/${id}/check-in`, { method: "POST", body: { ...(method ? { payment: { method } } : {}), ...(items ? { items } : {}) } }),
     waiver: () => request<Waiver>("/waiver"),
     /** Who is signed in. Managers can change course settings; other staff can't. */
     me: () => request<Me>("/me"),

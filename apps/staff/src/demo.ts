@@ -240,6 +240,39 @@ export function createDemoClient(apiKey: string): Client {
     list.unshift({ id: id(), change, stockAfter: p.stock, reason, saleNumber, note, staff: account()?.name ?? null, at: new Date().toISOString() });
     movements.set(p.id, list);
   }
+  function ringUp(input: { lines: SaleLineInput[]; paymentMethod: SalePaymentMethod; golferId?: string | null }): Sale {
+    if (!input.lines.length) throw new ApiError(400, "empty_sale", "Add something to the sale first");
+    const lines = input.lines.map((l) => {
+      if ("productId" in l) {
+        const p = products.find((x) => x.id === l.productId)!;
+        return { productId: p.id, description: p.name, category: p.category, quantity: l.quantity, unitCents: p.priceCents, totalCents: p.priceCents * l.quantity, taxable: p.taxable };
+      }
+      return { productId: null, description: l.description, category: "Other", quantity: l.quantity, unitCents: l.unitCents, totalCents: l.unitCents * l.quantity, taxable: l.taxable ?? true };
+    });
+    const subtotalCents = lines.reduce((t, l) => t + l.totalCents, 0);
+    const taxCents = input.paymentMethod === "comp" ? 0 : Math.round((lines.filter((l) => l.taxable).reduce((t, l) => t + l.totalCents, 0) * pos.salesTaxBps) / 10_000);
+    const g = input.golferId ? golfers.find((x) => x.id === input.golferId) : undefined;
+    const sale: Sale = {
+      id: id(),
+      number: sales.length + 1001,
+      at: new Date().toISOString(),
+      staff: account()?.name ?? null,
+      golfer: g ? { id: g.id, name: g.name } : null,
+      subtotalCents,
+      taxCents,
+      totalCents: subtotalCents + taxCents,
+      paymentMethod: input.paymentMethod,
+      status: "completed",
+      lines,
+    };
+    sales.unshift(sale);
+    for (const l of lines) {
+      const p = products.find((x) => x.id === l.productId);
+      if (p?.trackStock) move(p, -l.quantity, "sale", sale.number, null);
+    }
+    log("Made a sale", g?.name);
+    return sale;
+  }
   function demoClose(date: string): DayClose {
     ensureDay(date);
     const expected: Record<MoneyMethod, number> = { cash: 0, card: 0, gift_card: 0, punch_card: 0, prepaid: 0, comp: 0 };
@@ -581,12 +614,13 @@ export function createDemoClient(apiKey: string): Client {
         log("Added a booking", walkIn.customer.name);
         return b;
       }),
-    checkIn: (bookingId: string, method?: PaymentMethod) =>
+    checkIn: (bookingId: string, method?: PaymentMethod, items?: { lines: SaleLineInput[]; paymentMethod: SalePaymentMethod }) =>
       reply(() => {
         const b = find(bookingId);
         if (b.status !== "confirmed" && b.status !== "no_show") throw conflict("invalid_status", "This group is already checked in");
         const balance = payment(b).balanceCents;
         if (balance > 0 && !method) throw conflict("payment_required", "Take payment before checking in");
+        if (items?.lines.length) ringUp({ ...items, golferId: b.golferId });
         if (balance > 0 && method) b.paid.push({ amountCents: balance, method });
         b.status = "checked_in";
         log("Checked in at the pro shop", b.customerName);
@@ -922,40 +956,7 @@ export function createDemoClient(apiKey: string): Client {
         log("Changed stock");
         return { ...p };
       }),
-    sell: (input: { lines: SaleLineInput[]; paymentMethod: SalePaymentMethod; golferId?: string | null }) =>
-      reply(() => {
-        if (!input.lines.length) throw new ApiError(400, "empty_sale", "Add something to the sale first");
-        const lines = input.lines.map((l) => {
-          if ("productId" in l) {
-            const p = products.find((x) => x.id === l.productId)!;
-            return { productId: p.id, description: p.name, category: p.category, quantity: l.quantity, unitCents: p.priceCents, totalCents: p.priceCents * l.quantity, taxable: p.taxable };
-          }
-          return { productId: null, description: l.description, category: "Other", quantity: l.quantity, unitCents: l.unitCents, totalCents: l.unitCents * l.quantity, taxable: l.taxable ?? true };
-        });
-        const subtotalCents = lines.reduce((t, l) => t + l.totalCents, 0);
-        const taxCents = input.paymentMethod === "comp" ? 0 : Math.round((lines.filter((l) => l.taxable).reduce((t, l) => t + l.totalCents, 0) * pos.salesTaxBps) / 10_000);
-        const g = input.golferId ? golfers.find((x) => x.id === input.golferId) : undefined;
-        const sale: Sale = {
-          id: id(),
-          number: sales.length + 1001,
-          at: new Date().toISOString(),
-          staff: account()?.name ?? null,
-          golfer: g ? { id: g.id, name: g.name } : null,
-          subtotalCents,
-          taxCents,
-          totalCents: subtotalCents + taxCents,
-          paymentMethod: input.paymentMethod,
-          status: "completed",
-          lines,
-        };
-        sales.unshift(sale);
-        for (const l of lines) {
-          const p = products.find((x) => x.id === l.productId);
-          if (p?.trackStock) move(p, -l.quantity, "sale", sale.number, null);
-        }
-        log("Made a sale", g?.name);
-        return sale;
-      }),
+    sell: (input: { lines: SaleLineInput[]; paymentMethod: SalePaymentMethod; golferId?: string | null }) => reply(() => ringUp(input)),
     sales: (date: string) =>
       reply(() => {
         const list = sales.filter((x) => new Intl.DateTimeFormat("en-CA", { timeZone: riverBend.timeZone }).format(new Date(x.at)) === date);

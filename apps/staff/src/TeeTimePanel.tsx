@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import type { Client, GolferAccount, PaymentMethod, SheetBooking, SheetTeeTime, Station, Waiver } from "./api";
+import { quotePlayer } from "@golf/core";
+import type { Client, Course, GolferAccount, PaymentMethod, Product, SalePaymentMethod, SheetBooking, SheetTeeTime, Station, Waiver } from "./api";
 import { WaiverModal } from "./WaiverModal";
 import { GolferPicker, useSearch } from "./Golfers";
 import { colors, type WebPress, formatTime, money, paymentMethodLabel, statusColor, statusLabel } from "./theme";
@@ -10,6 +11,8 @@ interface Props {
   teeTime: SheetTeeTime;
   sheet: SheetTeeTime[];
   courseHoles: number;
+  /** For showing what a walk-in or guests will cost before they're added. */
+  course: Course;
   station: Station;
   onOpenGolfer?: (golferId: string) => void;
   onChanged: () => void;
@@ -18,7 +21,8 @@ interface Props {
   guestRequest?: { bookingId: string; count: number; key: number };
 }
 
-export function TeeTimePanel({ client, teeTime, sheet, courseHoles, station, onOpenGolfer, onChanged, onClose, guestRequest }: Props) {
+export function TeeTimePanel({ client, teeTime, sheet, courseHoles, course, station, onOpenGolfer, onChanged, onClose, guestRequest }: Props) {
+  const price = (p: { players: number; holes: number; resident: boolean; riding: boolean }) => priceRound(course, teeTime.startsAt, p);
   const [error, setError] = useState<string>();
   const [moving, setMoving] = useState<SheetBooking>();
   // sendOff: the starter is sending the group off the tee; otherwise just editing carts.
@@ -107,7 +111,7 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, station, onO
                   primary
                   onPress={() =>
                     // The first check-in creates the golfer's account; after that it's a name search.
-                    !b.golferId ? setAccountFor({ id: b.id, checkIn: true }) : b.payment.balanceCents > 0 ? setPayingFor(b) : run(() => client.checkIn(b.id))
+                    !b.golferId ? setAccountFor({ id: b.id, checkIn: true }) : setPayingFor(b)
                   }
                 />
               )}
@@ -134,6 +138,7 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, station, onO
               initialCount={guestsFor.count}
               maxGuests={spotsLeft}
               showRate={station === "proshop"}
+              price={price}
               onCancel={() => setGuestsFor(undefined)}
               onSave={(count, riding, resident) => {
                 setGuestsFor(undefined);
@@ -168,7 +173,7 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, station, onO
                   const { checkIn } = accountFor;
                   setAccountFor(undefined);
                   onChanged();
-                  if (checkIn) b.payment.balanceCents > 0 ? setPayingFor(b) : run(() => client.checkIn(b.id));
+                  if (checkIn) setPayingFor(b);
                 }}
                 onCancel={() => setAccountFor(undefined)}
               />
@@ -179,7 +184,7 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, station, onO
                   style={{ marginTop: 8 }}
                   onPress={() => {
                     setAccountFor(undefined);
-                    b.payment.balanceCents > 0 ? setPayingFor(b) : run(() => client.checkIn(b.id));
+                    setPayingFor(b);
                   }}
                 >
                   <Text style={styles.skip}>Golfer won't give details? Check in without an account</Text>
@@ -188,11 +193,12 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, station, onO
             </>
           )}
           {payingFor?.id === b.id && (
-            <PaymentForm
+            <CheckoutForm
+              client={client}
               booking={b}
-              onPay={(method) => {
+              onPay={(method, items) => {
                 setPayingFor(undefined);
-                run(() => client.checkIn(b.id, method));
+                run(() => client.checkIn(b.id, method, items));
               }}
               onCancel={() => setPayingFor(undefined)}
             />
@@ -252,6 +258,7 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, station, onO
           courseHoles={courseHoles}
           // Residency is checked and priced at the pro shop, so the starter doesn't pick a rate.
           showRate={station === "proshop"}
+          price={price}
           client={client}
           onSubmit={(name, golfer, players, holes, cart, resident) =>
             run(async () => {
@@ -373,14 +380,167 @@ const PAYMENT_OPTIONS: { method: PaymentMethod; label: string }[] = [
   { method: "comp", label: "Comp" },
 ];
 
-function PaymentForm({ booking, onPay, onCancel }: { booking: SheetBooking; onPay: (m: PaymentMethod) => void; onCancel: () => void }) {
+type PriceFn = (p: { players: number; holes: number; resident: boolean; riding: boolean }) => number | undefined;
+
+/**
+ * What a group will pay: each player's green fee at this time (with the replay rate for a
+ * second loop) plus a gas cart each when riding. Matches what the server charges, except on
+ * holidays, which the server prices; undefined when the course has no rate that fits.
+ */
+function priceRound(course: Course, startsAt: string, p: { players: number; holes: number; resident: boolean; riding: boolean }) {
+  try {
+    const loops = Math.max(1, Math.round(p.holes / course.holes));
+    const player = { residency: p.resident ? "resident" : "nonresident", ageGroup: "adult" } as const;
+    const fee = quotePlayer(course.rates ?? [], player, { startsAt, timeZone: course.timeZone }, loops).totalCents;
+    const cart = p.riding ? (course.addOns.find((a) => a.code === "gas_cart")?.priceCents ?? 0) : 0;
+    return (fee + cart) * p.players;
+  } catch {
+    return undefined;
+  }
+}
+
+function PriceLine({ cents, what }: { cents: number | undefined; what: string }) {
+  return (
+    <View style={styles.priceLine} accessibilityLiveRegion="polite">
+      <Text style={styles.muted}>{what}</Text>
+      <Text style={styles.priceTotal}>{cents === undefined ? "No rate set" : `Total ${money(cents)}`}</Text>
+    </View>
+  );
+}
+
+const ITEM_METHODS: { method: SalePaymentMethod; label: string }[] = [
+  { method: "card", label: "Card" },
+  { method: "cash", label: "Cash" },
+  { method: "gift_card", label: "Gift card" },
+];
+
+/**
+ * Checking a group in at the pro shop: take what's owed for the round and ring up anything
+ * else they're buying (water, snacks, balls) in the same step.
+ */
+function CheckoutForm({
+  client,
+  booking,
+  onPay,
+  onCancel,
+}: {
+  client: Client;
+  booking: SheetBooking;
+  onPay: (m: PaymentMethod | undefined, items?: { lines: { productId: string; quantity: number }[]; paymentMethod: SalePaymentMethod }) => void;
+  onCancel: () => void;
+}) {
+  const [products, setProducts] = useState<Product[]>();
+  const [taxBps, setTaxBps] = useState(0);
+  const [cart, setCart] = useState<{ product: Product; quantity: number }[]>([]);
+  const [q, setQ] = useState("");
+  const [method, setMethod] = useState<PaymentMethod>("card");
+  // Punch cards and comps cover the round only, so items need a way to pay of their own.
+  const [itemMethod, setItemMethod] = useState<SalePaymentMethod>("card");
+
+  useEffect(() => {
+    client.products().then(setProducts).catch(() => setProducts([]));
+    client.posSettings().then((x) => setTaxBps(x.salesTaxBps)).catch(() => undefined);
+  }, [client]);
+
+  const owed = booking.payment.balanceCents;
+  const add = (p: Product) =>
+    setCart((c) => (c.some((x) => x.product.id === p.id) ? c.map((x) => (x.product.id === p.id ? { ...x, quantity: x.quantity + 1 } : x)) : [...c, { product: p, quantity: 1 }]));
+  const setQty = (id: string, n: number) => setCart((c) => (n < 1 ? c.filter((x) => x.product.id !== id) : c.map((x) => (x.product.id === id ? { ...x, quantity: n } : x))));
+  const sameMethod = method === "card" || method === "cash" || method === "gift_card";
+  const payItemsWith: SalePaymentMethod = sameMethod ? (method as SalePaymentMethod) : itemMethod;
+  const itemsSubtotal = cart.reduce((s, x) => s + x.product.priceCents * x.quantity, 0);
+  const itemsTax = Math.round((cart.filter((x) => x.product.taxable).reduce((s, x) => s + x.product.priceCents * x.quantity, 0) * taxBps) / 10_000);
+  const total = owed + itemsSubtotal + itemsTax;
+  const match = q.trim().toLowerCase();
+  // Quick picks: drinks and snacks first, since that's what golfers grab on the way out.
+  const shown = (products ?? [])
+    .filter((p) => (match ? p.name.toLowerCase().includes(match) || p.sku?.toLowerCase() === match : true))
+    .sort((a, b) => Number(b.category === "Food & drink") - Number(a.category === "Food & drink"))
+    .slice(0, match ? 12 : 8);
+
   return (
     <View style={{ marginTop: 10 }}>
-      <Text style={styles.muted}>How is {booking.customerName} paying {money(booking.payment.balanceCents)}?</Text>
+      <Text style={styles.section}>Check in {booking.customerName}</Text>
+      <View style={styles.billRow}>
+        <Text style={styles.muted}>
+          Round: {booking.players} {booking.players === 1 ? "player" : "players"}, {booking.holes} holes, {booking.riding ? "riding" : "walking"}
+        </Text>
+        <Text style={styles.name}>{owed > 0 ? money(owed) : "Paid"}</Text>
+      </View>
+      {cart.map((x) => (
+        <View key={x.product.id} style={styles.billRow}>
+          <Text style={[styles.muted, { flex: 1 }]} numberOfLines={1}>
+            {x.product.name}
+          </Text>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+            <Toggle label="−" on={false} onPress={() => setQty(x.product.id, x.quantity - 1)} />
+            <Text style={{ minWidth: 18, textAlign: "center", color: colors.text }}>{x.quantity}</Text>
+            <Toggle label="+" on={false} onPress={() => setQty(x.product.id, x.quantity + 1)} />
+          </View>
+          <Text style={[styles.name, { width: 72, textAlign: "right" }]}>{money(x.product.priceCents * x.quantity)}</Text>
+        </View>
+      ))}
+      {itemsTax > 0 && (
+        <View style={styles.billRow}>
+          <Text style={styles.muted}>Sales tax on items</Text>
+          <Text style={styles.muted}>{money(itemsTax)}</Text>
+        </View>
+      )}
+      <View style={[styles.billRow, { borderBottomWidth: 0 }]}>
+        <Text style={styles.name}>Total</Text>
+        <Text style={styles.priceTotal}>{money(total)}</Text>
+      </View>
+
+      <Text style={[styles.muted, { marginTop: 8, marginBottom: 6 }]}>Add items</Text>
+      <TextInput style={[styles.input, { marginBottom: 6 }]} accessibilityLabel="Search pro shop items" placeholder="Search items, e.g. water" value={q} onChangeText={setQ} />
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+        {!products ? (
+          <Text style={styles.muted}>Loading items…</Text>
+        ) : (
+          shown.map((p) => (
+            <Pressable
+              key={p.id}
+              accessibilityRole="button"
+              accessibilityLabel={`Add ${p.name}, ${money(p.priceCents)}`}
+              onPress={() => add(p)}
+              style={({ hovered, focused }: WebPress) => [styles.itemChip, (hovered || focused) && { borderColor: colors.primary }]}
+            >
+              <Text style={{ color: colors.text, fontSize: 13 }} numberOfLines={1}>
+                {p.name} · {money(p.priceCents)}
+              </Text>
+            </Pressable>
+          ))
+        )}
+      </View>
+
+      {owed > 0 && (
+        <>
+          <Text style={[styles.muted, { marginTop: 12, marginBottom: 6 }]}>Round paid by</Text>
+          <View style={styles.actions}>
+            {PAYMENT_OPTIONS.map((o) => (
+              <Toggle key={o.method} label={o.label} on={method === o.method} onPress={() => setMethod(o.method)} />
+            ))}
+          </View>
+        </>
+      )}
+      {cart.length > 0 && (owed === 0 || !sameMethod) && (
+        <>
+          <Text style={[styles.muted, { marginTop: 12, marginBottom: 6 }]}>Items paid by</Text>
+          <View style={styles.actions}>
+            {ITEM_METHODS.map((o) => (
+              <Toggle key={o.method} label={o.label} on={itemMethod === o.method} onPress={() => setItemMethod(o.method)} />
+            ))}
+          </View>
+        </>
+      )}
       <View style={styles.actions}>
-        {PAYMENT_OPTIONS.map((o) => (
-          <Action key={o.method} label={o.label} primary={o.method === "card"} onPress={() => onPay(o.method)} />
-        ))}
+        <Action
+          label={total > 0 ? `Take ${money(total)} & check in` : "Check in"}
+          primary
+          onPress={() =>
+            onPay(owed > 0 ? method : undefined, cart.length ? { lines: cart.map((x) => ({ productId: x.product.id, quantity: x.quantity })), paymentMethod: owed > 0 ? payItemsWith : itemMethod } : undefined)
+          }
+        />
         <Action label="Back" onPress={onCancel} />
       </View>
     </View>
@@ -392,9 +552,10 @@ function WalkInForm(props: {
   maxPlayers: number;
   courseHoles: number;
   showRate: boolean;
+  price: PriceFn;
   onSubmit: (name: string, golfer: GolferAccount | null, players: number, holes: number, cart: boolean, resident: boolean) => void;
 }) {
-  const { client, maxPlayers, courseHoles, showRate, onSubmit } = props;
+  const { client, maxPlayers, courseHoles, showRate, price, onSubmit } = props;
   const [name, setName] = useState("");
   // The golfer account picked from the search, if the walk-in is already in the system.
   const [golfer, setGolfer] = useState<GolferAccount | null>(null);
@@ -469,6 +630,7 @@ function WalkInForm(props: {
           <Toggle label="Resident" on={resident} onPress={() => setResident(true)} />
         </Row>
       )}
+      <PriceLine cents={price({ players, holes, resident: showRate && resident, riding: cart })} what={`${players} ${players === 1 ? "player" : "players"}, ${holes} holes, ${cart ? "riding" : "walking"}`} />
       <Action
         label="Add to tee sheet"
         primary
@@ -484,8 +646,16 @@ function WalkInForm(props: {
 }
 
 /** Adds guests to a golfer's group. They're priced into the group's booking, not the golfer's own account. */
-function GuestForm(props: { booking: SheetBooking; initialCount: number; maxGuests: number; showRate: boolean; onSave: (count: number, riding: boolean, resident: boolean) => void; onCancel: () => void }) {
-  const { booking, initialCount, maxGuests, showRate, onSave, onCancel } = props;
+function GuestForm(props: {
+  booking: SheetBooking;
+  initialCount: number;
+  maxGuests: number;
+  showRate: boolean;
+  price: PriceFn;
+  onSave: (count: number, riding: boolean, resident: boolean) => void;
+  onCancel: () => void;
+}) {
+  const { booking, initialCount, maxGuests, showRate, price, onSave, onCancel } = props;
   const [count, setCount] = useState(Math.max(1, Math.min(initialCount, maxGuests)));
   const [riding, setRiding] = useState(booking.riding);
   const [resident, setResident] = useState(false);
@@ -517,6 +687,10 @@ function GuestForm(props: { booking: SheetBooking; initialCount: number; maxGues
           <Toggle label="Resident" on={resident} onPress={() => setResident(true)} />
         </Row>
       )}
+      <PriceLine
+        cents={price({ players: count, holes: booking.holes, resident: showRate && resident, riding })}
+        what={`${count} ${count === 1 ? "guest" : "guests"}, ${booking.holes} holes, ${riding ? "riding" : "walking"}`}
+      />
       <Text style={styles.muted}>Guests are added to this group's bill and listed on {booking.customerName}'s account, but their fees don't count as {booking.customerName}'s own spending.</Text>
       <View style={styles.actions}>
         <Action label={`Add ${count} ${count === 1 ? "guest" : "guests"}`} primary onPress={() => onSave(count, riding, resident)} />
@@ -567,6 +741,10 @@ const styles = StyleSheet.create({
   nameLink: { color: colors.primary, textDecorationLine: "underline" },
   account: { color: colors.primaryText, fontSize: 13, marginTop: 4, fontWeight: "600" },
   skip: { color: colors.muted, fontSize: 13, textDecorationLine: "underline" },
+  priceLine: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8, borderTopWidth: 1, borderColor: colors.border, paddingTop: 8, marginBottom: 10 },
+  priceTotal: { fontSize: 16, fontWeight: "700", color: colors.text },
+  billRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8, paddingVertical: 6, borderBottomWidth: 1, borderColor: colors.border },
+  itemChip: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, paddingHorizontal: 10, paddingVertical: 6, backgroundColor: colors.card },
   input: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, padding: 12, fontSize: 14, marginBottom: 10, color: colors.text },
   toggle: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, minWidth: 44, minHeight: 34, paddingHorizontal: 12, alignItems: "center", justifyContent: "center", marginRight: 6, marginBottom: 4 },
   toggleOn: { backgroundColor: colors.primary, borderColor: colors.primary },
