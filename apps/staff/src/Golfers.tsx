@@ -290,7 +290,7 @@ export function GolferDetail({ client, id, onBack, onOpenBooking }: { client: Cl
               accessibilityLabel={`${dateTime(h.startsAt)}, ${h.holes} holes. Open on the tee sheet`}
               disabled={!onOpenBooking || h.bookingId.startsWith("past-")}
               onPress={() => onOpenBooking?.(h)}
-              style={({ hovered, focused }: WebPress) => [styles.historyRow, hovered && { backgroundColor: colors.greenLight }, focused && styles.focusRing]}
+              style={({ hovered, focused }: WebPress) => [styles.historyRow, hovered && { backgroundColor: colors.primaryLight }, focused && styles.focusRing]}
             >
               <Text style={[styles.historyCell, { width: 230 }]}>{dateTime(h.startsAt)}</Text>
               <Text style={[styles.historyCell, { flex: 1, minWidth: 140 }]}>
@@ -300,7 +300,7 @@ export function GolferDetail({ client, id, onBack, onOpenBooking }: { client: Cl
                 {h.status === "teed_off" || h.status === "checked_in" ? "Played" : statusLabel[h.status]}
               </Text>
               <Text style={[styles.historyCell, { width: 80, textAlign: "right" }]}>{money(h.paidCents)}</Text>
-              {onOpenBooking && <Text style={[styles.historyCell, { color: colors.green }]} aria-hidden>›</Text>}
+              {onOpenBooking && <Text style={[styles.historyCell, { color: colors.primary }]} aria-hidden>›</Text>}
             </Pressable>
           ))}
         </View>
