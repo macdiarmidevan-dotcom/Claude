@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { PassSetup } from "./PassSetup";
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, useWindowDimensions, View } from "react-native";
 import type { Client, GolferAccount, Me, Product, ProductInput, Sale, SalePaymentMethod, SalesDay, StockMovement } from "./api";
 import { addDays, dayParts, todayIn } from "./dates";
@@ -6,7 +7,7 @@ import { useSearch } from "./Golfers";
 import { CardChargeModal, useCardReader } from "./CardReader";
 import { colors, money, radius, type WebPress } from "./theme";
 
-type Tab = "register" | "inventory" | "sales";
+type Tab = "register" | "inventory" | "sales" | "passes";
 
 const METHODS: { id: SalePaymentMethod; label: string }[] = [
   { id: "card", label: "Card" },
@@ -58,6 +59,7 @@ export function ProShopScreen({ client, me, timeZone }: { client: Client; me: Me
     { id: "register", label: "Register" },
     { id: "inventory", label: low ? `Inventory (${low} low)` : "Inventory" },
     { id: "sales", label: "Today's sales" },
+    { id: "passes", label: "Passes & points" },
   ];
 
   return (
@@ -82,8 +84,10 @@ export function ProShopScreen({ client, me, timeZone }: { client: Client; me: Me
         <Register client={client} products={products.filter((p) => p.active)} onSold={load} />
       ) : tab === "inventory" ? (
         <Inventory client={client} products={products} isManager={isManager} onChanged={load} />
-      ) : (
+      ) : tab === "sales" ? (
         <SalesView client={client} isManager={isManager} timeZone={timeZone} onRefunded={load} />
+      ) : (
+        <PassSetup client={client} isManager={isManager} />
       )}
     </View>
   );

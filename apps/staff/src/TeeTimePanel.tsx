@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { quotePlayer } from "@golf/core";
 import type { ScrollViewInstance } from "react-native";
-import type { Client, Course, RoundChoice, GolferAccount, PaymentMethod, Product, SalePaymentMethod, SheetBooking, SheetTeeTime, Station, Waiver } from "./api";
+import type { Client, Course, RoundChoice, GolferAccount, PaymentMethod, Product, SalePaymentMethod, SheetBooking, SheetTeeTime, Station, Waiver, Redemption, Wallet } from "./api";
 import { WaiverModal } from "./WaiverModal";
 import { CardChargeModal, useCardReader } from "./CardReader";
 import { GolferPicker, useSearch } from "./Golfers";
@@ -211,9 +211,9 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, course, stat
               client={client}
               booking={b}
               price={price}
-              onPay={(method, items, round, cardPaymentId) => {
+              onPay={(method, items, round, cardPaymentId, redeem) => {
                 setPayingFor(undefined);
-                run(() => client.checkIn(b.id, method, items, round, cardPaymentId));
+                run(() => client.checkIn(b.id, method, items, round, cardPaymentId, redeem));
               }}
               onCancel={() => setPayingFor(undefined)}
             />
@@ -409,7 +409,8 @@ function PaymentLine({ booking }: { booking: SheetBooking }) {
 const PAYMENT_OPTIONS: { method: PaymentMethod; label: string }[] = [
   { method: "card", label: "Card" },
   { method: "cash", label: "Cash" },
-  { method: "punch_card", label: "Punch card" },
+  // A card the course tracks on paper, not one sold on the golfer's account.
+  { method: "punch_card", label: "Paper punch card" },
   { method: "gift_card", label: "Gift card" },
   { method: "comp", label: "Comp" },
 ];
@@ -467,6 +468,7 @@ function CheckoutForm({
     items?: { lines: { productId: string; quantity: number }[]; paymentMethod: SalePaymentMethod },
     round?: RoundChoice,
     cardPaymentId?: string,
+    redeem?: Redemption,
   ) => void;
   onCancel: () => void;
 }) {
@@ -490,7 +492,36 @@ function CheckoutForm({
   const changed = canReprice && (resident !== booking.resident || riding !== booking.riding);
   const repriced = changed ? price({ players: booking.players, holes: booking.holes, resident, riding }) : undefined;
   const round: RoundChoice | undefined = changed && repriced !== undefined ? { residency: resident ? "resident" : "nonresident", riding } : undefined;
-  const owed = round ? repriced! : booking.payment.balanceCents;
+  const roundOwed = round ? repriced! : booking.payment.balanceCents;
+
+  // The golfer's punch cards, season pass and points come off the round before anything else.
+  const [wallet, setWallet] = useState<Wallet>();
+  useEffect(() => {
+    if (booking.golferId) client.wallet(booking.golferId).then(setWallet).catch(() => undefined);
+  }, [client, booking.golferId]);
+  const passes = wallet?.passes.filter((p) => p.usable) ?? [];
+  const [passUse, setPassUse] = useState<{ id: string; rounds: number }>();
+  const pass = passes.find((p) => p.id === passUse?.id);
+  const [rewards, setRewards] = useState(0);
+  // Each round on a pass covers one player's green fee, plus their cart if the pass includes it.
+  const perPlayer = (() => {
+    if (round) {
+      const walk = price({ players: 1, holes: booking.holes, resident, riding: false }) ?? 0;
+      const ride = riding ? (price({ players: 1, holes: booking.holes, resident, riding: true }) ?? walk) - walk : 0;
+      return { green: walk, cart: ride };
+    }
+    return { green: booking.greenFeeCents / booking.players, cart: booking.cartCents / booking.players };
+  })();
+  const passCovers = pass && passUse ? Math.min(roundOwed, Math.round((perPlayer.green + (pass.coversCart ? perPlayer.cart : 0)) * passUse.rounds)) : 0;
+  const rewardCents = wallet?.loyalty.rewardCents ?? 0;
+  const maxRewards = wallet && rewardCents > 0 ? Math.min(wallet.loyalty.rewardsAvailable, Math.floor((roundOwed - passCovers) / rewardCents)) : 0;
+  const usedRewards = Math.min(rewards, maxRewards);
+  const pointsOff = usedRewards * rewardCents;
+  const owed = roundOwed - passCovers - pointsOff;
+  const redeem: Redemption | undefined =
+    pass || usedRewards
+      ? { ...(pass && passUse ? { pass: { golferPassId: pass.id, rounds: passUse.rounds } } : {}), ...(usedRewards ? { points: usedRewards * wallet!.loyalty.rewardPoints } : {}) }
+      : undefined;
   const add = (p: Product) =>
     setCart((c) => (c.some((x) => x.product.id === p.id) ? c.map((x) => (x.product.id === p.id ? { ...x, quantity: x.quantity + 1 } : x)) : [...c, { product: p, quantity: 1 }]));
   const setQty = (id: string, n: number) => setCart((c) => (n < 1 ? c.filter((x) => x.product.id !== id) : c.map((x) => (x.product.id === id ? { ...x, quantity: n } : x))));
@@ -506,7 +537,7 @@ function CheckoutForm({
   const reader = useCardReader();
   const [charging, setCharging] = useState(false);
   const pay = (cardPaymentId?: string) =>
-    onPay(roundMethod, cart.length ? { lines: cart.map((x) => ({ productId: x.product.id, quantity: x.quantity })), paymentMethod: itemsWith } : undefined, round, cardPaymentId);
+    onPay(roundMethod, cart.length ? { lines: cart.map((x) => ({ productId: x.product.id, quantity: x.quantity })), paymentMethod: itemsWith } : undefined, round, cardPaymentId, redeem);
   const match = q.trim().toLowerCase();
   // Quick picks: drinks and snacks first, since that's what golfers grab on the way out.
   const shown = (products ?? [])
@@ -535,8 +566,22 @@ function CheckoutForm({
           Round: {booking.players} {booking.players === 1 ? "player" : "players"}, {booking.holes} holes, {(round ? riding : booking.riding) ? "riding" : "walking"}
           {round ? `, ${resident ? "resident" : "nonresident"}` : ""}
         </Text>
-        <Text style={styles.name}>{owed > 0 ? money(owed) : "Paid"}</Text>
+        <Text style={styles.name}>{roundOwed > 0 ? money(roundOwed) : "Paid"}</Text>
       </View>
+      {passCovers > 0 && pass && (
+        <View style={styles.billRow}>
+          <Text style={styles.muted}>
+            {pass.name}, {passUse!.rounds} {passUse!.rounds === 1 ? "round" : "rounds"}
+          </Text>
+          <Text style={[styles.name, { color: colors.checkedIn }]}>−{money(passCovers)}</Text>
+        </View>
+      )}
+      {pointsOff > 0 && (
+        <View style={styles.billRow}>
+          <Text style={styles.muted}>{(usedRewards * wallet!.loyalty.rewardPoints).toLocaleString()} loyalty points</Text>
+          <Text style={[styles.name, { color: colors.checkedIn }]}>−{money(pointsOff)}</Text>
+        </View>
+      )}
       {cart.map((x) => (
         <View key={x.product.id} style={styles.billRow}>
           <Text style={[styles.muted, { flex: 1 }]} numberOfLines={1}>
@@ -560,6 +605,43 @@ function CheckoutForm({
         <Text style={styles.name}>Total</Text>
         <Text style={styles.priceTotal}>{money(total)}</Text>
       </View>
+
+      {roundOwed > 0 && passes.length > 0 && (
+        <>
+          <Text style={[styles.muted, { marginTop: 8, marginBottom: 6 }]}>Use a pass</Text>
+          <View style={styles.actions}>
+            <Toggle label="No" on={!pass} onPress={() => setPassUse(undefined)} />
+            {passes.map((p) => (
+              <Toggle
+                key={p.id}
+                label={p.kind === "punch_card" ? `${p.name} (${p.roundsLeft} left)` : p.name}
+                on={pass?.id === p.id}
+                onPress={() => setPassUse({ id: p.id, rounds: p.kind === "season_pass" ? 1 : Math.min(booking.players, p.roundsLeft ?? 1) })}
+              />
+            ))}
+          </View>
+          {pass?.kind === "punch_card" && (
+            <Row label="Rounds">
+              {Array.from({ length: Math.min(booking.players, pass.roundsLeft ?? 0) }, (_, i) => i + 1).map((n) => (
+                <Toggle key={n} label={String(n)} on={passUse!.rounds === n} onPress={() => setPassUse({ id: pass.id, rounds: n })} />
+              ))}
+            </Row>
+          )}
+          {pass?.kind === "season_pass" && <Text style={styles.muted}>A season pass covers the holder only.</Text>}
+        </>
+      )}
+      {roundOwed > 0 && wallet && wallet.loyalty.rewardsAvailable > 0 && (maxRewards > 0 || usedRewards > 0) && (
+        <>
+          <Text style={[styles.muted, { marginTop: 8, marginBottom: 6 }]}>
+            Use points ({wallet.loyalty.points.toLocaleString()} available, {wallet.loyalty.rewardPoints} = {money(rewardCents)} off)
+          </Text>
+          <View style={styles.actions}>
+            {Array.from({ length: maxRewards + 1 }, (_, n) => n).map((n) => (
+              <Toggle key={n} label={n === 0 ? "No" : money(n * rewardCents)} on={usedRewards === n} onPress={() => setRewards(n)} />
+            ))}
+          </View>
+        </>
+      )}
 
       <Text style={[styles.muted, { marginTop: 8, marginBottom: 6 }]}>Add items</Text>
       <TextInput style={[styles.input, { marginBottom: 6 }]} accessibilityLabel="Search pro shop items" placeholder="Search items, e.g. water" value={q} onChangeText={setQ} />

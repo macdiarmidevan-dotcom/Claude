@@ -123,7 +123,7 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
         ) : section === "customers" ? (
           <>
             <Header title="Golfers" onOpenMenu={openMenu} />
-            <GolfersScreen key={golferId ?? "search"} client={client} openId={golferId} onOpenBooking={openBooking} />
+            <GolfersScreen key={golferId ?? "search"} client={client} openId={golferId} onOpenBooking={openBooking} isManager={isManager} />
           </>
         ) : section === "staff" ? (
           <>

@@ -26,7 +26,7 @@ export interface Course {
 }
 
 export type BookingStatus = "confirmed" | "checked_in" | "teed_off" | "cancelled" | "no_show";
-export type PaymentMethod = "card" | "cash" | "prepaid" | "punch_card" | "gift_card" | "comp";
+export type PaymentMethod = "card" | "cash" | "prepaid" | "punch_card" | "season_pass" | "loyalty" | "gift_card" | "comp";
 
 export interface PaymentSummary {
   status: "paid" | "partial" | "unpaid";
@@ -54,6 +54,9 @@ export interface SheetBooking {
   riding: boolean;
   /** Paying resident rates. */
   resident: boolean;
+  /** The round's green fees and carts, for working out what a pass covers. */
+  greenFeeCents: number;
+  cartCents: number;
   payment: PaymentSummary;
 }
 
@@ -289,6 +292,58 @@ export interface Swap {
 
 export type SalePaymentMethod = "card" | "cash" | "gift_card" | "comp";
 
+export type PassKind = "punch_card" | "season_pass";
+
+export interface PassType {
+  id: string;
+  name: string;
+  kind: PassKind;
+  priceCents: number;
+  /** Rounds on a punch card; null for a season pass. */
+  rounds: number | null;
+  /** Days it's good for after it's sold; null for no end date. */
+  validDays: number | null;
+  coversCart: boolean;
+  active: boolean;
+}
+
+export interface GolferPass {
+  id: string;
+  name: string;
+  kind: PassKind;
+  roundsTotal: number | null;
+  roundsUsed: number;
+  roundsLeft: number | null;
+  coversCart: boolean;
+  expiresAt: string | null;
+  soldAt: string;
+  status: "active" | "cancelled";
+  usable: boolean;
+}
+
+export interface LoyaltySettings {
+  /** Points per whole dollar spent; 0 means loyalty is off. */
+  pointsPerDollar: number;
+  rewardPoints: number;
+  rewardCents: number;
+}
+
+export interface Wallet {
+  passes: GolferPass[];
+  loyalty: LoyaltySettings & {
+    enabled: boolean;
+    points: number;
+    rewardsAvailable: number;
+    history: { change: number; balanceAfter: number; reason: "round" | "sale" | "redeem" | "adjust" | "refund"; note: string | null; staff: string | null; at: string }[];
+  };
+}
+
+/** Passes and points used at check-in, before the rest is paid. */
+export interface Redemption {
+  pass?: { golferPassId: string; rounds: number };
+  points?: number;
+}
+
 export interface Product {
   id: string;
   name: string;
@@ -357,7 +412,7 @@ export interface SalesDay {
   };
 }
 
-export type MoneyMethod = "cash" | "card" | "gift_card" | "punch_card" | "prepaid" | "comp";
+export type MoneyMethod = "cash" | "card" | "gift_card" | "punch_card" | "season_pass" | "loyalty" | "prepaid" | "comp";
 
 export interface Report {
   from: string;
@@ -446,10 +501,17 @@ function createHttpClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "ap
     /** Checks a group in, taking what's owed for the round and ringing up any items bought with it. */
     /** round: the pro shop's rate and walking/riding for the group, re-priced before payment. */
     /** cardPaymentId: a card that went through on a connected reader, covering everything paid by card. */
-    checkIn: (id: string, method?: PaymentMethod, items?: { lines: SaleLineInput[]; paymentMethod: SalePaymentMethod }, round?: RoundChoice, cardPaymentId?: string) =>
+    checkIn: (
+      id: string,
+      method?: PaymentMethod,
+      items?: { lines: SaleLineInput[]; paymentMethod: SalePaymentMethod },
+      round?: RoundChoice,
+      cardPaymentId?: string,
+      redeem?: Redemption,
+    ) =>
       request(`/bookings/${id}/check-in`, {
         method: "POST",
-        body: { ...(method ? { payment: { method } } : {}), ...(items ? { items } : {}), ...(round ? { round } : {}), ...(cardPaymentId ? { cardPaymentId } : {}) },
+        body: { ...(method ? { payment: { method } } : {}), ...(items ? { items } : {}), ...(round ? { round } : {}), ...(cardPaymentId ? { cardPaymentId } : {}), ...(redeem ?? {}) },
       }),
     waiver: () => request<Waiver>("/waiver"),
     /** Who is signed in. Managers can change course settings; other staff can't. */
@@ -508,6 +570,17 @@ function createHttpClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "ap
     cancelCardPayment: (id: string) => request<CardPayment>(`/card-payments/${id}/cancel`, { method: "POST" }),
     sales: (date: string) => request<SalesDay>(`/sales?date=${date}`),
     refundSale: (id: string) => request<Sale>(`/sales/${id}/refund`, { method: "POST" }),
+    passTypes: () => request<PassType[]>("/pass-types"),
+    addPassType: (t: { name: string; kind: PassKind; priceCents: number; rounds?: number | null; validDays?: number | null; coversCart?: boolean }) =>
+      request<PassType>("/pass-types", { method: "POST", body: t }),
+    updatePassType: (id: string, patch: Partial<Omit<PassType, "id" | "kind">>) => request<PassType>(`/pass-types/${id}`, { method: "PATCH", body: patch }),
+    loyaltySettings: () => request<LoyaltySettings>("/settings/loyalty"),
+    saveLoyaltySettings: (s: LoyaltySettings) => request<LoyaltySettings>("/settings/loyalty", { method: "PUT", body: s }),
+    wallet: (golferId: string) => request<Wallet>(`/golfers/${golferId}/wallet`),
+    sellPass: (golferId: string, sale: { passTypeId: string; paymentMethod: SalePaymentMethod; cardPaymentId?: string }) =>
+      request<Wallet>(`/golfers/${golferId}/passes`, { method: "POST", body: sale }),
+    cancelPass: (golferId: string, passId: string) => request<Wallet>(`/golfers/${golferId}/passes/${passId}/cancel`, { method: "POST" }),
+    adjustPoints: (golferId: string, change: number, note: string) => request<Wallet>(`/golfers/${golferId}/points`, { method: "POST", body: { change, note } }),
     posSettings: () => request<{ salesTaxBps: number }>("/settings/pos"),
     savePosSettings: (settings: { salesTaxBps: number }) => request<{ salesTaxBps: number }>("/settings/pos", { method: "PUT", body: settings }),
     report: (from: string, to: string) => request<Report>(`/reports?from=${from}&to=${to}`),
