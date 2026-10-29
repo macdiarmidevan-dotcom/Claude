@@ -130,6 +130,24 @@ export interface SheetTeeTime {
   bookings: SheetBooking[];
 }
 
+export type DelayReason = "frost" | "fog" | "rain" | "lightning" | "heat" | "course" | "other";
+
+/** A weather delay: every tee time from fromTime on was pushed back by minutes. */
+export interface TeeSheetDelay {
+  id: string;
+  date: string;
+  fromTime: string;
+  minutes: number;
+  reason: DelayReason;
+  note: string | null;
+  teeTimes: number;
+  groups: number;
+  campaignId: string | null;
+  staff: string | null;
+  at: string;
+  undoneAt: string | null;
+}
+
 export interface WalkIn {
   teeTimeId: string;
   holes: number;
@@ -921,6 +939,10 @@ function createHttpClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "ap
   return {
     course: () => request<Course>(""),
     teeSheet: (date: string) => request<{ date: string; teeTimes: SheetTeeTime[] }>(`/tee-sheet?date=${date}`),
+    delays: (date: string) => request<TeeSheetDelay[]>(`/tee-sheet/delays?date=${date}`),
+    delayTeeSheet: (input: { date: string; from: string; minutes: number; reason: DelayReason; note?: string | null; notify?: { channels: MessageChannel[]; body?: string | null } | null }) =>
+      request<{ delay: TeeSheetDelay; campaign: CampaignDetail | null; lastTeeTime: string | null }>("/tee-sheet/delays", { method: "POST", body: input }),
+    undoDelay: (id: string) => request<TeeSheetDelay[]>(`/tee-sheet/delays/${id}/undo`, { method: "POST" }),
     setTeeTime: (id: string, patch: { status?: "open" | "blocked"; note?: string | null }) =>
       request(`/tee-times/${id}`, { method: "PATCH", body: patch }),
     book: (walkIn: WalkIn) => request(`/bookings`, { method: "POST", body: { ...walkIn, source: "staff" } }),

@@ -1,7 +1,7 @@
 import { DateTime } from "luxon";
 import { parseTeeSheetCsv, type ImportedBooking, type ImportProblem } from "@golf/core";
 import type { Db, DbClient } from "./db.ts";
-import { getTeeSheet, toTeeTime, type Course } from "./courses.ts";
+import { delayShifter, getTeeSheet, toTeeTime, type Course } from "./courses.ts";
 import { buildQuote } from "./bookings.ts";
 
 // Brings the course's booking provider's tee sheet into ours. Golfers keep booking on
@@ -136,7 +136,9 @@ export async function importTeeSheet(
 }
 
 async function teeTimeFor(client: DbClient, course: Course, b: ImportedBooking): Promise<{ id: string; added: boolean }> {
-  const startsAt = DateTime.fromISO(`${b.date}T${b.time}`, { zone: course.timeZone }).toUTC().toISO()!;
+  // The booking system keeps the original times; a weather delay here moves them on our sheet.
+  const shifted = await delayShifter(client, course, b.date);
+  const startsAt = shifted(DateTime.fromISO(`${b.date}T${b.time}`, { zone: course.timeZone }).toUTC().toISO()!);
   const { rows } = await client.query<{ id: string }>("SELECT id FROM tee_times WHERE course_id = $1 AND starts_at = $2", [course.id, startsAt]);
   if (rows[0]) return { id: rows[0].id, added: false };
   // The provider has a time our sheet doesn't (a shotgun start or a changed interval): add it.
