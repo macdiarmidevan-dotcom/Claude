@@ -348,11 +348,8 @@ export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu,
             />
           )}
         </View>
-        {sideBySide && (
-          <View style={styles.side}>
-            {panel ?? <Text style={styles.empty}>Choose a tee time to check groups in, take payment, add walk-ins or block it.</Text>}
-          </View>
-        )}
+        {/* The tee sheet runs to the right edge until a tee time is chosen; then its details open beside it. */}
+        {sideBySide && panel && <View style={styles.side}>{panel}</View>}
       </View>
 
       {!sideBySide && (
