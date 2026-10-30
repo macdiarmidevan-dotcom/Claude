@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Modal, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
-import { ApiError, createClient, type Course, type Me, type Settings } from "./api";
+import { ApiError, createClient, type Course, type DayClose, type Me, type Settings } from "./api";
+import { todayIn } from "./dates";
 import { StationPicker } from "./SetupScreen";
 import { TeeSheetScreen } from "./TeeSheetScreen";
 import { WaiverEditor } from "./WaiverEditor";
@@ -14,12 +15,13 @@ import { CardPaymentSettings, CardReaderProvider } from "./CardReader";
 import { AccountsScreen } from "./AccountsScreen";
 import { EventsScreen } from "./EventsScreen";
 import { FoodBarScreen } from "./FoodBarScreen";
-import { ReportsScreen } from "./ReportsScreen";
+import { ReportsScreen, StartDayForm } from "./ReportsScreen";
 import { colors, type WebPress } from "./theme";
 
 type Section = "tee-sheet" | "import" | "staff" | "customers" | "events" | "food" | "accounts" | "reports" | "schedule" | "inventory" | "settings";
 
-const SECTIONS: { id: Section; label: string; soon?: string; managers?: boolean }[] = [
+// starters: false hides a section on the starter station (managers still see it).
+const SECTIONS: { id: Section; label: string; soon?: string; managers?: boolean; starters?: false }[] = [
   { id: "tee-sheet", label: "Tee sheet" },
   { id: "import", label: "Sync tee sheet", managers: true },
   { id: "staff", label: "Staff accounts", managers: true },
@@ -27,7 +29,7 @@ const SECTIONS: { id: Section; label: string; soon?: string; managers?: boolean 
   { id: "events", label: "Leagues & events" },
   { id: "food", label: "Food & bar" },
   { id: "accounts", label: "Gift cards & accounts" },
-  { id: "reports", label: "Reports" },
+  { id: "reports", label: "Reports", starters: false },
   { id: "schedule", label: "Staff schedule" },
   { id: "inventory", label: "Pro shop" },
   { id: "settings", label: "Settings" },
@@ -49,6 +51,26 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
   const [error, setError] = useState<string>();
   const [me, setMe] = useState<Me>();
   const isManager = me?.role === "manager";
+  // The pro shop counts the starting cash into the drawer before the register opens. The tee sheet stays open either way.
+  const [drawer, setDrawer] = useState<DayClose>();
+  const proShop = settings.station === "proshop";
+  const today = course ? todayIn(course.timeZone) : undefined;
+  useEffect(() => {
+    // Checked again on each section change, so starting the day from Reports opens the register.
+    if (proShop && today) client.dayClose(today).then(setDrawer).catch(() => undefined);
+  }, [client, proShop, today, section]);
+  useEffect(() => {
+    if (section === "reports" && !isManager && settings.station === "starter") setSection("tee-sheet");
+  }, [section, isManager, settings.station]);
+  const needsStart = proShop && !!drawer && !drawer.open && !drawer.close;
+  const startDay = (title: string) => (
+    <>
+      <Header title={title} onOpenMenu={openMenu} subtitle="Start the day first" />
+      <ScrollView contentContainerStyle={{ padding: 16, maxWidth: 720 }}>
+        <StartDayForm client={client} date={today!} onOpened={setDrawer} />
+      </ScrollView>
+    </>
+  );
   const [editingWaiver, setEditingWaiver] = useState(false);
   // Moving between a golfer's account and their bookings on the tee sheet.
   const [jumpTo, setJumpTo] = useState<{ date: string; bookingId: string }>();
@@ -107,7 +129,9 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
     <View style={styles.page}>
       {rail && menu}
       <View style={styles.main}>
-        {section === "tee-sheet" ? (
+        {needsStart && section === "inventory" ? (
+          startDay("Pro shop")
+        ) : section === "tee-sheet" ? (
           course ? (
             <TeeSheetScreen
               client={client}
@@ -260,7 +284,7 @@ function SideMenu(props: {
         <StationPicker dark value={settings.station} onChange={(station) => onChangeSettings({ ...settings, station })} />
       </View>
       <ScrollView style={{ flex: 1 }}>
-        {SECTIONS.filter((s) => !s.managers || isManager).map((s) => {
+        {SECTIONS.filter((s) => (!s.managers || isManager) && (s.starters !== false || isManager || settings.station !== "starter")).map((s) => {
           const on = s.id === section;
           return (
             <Pressable

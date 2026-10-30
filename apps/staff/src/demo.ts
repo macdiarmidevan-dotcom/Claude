@@ -132,6 +132,7 @@ const shifts: DemoShift[] = [];
 const punches: (Omit<Punch, "staff" | "hours"> & { staffId: string })[] = [];
 const swaps: { id: string; status: Swap["status"]; fromId: string; toId: string; offeredId: string; requestedId: string | null; message: string | null; createdAt: string }[] = [];
 const scheduling = { swapsNeedApproval: true };
+const opens = new Map<string, NonNullable<DayClose["open"]>>();
 const closes = new Map<string, NonNullable<DayClose["close"]>>();
 let shiftSeq = 1;
 
@@ -369,7 +370,7 @@ export function createDemoClient(apiKey: string): Client {
     for (const ev of events)
       for (const p of ev.payments) if (p.method !== "comp" && new Intl.DateTimeFormat("en-CA", { timeZone: riverBend.timeZone }).format(new Date(p.at)) === date) expected[p.method] += p.amountCents;
     for (const h of heldMoney((iso) => new Intl.DateTimeFormat("en-CA", { timeZone: riverBend.timeZone }).format(new Date(iso)), (d) => d === date)) expected[h.method] += h.cents;
-    return { date, expected, close: closes.get(date) ?? null };
+    return { date, expected, open: opens.get(date) ?? null, close: closes.get(date) ?? null };
   }
   const log = (action: string, golfer?: string) =>
     activity.unshift({ actor: account()?.name ?? "Shared device key", action, golfer: golfer ?? null, bookingId: null, detail: {}, at: new Date().toISOString() });
@@ -1823,14 +1824,26 @@ export function createDemoClient(apiKey: string): Client {
         log(`Exported the daily summary for ${fmt === "xero" ? "Xero" : "QuickBooks"}`);
         return { fileName: `${riverBend.slug}-${fmt}-${from}${from === to ? "" : `-to-${to}`}.csv`, csv: rows.map((r) => r.map(cell).join(",")).join("\n") + "\n", days: j.days.length };
       }),
+    openDay: (date: string, input: { startingCashCents: number }) =>
+      reply(() => {
+        if (closes.has(date)) throw conflict("already_closed", "This day is already closed");
+        if (opens.has(date) && role() !== "manager") throw conflict("already_opened", "The starting cash is already in. Ask a manager to change it");
+        opens.set(date, { startingCashCents: input.startingCashCents, openedBy: account()?.name ?? null, openedAt: new Date().toISOString() });
+        log("Entered the starting cash");
+        return demoClose(date);
+      }),
     closeDay: (date: string, input: { countedCashCents: number; note?: string | null }) =>
       reply(() => {
         const expected = demoClose(date).expected;
+        const start = opens.get(date);
+        if (!start) throw conflict("not_opened", "Enter the starting cash for this day first");
         if (closes.has(date) && role() !== "manager") throw conflict("already_closed", "This day is already closed. Ask a manager to close it again");
-        const overShortCents = input.countedCashCents - expected.cash;
+        const overShortCents = input.countedCashCents - start.startingCashCents - expected.cash;
         if (overShortCents !== 0 && !input.note?.trim()) throw new ApiError(400, "note_required", "The drawer is over or short. Add a note saying why");
         closes.set(date, {
-          expectedCashCents: expected.cash,
+          startingCashCents: start.startingCashCents,
+          cashTakenCents: expected.cash,
+          expectedCashCents: start.startingCashCents + expected.cash,
           countedCashCents: input.countedCashCents,
           overShortCents,
           note: input.note?.trim() || null,

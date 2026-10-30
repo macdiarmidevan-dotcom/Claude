@@ -58,8 +58,8 @@ const shortDate = (date: string) => {
 };
 
 /**
- * Reports for managers (revenue, money taken, rounds and hours) and the end-of-day close,
- * which anyone at the pro shop can do by counting the cash drawer.
+ * Reports for managers (revenue, money taken, rounds and hours) and the cash drawer, which
+ * anyone at the pro shop can count in the morning and at the end of the day.
  */
 export function ReportsScreen({ client, me, timeZone }: { client: Client; me: Me | undefined; timeZone: string }) {
   const isManager = me?.role === "manager";
@@ -199,26 +199,84 @@ function ManagerReports({ client, today }: { client: Client; today: string }) {
   );
 }
 
-/** Counts the cash drawer against what the tee sheet and register took in cash today. */
+const parseCents = (text: string) => {
+  const clean = text.replace(/[$,\s]/g, "");
+  return /^\d+(\.\d{0,2})?$/.test(clean) ? Math.round(Number(clean) * 100) : undefined;
+};
+const clock = (iso: string) => new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+
+/**
+ * The start of the day at the pro shop: count the starting cash into the drawer. Shown in place of
+ * the register until it's done, and on the cash drawer card in Reports.
+ */
+export function StartDayForm({ client, date, onOpened, inCard }: { client: Client; date: string; onOpened: (day: DayClose) => void; inCard?: boolean }) {
+  const [amount, setAmount] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+  const cents = parseCents(amount);
+
+  async function save() {
+    setBusy(true);
+    setError(undefined);
+    try {
+      onOpened(await client.openDay(date, { startingCashCents: cents! }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't save the starting cash");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <View style={inCard ? { marginTop: 10 } : styles.card}>
+      {!inCard && (
+        <Text role="heading" aria-level={2} style={styles.title}>
+          Start the day
+        </Text>
+      )}
+      <Text style={[styles.text, { marginTop: inCard ? 0 : 6 }]}>
+        Count the starting cash in the drawer and enter it before taking any money. At the end of the day you'll count the whole drawer again.
+      </Text>
+      <View style={[styles.row, { marginTop: 8 }]}>
+        <TextInput
+          accessibilityLabel="Starting cash"
+          placeholder="Starting cash, e.g. 200.00"
+          value={amount}
+          onChangeText={setAmount}
+          keyboardType="decimal-pad"
+          onSubmitEditing={() => cents !== undefined && save()}
+          style={[styles.input, { width: 220 }]}
+        />
+        <Button label={busy ? "Saving…" : "Start the day"} primary disabled={busy || cents === undefined} onPress={save} />
+      </View>
+      {error && <Text role="alert" style={styles.error}>{error}</Text>}
+    </View>
+  );
+}
+
+/** The cash drawer: starting cash in the morning, then the final count against what was taken. */
 function DayCloseCard({ client, today, isManager }: { client: Client; today: string; isManager: boolean }) {
   const [date, setDate] = useState(today);
   const [day, setDay] = useState<DayClose>();
   const [counted, setCounted] = useState("");
   const [note, setNote] = useState("");
   const [redo, setRedo] = useState(false);
+  const [changeStart, setChangeStart] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
 
   useEffect(() => {
     setDay(undefined);
     setRedo(false);
+    setChangeStart(false);
     setCounted("");
     setNote("");
     client.dayClose(date).then(setDay).catch((e) => setError(e.message));
   }, [client, date]);
 
-  const cents = /^\d+(\.\d{0,2})?$/.test(counted.replace(/[$,\s]/g, "")) ? Math.round(Number(counted.replace(/[$,\s]/g, "")) * 100) : undefined;
-  const diff = cents === undefined || !day ? undefined : cents - day.expected.cash;
+  const cents = parseCents(counted);
+  const shouldHave = day?.open ? day.open.startingCashCents + day.expected.cash : undefined;
+  const diff = cents === undefined || shouldHave === undefined ? undefined : cents - shouldHave;
 
   async function close() {
     setBusy(true);
@@ -233,12 +291,12 @@ function DayCloseCard({ client, today, isManager }: { client: Client; today: str
     }
   }
 
-  const showForm = day && (!day.close || redo);
+  const showForm = day?.open && (!day.close || redo);
   return (
     <View style={styles.card}>
       <View style={styles.row}>
         <Text role="heading" aria-level={2} style={[styles.title, { flex: 1, minWidth: 180 }]}>
-          Close the day
+          Cash drawer
         </Text>
         <Button label="‹" label2="Previous day" onPress={() => setDate(addDays(date, -1))} />
         <Text style={styles.strong}>{date === today ? "Today" : shortDate(date)}</Text>
@@ -249,22 +307,52 @@ function DayCloseCard({ client, today, isManager }: { client: Client; today: str
       ) : (
         <>
           <View style={[styles.stats, { marginTop: 10 }]}>
+            <Stat label="Starting cash" value={day.open ? money(day.open.startingCashCents) : "Not entered"} />
             {(Object.keys(METHOD_LABEL) as MoneyMethod[])
               .filter((m) => m === "cash" || m === "card" || day.expected[m])
               .map((m) => (
                 <Stat key={m} label={`${METHOD_LABEL[m]} taken`} value={money(day.expected[m])} />
               ))}
+            {shouldHave !== undefined && <Stat label="Cash that should be in the drawer" value={money(shouldHave)} />}
           </View>
+
+          {(!day.open || changeStart) && !day.close ? (
+            <>
+              <StartDayForm
+                client={client}
+                date={date}
+                inCard
+                onOpened={(d) => {
+                  setDay(d);
+                  setChangeStart(false);
+                }}
+              />
+              {changeStart && (
+                <View style={[styles.choices, { marginTop: 8 }]}>
+                  <Button label="Keep it" onPress={() => setChangeStart(false)} />
+                </View>
+              )}
+            </>
+          ) : (
+            day.open && (
+              <View style={[styles.row, { marginTop: 10 }]}>
+                <Text style={[styles.text, { flex: 1 }]}>
+                  Started with {money(day.open.startingCashCents)}, entered by {day.open.openedBy ?? "a shared device"} at {clock(day.open.openedAt)}.
+                </Text>
+                {isManager && !day.close && <Button label="Change starting cash" onPress={() => setChangeStart(true)} />}
+              </View>
+            )
+          )}
+
           {day.close && !redo && (
             <View style={[styles.notice, day.close.overShortCents !== 0 && { backgroundColor: "#fbebeb" }]} accessibilityLiveRegion="polite">
               <Text style={styles.strong}>
-                Closed by {day.close.closedBy ?? "a shared device"} at{" "}
-                {new Date(day.close.closedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}. Counted {money(day.close.countedCashCents)} cash against{" "}
+                Closed by {day.close.closedBy ?? "a shared device"} at {clock(day.close.closedAt)}. Counted {money(day.close.countedCashCents)} in the drawer against{" "}
                 {money(day.close.expectedCashCents)} expected:{" "}
                 {day.close.overShortCents === 0 ? "balanced" : day.close.overShortCents > 0 ? `${money(day.close.overShortCents)} over` : `${money(-day.close.overShortCents)} short`}.
               </Text>
               {day.close.note && <Text style={styles.text}>{day.close.note}</Text>}
-              {day.close.expectedCashCents !== day.expected.cash && (
+              {day.close.cashTakenCents !== day.expected.cash && (
                 <Text style={styles.text}>More cash has been taken since then ({money(day.expected.cash)} now).</Text>
               )}
               {isManager && (
@@ -274,11 +362,12 @@ function DayCloseCard({ client, today, isManager }: { client: Client; today: str
               )}
             </View>
           )}
-          {showForm && (
-            <View style={{ marginTop: 10 }}>
-              <Text style={styles.text}>Count the cash in the drawer (leaving out the starting float) and enter it here.</Text>
+          {showForm && !changeStart && (
+            <View style={{ marginTop: 14 }}>
+              <Text style={styles.strong}>End of the day</Text>
+              <Text style={styles.text}>Count everything in the drawer, starting cash included, and enter the final amount.</Text>
               <View style={[styles.row, { marginTop: 8 }]}>
-                <TextInput accessibilityLabel="Cash counted" placeholder="Cash counted, e.g. 412.50" value={counted} onChangeText={setCounted} keyboardType="decimal-pad" style={[styles.input, { width: 220 }]} />
+                <TextInput accessibilityLabel="Final cash in the drawer" placeholder="Final amount, e.g. 612.50" value={counted} onChangeText={setCounted} keyboardType="decimal-pad" style={[styles.input, { width: 220 }]} />
                 {diff !== undefined && (
                   <Text style={[styles.strong, { color: diff === 0 ? colors.checkedIn : colors.noShow }]}>
                     {diff === 0 ? "Balanced" : diff > 0 ? `${money(diff)} over` : `${money(-diff)} short`}
