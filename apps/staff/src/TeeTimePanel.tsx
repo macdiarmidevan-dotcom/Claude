@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { quotePlayer } from "@golf/core";
 import type { ScrollViewInstance } from "react-native";
-import type { Client, Course, RoundChoice, GolferAccount, PaymentMethod, Product, SalePaymentMethod, SheetBooking, SheetTeeTime, Station, Waiver } from "./api";
+import type { Client, Course, GiftCard, RoundChoice, GolferAccount, PaymentMethod, Product, SalePaymentMethod, SheetBooking, SheetTeeTime, Station, Waiver, Redemption, Wallet, RainCheck } from "./api";
 import { WaiverModal } from "./WaiverModal";
 import { CardChargeModal, useCardReader } from "./CardReader";
 import { GolferPicker, useSearch } from "./Golfers";
@@ -16,6 +16,8 @@ interface Props {
   /** For showing what a walk-in or guests will cost before they're added. */
   course: Course;
   station: Station;
+  /** Managers can also give money back on a round. */
+  isManager?: boolean;
   onOpenGolfer?: (golferId: string) => void;
   onChanged: () => void;
   onClose: () => void;
@@ -25,7 +27,7 @@ interface Props {
   guestRequest?: { bookingId: string; count: number; key: number };
 }
 
-export function TeeTimePanel({ client, teeTime, sheet, courseHoles, course, station, onOpenGolfer, onChanged, onClose, focusBookingId, guestRequest }: Props) {
+export function TeeTimePanel({ client, teeTime, sheet, courseHoles, course, station, isManager = false, onOpenGolfer, onChanged, onClose, focusBookingId, guestRequest }: Props) {
   const price = (p: { players: number; holes: number; resident: boolean; riding: boolean }) => priceRound(course, teeTime.startsAt, p);
   const [error, setError] = useState<string>();
   const [moving, setMoving] = useState<SheetBooking>();
@@ -40,6 +42,9 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, course, stat
   const [signing, setSigning] = useState<{ booking: SheetBooking; carts: string[]; unsigned: string[]; sendOff: boolean; waiver: Waiver }>();
   const [note, setNote] = useState(teeTime.note ?? "");
   const [guestsFor, setGuestsFor] = useState<{ id: string; count: number }>();
+  // Weather cut the round short: credit for later (a rain check) or money back (a refund).
+  const [creditFor, setCreditFor] = useState<{ id: string; kind: "rain_check" | "refund" }>();
+  const [issued, setIssued] = useState<RainCheck>();
   useEffect(() => {
     if (guestRequest) setGuestsFor({ id: guestRequest.bookingId, count: guestRequest.count });
   }, [guestRequest?.key]);
@@ -123,7 +128,7 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, course, stat
           {station === "starter" && b.status === "confirmed" && (
             <Text style={styles.warning}>Not checked in at the pro shop yet</Text>
           )}
-          {cartsFor?.booking.id !== b.id && moving?.id !== b.id && payingFor?.id !== b.id && cancelling !== b.id && accountFor?.id !== b.id && guestsFor?.id !== b.id && (
+          {cartsFor?.booking.id !== b.id && moving?.id !== b.id && payingFor?.id !== b.id && cancelling !== b.id && accountFor?.id !== b.id && guestsFor?.id !== b.id && creditFor?.id !== b.id && (
             <View style={styles.actions}>
               {station === "proshop" && (b.status === "confirmed" || b.status === "no_show") && (
                 <CheckInButton
@@ -144,6 +149,12 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, course, stat
               )}
               {(b.status === "checked_in" || b.status === "teed_off") && (
                 <Action label={b.cartNumbers.length ? "Change carts" : "Add carts"} onPress={() => setCartsFor({ booking: b, sendOff: false })} />
+              )}
+              {station === "proshop" && (b.status === "checked_in" || b.status === "teed_off") && (
+                <Action label="Rain check" onPress={() => setCreditFor({ id: b.id, kind: "rain_check" })} />
+              )}
+              {station === "proshop" && isManager && (b.status === "checked_in" || b.status === "teed_off") && b.payment.paidCents > 0 && (
+                <Action label="Refund" onPress={() => setCreditFor({ id: b.id, kind: "refund" })} />
               )}
               {spotsLeft > 0 && b.status !== "no_show" && <Action label="Add guests" onPress={() => setGuestsFor({ id: b.id, count: 1 })} />}
               {b.status === "confirmed" && <Action label="No-show" onPress={() => run(() => client.noShow(b.id))} />}
@@ -166,6 +177,44 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, course, stat
                 setGuestsFor(undefined);
                 run(() => client.addGuests(b.id, { count, riding, ...(station === "proshop" && resident ? { residency: "resident" as const } : {}) }));
               }}
+            />
+          )}
+          {issued?.bookingId === b.id && (
+            <View style={styles.issued} accessibilityLiveRegion="polite">
+              <Text style={styles.name}>Rain check {issued.code}</Text>
+              <Text style={styles.muted}>
+                {money(issued.amountCents)} for {issued.players} {issued.players === 1 ? "player" : "players"}, {issued.holesUnplayed} holes
+                {issued.expiresAt ? `, good until ${new Date(issued.expiresAt).toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" })}` : ""}. Write the code on their receipt
+                {issued.golferId ? "; it's also on their golfer account" : ""}.
+              </Text>
+              <View style={styles.actions}>
+                <Action label="Done" onPress={() => setIssued(undefined)} />
+              </View>
+            </View>
+          )}
+          {creditFor?.id === b.id && creditFor.kind === "rain_check" && (
+            <RainCheckForm
+              booking={b}
+              isManager={isManager}
+              onCancel={() => setCreditFor(undefined)}
+              onIssue={(input) =>
+                run(async () => {
+                  setIssued(await client.issueRainCheck(b.id, input));
+                  setCreditFor(undefined);
+                })
+              }
+            />
+          )}
+          {creditFor?.id === b.id && creditFor.kind === "refund" && (
+            <RefundForm
+              booking={b}
+              onCancel={() => setCreditFor(undefined)}
+              onRefund={(input) =>
+                run(async () => {
+                  await client.refundRound(b.id, input);
+                  setCreditFor(undefined);
+                })
+              }
             />
           )}
           {cancelling === b.id && (
@@ -211,9 +260,9 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, course, stat
               client={client}
               booking={b}
               price={price}
-              onPay={(method, items, round, cardPaymentId) => {
+              onPay={(method, items, round, cardPaymentId, redeem) => {
                 setPayingFor(undefined);
-                run(() => client.checkIn(b.id, method, items, round, cardPaymentId));
+                run(() => client.checkIn(b.id, method, items, round, cardPaymentId, redeem));
               }}
               onCancel={() => setPayingFor(undefined)}
             />
@@ -409,10 +458,13 @@ function PaymentLine({ booking }: { booking: SheetBooking }) {
 const PAYMENT_OPTIONS: { method: PaymentMethod; label: string }[] = [
   { method: "card", label: "Card" },
   { method: "cash", label: "Cash" },
-  { method: "punch_card", label: "Punch card" },
-  { method: "gift_card", label: "Gift card" },
+  // A card the course tracks on paper, not one sold on the golfer's account.
+  { method: "punch_card", label: "Paper punch card" },
+  // A paper certificate; gift cards with a code are taken off above.
+  { method: "gift_card", label: "Paper gift certificate" },
   { method: "comp", label: "Comp" },
 ];
+const HOUSE_ACCOUNT = { method: "house_account" as const, label: "House account" };
 
 type PriceFn = (p: { players: number; holes: number; resident: boolean; riding: boolean }) => number | undefined;
 
@@ -445,7 +497,7 @@ function PriceLine({ cents, what }: { cents: number | undefined; what: string })
 const ITEM_METHODS: { method: SalePaymentMethod; label: string }[] = [
   { method: "card", label: "Card" },
   { method: "cash", label: "Cash" },
-  { method: "gift_card", label: "Gift card" },
+  { method: "gift_card", label: "Paper gift certificate" },
 ];
 
 /**
@@ -467,6 +519,7 @@ function CheckoutForm({
     items?: { lines: { productId: string; quantity: number }[]; paymentMethod: SalePaymentMethod },
     round?: RoundChoice,
     cardPaymentId?: string,
+    redeem?: Redemption,
   ) => void;
   onCancel: () => void;
 }) {
@@ -490,11 +543,75 @@ function CheckoutForm({
   const changed = canReprice && (resident !== booking.resident || riding !== booking.riding);
   const repriced = changed ? price({ players: booking.players, holes: booking.holes, resident, riding }) : undefined;
   const round: RoundChoice | undefined = changed && repriced !== undefined ? { residency: resident ? "resident" : "nonresident", riding } : undefined;
-  const owed = round ? repriced! : booking.payment.balanceCents;
+  const roundOwed = round ? repriced! : booking.payment.balanceCents;
+
+  // The golfer's punch cards, season pass and points come off the round before anything else.
+  const [wallet, setWallet] = useState<Wallet>();
+  useEffect(() => {
+    if (booking.golferId) client.wallet(booking.golferId).then(setWallet).catch(() => undefined);
+  }, [client, booking.golferId]);
+  const passes = wallet?.passes.filter((p) => p.usable) ?? [];
+  const [passUse, setPassUse] = useState<{ id: string; rounds: number }>();
+  const pass = passes.find((p) => p.id === passUse?.id);
+  const [rewards, setRewards] = useState(0);
+  // Each round on a pass covers one player's green fee, plus their cart if the pass includes it.
+  const perPlayer = (() => {
+    if (round) {
+      const walk = price({ players: 1, holes: booking.holes, resident, riding: false }) ?? 0;
+      const ride = riding ? (price({ players: 1, holes: booking.holes, resident, riding: true }) ?? walk) - walk : 0;
+      return { green: walk, cart: ride };
+    }
+    return { green: booking.greenFeeCents / booking.players, cart: booking.cartCents / booking.players };
+  })();
+  const passCovers = pass && passUse ? Math.min(roundOwed, Math.round((perPlayer.green + (pass.coversCart ? perPlayer.cart : 0)) * passUse.rounds)) : 0;
+  const rewardCents = wallet?.loyalty.rewardCents ?? 0;
+  const maxRewards = wallet && rewardCents > 0 ? Math.min(wallet.loyalty.rewardsAvailable, Math.floor((roundOwed - passCovers) / rewardCents)) : 0;
+  const usedRewards = Math.min(rewards, maxRewards);
+  const pointsOff = usedRewards * rewardCents;
+  // A rain check from an earlier round: one on their account, or any code off a receipt.
+  const [rainCheck, setRainCheck] = useState<RainCheck>();
+  const [rcCode, setRcCode] = useState("");
+  const [rcError, setRcError] = useState<string>();
+  const [rcOpen, setRcOpen] = useState(false);
+  const findCode = () => {
+    setRcError(undefined);
+    client
+      .findRainCheck(rcCode)
+      .then((r) => (r.usable ? (setRainCheck(r), setRcCode("")) : setRcError(r.status === "void" ? "That rain check was voided" : r.remainingCents === 0 ? "That rain check has been used up" : "That rain check has expired")))
+      .catch(() => setRcError("No rain check with that code"));
+  };
+  const rcOff = rainCheck ? Math.min(rainCheck.remainingCents, roundOwed - passCovers - pointsOff) : 0;
+  // A gift card goes on after everything else; whatever it doesn't cover is paid below.
+  const [giftCard, setGiftCard] = useState<GiftCard>();
+  const [gcCode, setGcCode] = useState("");
+  const [gcError, setGcError] = useState<string>();
+  const [gcOpen, setGcOpen] = useState(false);
+  const findGift = () => {
+    setGcError(undefined);
+    client
+      .findGiftCard(gcCode)
+      .then((g) => (g.status !== "active" ? setGcError("That gift card was voided") : g.balanceCents <= 0 ? setGcError("That gift card has nothing left on it") : (setGiftCard(g), setGcCode(""))))
+      .catch(() => setGcError("No gift card with that code"));
+  };
+  const gcOff = giftCard ? Math.min(giftCard.balanceCents, roundOwed - passCovers - pointsOff - rcOff) : 0;
+  const owed = roundOwed - passCovers - pointsOff - rcOff - gcOff;
+  const redeem: Redemption | undefined =
+    pass || usedRewards || rcOff || gcOff
+      ? {
+          ...(pass && passUse ? { pass: { golferPassId: pass.id, rounds: passUse.rounds } } : {}),
+          ...(usedRewards ? { points: usedRewards * wallet!.loyalty.rewardPoints } : {}),
+          ...(rcOff ? { rainCheck: rainCheck!.code } : {}),
+          ...(gcOff ? { giftCard: giftCard!.code } : {}),
+        }
+      : undefined;
+  // Members with a house account can put it all on the account.
+  const account = wallet?.houseAccount?.status === "active" ? wallet.houseAccount : undefined;
+  const roundOptions = account ? [...PAYMENT_OPTIONS.slice(0, 2), HOUSE_ACCOUNT, ...PAYMENT_OPTIONS.slice(2)] : PAYMENT_OPTIONS;
+  const itemOptions = account ? [...ITEM_METHODS, HOUSE_ACCOUNT] : ITEM_METHODS;
   const add = (p: Product) =>
     setCart((c) => (c.some((x) => x.product.id === p.id) ? c.map((x) => (x.product.id === p.id ? { ...x, quantity: x.quantity + 1 } : x)) : [...c, { product: p, quantity: 1 }]));
   const setQty = (id: string, n: number) => setCart((c) => (n < 1 ? c.filter((x) => x.product.id !== id) : c.map((x) => (x.product.id === id ? { ...x, quantity: n } : x))));
-  const sameMethod = method === "card" || method === "cash" || method === "gift_card";
+  const sameMethod = method === "card" || method === "cash" || method === "gift_card" || method === "house_account";
   const payItemsWith: SalePaymentMethod = sameMethod ? (method as SalePaymentMethod) : itemMethod;
   const itemsSubtotal = cart.reduce((s, x) => s + x.product.priceCents * x.quantity, 0);
   const itemsTax = Math.round((cart.filter((x) => x.product.taxable).reduce((s, x) => s + x.product.priceCents * x.quantity, 0) * taxBps) / 10_000);
@@ -506,12 +623,12 @@ function CheckoutForm({
   const reader = useCardReader();
   const [charging, setCharging] = useState(false);
   const pay = (cardPaymentId?: string) =>
-    onPay(roundMethod, cart.length ? { lines: cart.map((x) => ({ productId: x.product.id, quantity: x.quantity })), paymentMethod: itemsWith } : undefined, round, cardPaymentId);
+    onPay(roundMethod, cart.length ? { lines: cart.map((x) => ({ productId: x.product.id, quantity: x.quantity })), paymentMethod: itemsWith } : undefined, round, cardPaymentId, redeem);
   const match = q.trim().toLowerCase();
   // Quick picks: drinks and snacks first, since that's what golfers grab on the way out.
   const shown = (products ?? [])
     .filter((p) => (match ? p.name.toLowerCase().includes(match) || p.sku?.toLowerCase() === match : true))
-    .sort((a, b) => Number(b.category === "Food & drink") - Number(a.category === "Food & drink"))
+    .sort((a, b) => Number(b.foodBev) - Number(a.foodBev))
     .slice(0, match ? 12 : 8);
 
   return (
@@ -535,8 +652,40 @@ function CheckoutForm({
           Round: {booking.players} {booking.players === 1 ? "player" : "players"}, {booking.holes} holes, {(round ? riding : booking.riding) ? "riding" : "walking"}
           {round ? `, ${resident ? "resident" : "nonresident"}` : ""}
         </Text>
-        <Text style={styles.name}>{owed > 0 ? money(owed) : "Paid"}</Text>
+        <Text style={styles.name}>{roundOwed > 0 ? money(roundOwed) : "Paid"}</Text>
       </View>
+      {passCovers > 0 && pass && (
+        <View style={styles.billRow}>
+          <Text style={styles.muted}>
+            {pass.name}, {passUse!.rounds} {passUse!.rounds === 1 ? "round" : "rounds"}
+          </Text>
+          <Text style={[styles.name, { color: colors.checkedIn }]}>−{money(passCovers)}</Text>
+        </View>
+      )}
+      {rcOff > 0 && rainCheck && (
+        <View style={styles.billRow}>
+          <Text style={styles.muted}>
+            Rain check {rainCheck.code}
+            {rainCheck.remainingCents > rcOff ? ` (${money(rainCheck.remainingCents - rcOff)} left after)` : ""}
+          </Text>
+          <Text style={[styles.name, { color: colors.checkedIn }]}>−{money(rcOff)}</Text>
+        </View>
+      )}
+      {gcOff > 0 && giftCard && (
+        <View style={styles.billRow}>
+          <Text style={styles.muted}>
+            Gift card {giftCard.code}
+            {giftCard.balanceCents > gcOff ? ` (${money(giftCard.balanceCents - gcOff)} left after)` : ""}
+          </Text>
+          <Text style={[styles.name, { color: colors.checkedIn }]}>−{money(gcOff)}</Text>
+        </View>
+      )}
+      {pointsOff > 0 && (
+        <View style={styles.billRow}>
+          <Text style={styles.muted}>{(usedRewards * wallet!.loyalty.rewardPoints).toLocaleString()} loyalty points</Text>
+          <Text style={[styles.name, { color: colors.checkedIn }]}>−{money(pointsOff)}</Text>
+        </View>
+      )}
       {cart.map((x) => (
         <View key={x.product.id} style={styles.billRow}>
           <Text style={[styles.muted, { flex: 1 }]} numberOfLines={1}>
@@ -560,6 +709,103 @@ function CheckoutForm({
         <Text style={styles.name}>Total</Text>
         <Text style={styles.priceTotal}>{money(total)}</Text>
       </View>
+
+      {roundOwed > 0 && passes.length > 0 && (
+        <>
+          <Text style={[styles.muted, { marginTop: 8, marginBottom: 6 }]}>Use a pass</Text>
+          <View style={styles.actions}>
+            <Toggle label="No" on={!pass} onPress={() => setPassUse(undefined)} />
+            {passes.map((p) => (
+              <Toggle
+                key={p.id}
+                label={p.kind === "punch_card" ? `${p.name} (${p.roundsLeft} left)` : p.name}
+                on={pass?.id === p.id}
+                onPress={() => setPassUse({ id: p.id, rounds: p.kind === "season_pass" ? 1 : Math.min(booking.players, p.roundsLeft ?? 1) })}
+              />
+            ))}
+          </View>
+          {pass?.kind === "punch_card" && (
+            <Row label="Rounds">
+              {Array.from({ length: Math.min(booking.players, pass.roundsLeft ?? 0) }, (_, i) => i + 1).map((n) => (
+                <Toggle key={n} label={String(n)} on={passUse!.rounds === n} onPress={() => setPassUse({ id: pass.id, rounds: n })} />
+              ))}
+            </Row>
+          )}
+          {pass?.kind === "season_pass" && <Text style={styles.muted}>A season pass covers the holder only.</Text>}
+        </>
+      )}
+      {roundOwed > 0 && wallet && wallet.loyalty.rewardsAvailable > 0 && (maxRewards > 0 || usedRewards > 0) && (
+        <>
+          <Text style={[styles.muted, { marginTop: 8, marginBottom: 6 }]}>
+            Use points ({wallet.loyalty.points.toLocaleString()} available, {wallet.loyalty.rewardPoints} = {money(rewardCents)} off)
+          </Text>
+          <View style={styles.actions}>
+            {Array.from({ length: maxRewards + 1 }, (_, n) => n).map((n) => (
+              <Toggle key={n} label={n === 0 ? "No" : money(n * rewardCents)} on={usedRewards === n} onPress={() => setRewards(n)} />
+            ))}
+          </View>
+        </>
+      )}
+
+      {roundOwed > 0 && (
+        <>
+          <Text style={[styles.muted, { marginTop: 8, marginBottom: 6 }]}>Rain check</Text>
+          <View style={styles.actions}>
+            {(wallet?.rainChecks.filter((x) => x.usable) ?? []).map((x) => (
+              <Toggle key={x.id} label={`${x.code} · ${money(x.remainingCents)}`} on={rainCheck?.id === x.id} onPress={() => setRainCheck(rainCheck?.id === x.id ? undefined : x)} />
+            ))}
+            {rainCheck && !wallet?.rainChecks.some((x) => x.id === rainCheck.id) && (
+              <Toggle label={`${rainCheck.code} · ${money(rainCheck.remainingCents)} ✕`} on onPress={() => setRainCheck(undefined)} />
+            )}
+            {!rcOpen && <Action label="Enter a code" onPress={() => setRcOpen(true)} />}
+          </View>
+          {rcOpen && (
+            <View style={[styles.actions, { marginTop: 4 }]}>
+              <TextInput
+                style={[styles.input, { flex: 1, minWidth: 140 }]}
+                accessibilityLabel="Rain check code"
+                placeholder="Code, e.g. RC-7K2M9Q"
+                autoCapitalize="characters"
+                value={rcCode}
+                onChangeText={setRcCode}
+                onSubmitEditing={findCode}
+              />
+              <Action label="Apply" onPress={findCode} />
+            </View>
+          )}
+          {rcError && <Text style={styles.warning}>{rcError}</Text>}
+        </>
+      )}
+
+      {roundOwed > 0 && (
+        <>
+          <Text style={[styles.muted, { marginTop: 8, marginBottom: 6 }]}>Gift card</Text>
+          <View style={styles.actions}>
+            {(wallet?.giftCards ?? []).map((g) => (
+              <Toggle key={g.id} label={`${g.code} · ${money(g.balanceCents)}`} on={giftCard?.id === g.id} onPress={() => setGiftCard(giftCard?.id === g.id ? undefined : g)} />
+            ))}
+            {giftCard && !wallet?.giftCards.some((g) => g.id === giftCard.id) && (
+              <Toggle label={`${giftCard.code} · ${money(giftCard.balanceCents)} ✕`} on onPress={() => setGiftCard(undefined)} />
+            )}
+            {!gcOpen && <Action label="Enter a code" onPress={() => setGcOpen(true)} />}
+          </View>
+          {gcOpen && (
+            <View style={[styles.actions, { marginTop: 4 }]}>
+              <TextInput
+                style={[styles.input, { flex: 1, minWidth: 140 }]}
+                accessibilityLabel="Gift card code"
+                placeholder="Code, e.g. GC-7K2M-9QXA"
+                autoCapitalize="characters"
+                value={gcCode}
+                onChangeText={setGcCode}
+                onSubmitEditing={findGift}
+              />
+              <Action label="Apply" onPress={findGift} />
+            </View>
+          )}
+          {gcError && <Text style={styles.warning}>{gcError}</Text>}
+        </>
+      )}
 
       <Text style={[styles.muted, { marginTop: 8, marginBottom: 6 }]}>Add items</Text>
       <TextInput style={[styles.input, { marginBottom: 6 }]} accessibilityLabel="Search pro shop items" placeholder="Search items, e.g. water" value={q} onChangeText={setQ} />
@@ -587,17 +833,23 @@ function CheckoutForm({
         <>
           <Text style={[styles.muted, { marginTop: 12, marginBottom: 6 }]}>Round paid by</Text>
           <View style={styles.actions}>
-            {PAYMENT_OPTIONS.map((o) => (
+            {roundOptions.map((o) => (
               <Toggle key={o.method} label={o.label} on={method === o.method} onPress={() => setMethod(o.method)} />
             ))}
           </View>
+          {method === "house_account" && account && (
+            <Text style={styles.muted}>
+              Goes on the monthly statement. Owes {money(account.balanceCents)}
+              {account.availableCents !== null ? `, ${money(account.availableCents)} left on the limit` : ""}.
+            </Text>
+          )}
         </>
       )}
       {cart.length > 0 && (owed === 0 || !sameMethod) && (
         <>
           <Text style={[styles.muted, { marginTop: 12, marginBottom: 6 }]}>Items paid by</Text>
           <View style={styles.actions}>
-            {ITEM_METHODS.map((o) => (
+            {itemOptions.map((o) => (
               <Toggle key={o.method} label={o.label} on={itemMethod === o.method} onPress={() => setItemMethod(o.method)} />
             ))}
           </View>
@@ -730,6 +982,116 @@ function WalkInForm(props: {
 }
 
 /** Adds guests to a golfer's group. They're priced into the group's booking, not the golfer's own account. */
+const parseCents = (text: string) => {
+  const clean = text.replace(/[$,\s]/g, "");
+  return /^\d+(\.\d{0,2})?$/.test(clean) ? Math.round(Number(clean) * 100) : undefined;
+};
+
+/**
+ * A rain check for a round cut short: credit for the holes some or all of the group didn't play,
+ * worked out from what they paid. Managers can set a different amount, e.g. a flat course policy.
+ */
+function RainCheckForm({
+  booking,
+  isManager,
+  onIssue,
+  onCancel,
+}: {
+  booking: SheetBooking;
+  isManager: boolean;
+  onIssue: (input: { players: number; holesPlayed: number; includeCart: boolean; amountCents?: number; note?: string | null }) => void;
+  onCancel: () => void;
+}) {
+  const [players, setPlayers] = useState(booking.players);
+  const [holesPlayed, setHolesPlayed] = useState(Math.floor(booking.holes / 2));
+  const [includeCart, setIncludeCart] = useState(true);
+  const [custom, setCustom] = useState("");
+  const [note, setNote] = useState("");
+  const share = (players / booking.players) * ((booking.holes - holesPlayed) / booking.holes);
+  const worked = Math.round(booking.greenFeeCents * share) + (includeCart ? Math.round(booking.cartCents * share) : 0);
+  const customCents = parseCents(custom);
+  const amount = customCents ?? worked;
+  return (
+    <View style={{ marginTop: 10 }} accessibilityLiveRegion="polite">
+      <Text style={[styles.name, { marginBottom: 8 }]}>Rain check for {booking.customerName}</Text>
+      {booking.players > 1 && (
+        <Row label="Players">
+          {Array.from({ length: booking.players }, (_, i) => i + 1).map((n) => (
+            <Toggle key={n} label={String(n)} on={players === n} onPress={() => setPlayers(n)} />
+          ))}
+        </Row>
+      )}
+      <Row label="Holes played">
+        {Array.from({ length: booking.holes }, (_, i) => i).map((n) => (
+          <Toggle key={n} label={String(n)} on={holesPlayed === n} onPress={() => setHolesPlayed(n)} />
+        ))}
+      </Row>
+      {booking.cartCents > 0 && (
+        <Row label="Cart">
+          <Toggle label="Include cart" on={includeCart} onPress={() => setIncludeCart(true)} />
+          <Toggle label="Green fees only" on={!includeCart} onPress={() => setIncludeCart(false)} />
+        </Row>
+      )}
+      {isManager && (
+        <TextInput
+          style={[styles.input, { marginBottom: 6 }]}
+          accessibilityLabel="Set a different amount"
+          placeholder={`Different amount (worked out: ${money(worked)})`}
+          value={custom}
+          onChangeText={setCustom}
+          keyboardType="decimal-pad"
+        />
+      )}
+      <TextInput style={[styles.input, { marginBottom: 6 }]} accessibilityLabel="Note" placeholder="Note, e.g. lightning, course closed" value={note} onChangeText={setNote} />
+      <PriceLine cents={amount} what={`${players} ${players === 1 ? "player" : "players"}, ${booking.holes - holesPlayed} of ${booking.holes} holes not played`} />
+      <Text style={styles.muted}>They get a code to use on a later round. The amount comes off this round, so it isn't counted twice.</Text>
+      <View style={styles.actions}>
+        <Action
+          label={`Give ${money(amount)} rain check`}
+          primary
+          onPress={() => onIssue({ players, holesPlayed, includeCart, ...(customCents !== undefined ? { amountCents: customCents } : {}), note: note.trim() || null })}
+        />
+        <Action label="Back" onPress={onCancel} />
+      </View>
+    </View>
+  );
+}
+
+/** Money back on a round, by cash from the drawer or back to the card. Managers only. */
+function RefundForm({ booking, onRefund, onCancel }: { booking: SheetBooking; onRefund: (input: { amountCents: number; method: "cash" | "card"; reason: string }) => void; onCancel: () => void }) {
+  const [method, setMethod] = useState<"cash" | "card">(booking.payment.methods.includes("card") ? "card" : "cash");
+  const [amount, setAmount] = useState("");
+  const [reason, setReason] = useState("");
+  const cents = parseCents(amount);
+  return (
+    <View style={{ marginTop: 10 }} accessibilityLiveRegion="polite">
+      <Text style={[styles.name, { marginBottom: 8 }]}>Refund {booking.customerName}'s round</Text>
+      <Row label="Back by">
+        <Toggle label="Card" on={method === "card"} onPress={() => setMethod("card")} />
+        <Toggle label="Cash" on={method === "cash"} onPress={() => setMethod("cash")} />
+      </Row>
+      <TextInput
+        style={[styles.input, { marginBottom: 6 }]}
+        accessibilityLabel="Amount to refund"
+        placeholder={`Amount, up to ${money(booking.payment.paidCents)}`}
+        value={amount}
+        onChangeText={setAmount}
+        keyboardType="decimal-pad"
+      />
+      <TextInput style={[styles.input, { marginBottom: 6 }]} accessibilityLabel="Reason" placeholder="Reason (required), e.g. frost delay" value={reason} onChangeText={setReason} />
+      <Text style={styles.muted}>
+        {method === "card"
+          ? "Goes back to the card on the reader it was paid with. If it was run on another terminal, refund it there too."
+          : "Take it from the drawer; the day's cash count expects it."}
+      </Text>
+      <View style={styles.actions}>
+        <Action label={cents ? `Refund ${money(cents)}` : "Refund"} danger onPress={() => cents && reason.trim() && onRefund({ amountCents: cents, method, reason: reason.trim() })} />
+        <Action label="Back" onPress={onCancel} />
+      </View>
+    </View>
+  );
+}
+
 /** Takes the whole group off the tee sheet, or just the players who aren't coming. */
 function RemoveForm({ booking, onRemove, onCancel }: { booking: SheetBooking; onRemove: (count: number) => void; onCancel: () => void }) {
   const [count, setCount] = useState(booking.players);
@@ -853,6 +1215,7 @@ const styles = StyleSheet.create({
   actionText: { fontSize: 14, fontWeight: "600", color: colors.text },
   chip: { borderWidth: 1, borderColor: colors.primary, borderRadius: 3, paddingHorizontal: 12, paddingVertical: 8, marginRight: 6 },
   walkIn: { marginTop: 4 },
+  issued: { marginTop: 10, padding: 10, borderWidth: 1, borderColor: colors.checkedIn, borderRadius: 3, backgroundColor: "#eef7ef" },
   suggestions: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, marginTop: -6, marginBottom: 10, backgroundColor: colors.card },
   suggestion: { paddingHorizontal: 10, paddingVertical: 6, borderBottomWidth: 1, borderColor: colors.border },
   carts: { color: colors.primaryText, fontWeight: "700", fontSize: 13, marginTop: 4 },

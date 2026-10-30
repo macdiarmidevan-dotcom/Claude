@@ -53,6 +53,55 @@ import {
   updateTerminal,
 } from "./payments.ts";
 import { providers, type PaymentsFetch } from "./terminals.ts";
+import {
+  adjustPoints,
+  cancelPass,
+  createPassType,
+  getLoyaltySettings,
+  getWallet,
+  listPassTypes,
+  saveLoyaltySettings,
+  sellPass,
+  updatePassType,
+} from "./passes.ts";
+import {
+  addEventDate,
+  addEventPayment,
+  addEventPlayer,
+  autoPair,
+  bookAhead,
+  bookStandingForDate,
+  cancelEventDate,
+  createEvent,
+  createStandingTime,
+  getEvent,
+  getEventDate,
+  listEvents,
+  listStandingTimes,
+  removeEventPlayer,
+  setCheckedIn,
+  setPairing,
+  setStandingTimeActive,
+  updateEvent,
+} from "./events.ts";
+import { ACCOUNT_KEYS, exportJournal, getAccountingSettings, journal, saveAccountingSettings } from "./accounting.ts";
+import {
+  adjustAccount,
+  adjustGiftCard,
+  findGiftCard,
+  getAccount,
+  getGiftCard,
+  getStatement,
+  listAccounts,
+  listGiftCards,
+  openAccount,
+  payAccount,
+  runStatements,
+  sellGiftCard,
+  updateAccount,
+} from "./accounts.ts";
+import { addTabItems, closeTab, getTab, listTabs, openTab, prepTickets, renameTab, setItemStatus, voidTab, voidTabItem } from "./tabs.ts";
+import { findRainCheck, getRainCheckDays, issueRainCheck, listRainChecks, refundRound, saveRainCheckDays, voidRainCheck } from "./rainchecks.ts";
 import { deleteSync, getSync, runSync, saveSync, type FetchReport } from "./sync.ts";
 import { createGolfer, getGolfer, linkGolfer, searchGolfers, updateGolfer } from "./golfers.ts";
 import {
@@ -145,7 +194,42 @@ const ACTIONS: Record<string, string> = {
   "POST /v1/courses/:slug/terminals": "Added a card reader",
   "PATCH /v1/courses/:slug/terminals/:id": "Changed a card reader",
   "POST /v1/courses/:slug/card-payments/:id/refund": "Refunded a card payment",
+  "POST /v1/courses/:slug/pass-types": "Added a pass type",
+  "PATCH /v1/courses/:slug/pass-types/:id": "Changed a pass type",
+  "PUT /v1/courses/:slug/settings/loyalty": "Changed loyalty points",
+  "POST /v1/courses/:slug/golfers/:id/passes": "Sold a pass",
+  "POST /v1/courses/:slug/golfers/:id/passes/:passId/cancel": "Cancelled a pass",
+  "POST /v1/courses/:slug/golfers/:id/points": "Adjusted loyalty points",
+  "POST /v1/courses/:slug/bookings/:id/rain-checks": "Issued a rain check",
+  "POST /v1/courses/:slug/rain-checks/:id/void": "Voided a rain check",
+  "POST /v1/courses/:slug/bookings/:id/refund": "Refunded a round",
+  "PUT /v1/courses/:slug/settings/rain-checks": "Changed rain check settings",
+  "POST /v1/courses/:slug/standing-times": "Added a standing tee time",
+  "PATCH /v1/courses/:slug/standing-times/:id": "Changed a standing tee time",
+  "POST /v1/courses/:slug/events": "Added a league or outing",
+  "PATCH /v1/courses/:slug/events/:id": "Changed a league or outing",
+  "POST /v1/courses/:slug/events/:id/dates": "Added an event date",
+  "POST /v1/courses/:slug/event-dates/:id/cancel": "Cancelled an event date",
+  "POST /v1/courses/:slug/events/:id/players": "Added a player to an event",
+  "DELETE /v1/courses/:slug/events/:id/players/:playerId": "Removed a player from an event",
+  "POST /v1/courses/:slug/event-dates/:id/pairings/auto": "Paired an event",
+  "PUT /v1/courses/:slug/event-dates/:id/pairings/:playerId": "Moved a player between groups",
+  "POST /v1/courses/:slug/event-dates/:id/check-in": "Checked in event players",
+  "POST /v1/courses/:slug/events/:id/payments": "Took an event payment",
   "PATCH /v1/courses/:slug/employee-types/:id": "Changed an employee type",
+  "POST /v1/courses/:slug/tabs": "Opened a tab",
+  "POST /v1/courses/:slug/tabs/:id/close": "Closed a tab",
+  "POST /v1/courses/:slug/tabs/:id/void": "Voided a tab",
+  "DELETE /v1/courses/:slug/tabs/:id/items/:itemId": "Took an item off a tab",
+  "POST /v1/courses/:slug/gift-cards": "Sold a gift card",
+  "POST /v1/courses/:slug/gift-cards/:id/adjust": "Changed a gift card",
+  "POST /v1/courses/:slug/house-accounts": "Opened a house account",
+  "PATCH /v1/courses/:slug/house-accounts/:id": "Changed a house account",
+  "POST /v1/courses/:slug/house-accounts/:id/payments": "Took a house account payment",
+  "POST /v1/courses/:slug/house-accounts/:id/adjust": "Adjusted a house account",
+  "POST /v1/courses/:slug/house-accounts/statements": "Made house account statements",
+  "PUT /v1/courses/:slug/settings/accounting": "Changed accounting settings",
+  "POST /v1/courses/:slug/accounting/export": "Exported to accounting",
 };
 
 const player = z.object({
@@ -193,19 +277,25 @@ const waiverSignature = z.object({
     .regex(/^[MLQCZmlqcz0-9.,\s-]+$/, "signature must be SVG path data"),
 });
 const waivers = z.array(waiverSignature).max(8).optional();
-const paymentMethod = z.enum(["card", "cash", "prepaid", "punch_card", "gift_card", "comp"]);
+const paymentMethod = z.enum(["card", "cash", "prepaid", "punch_card", "season_pass", "loyalty", "rain_check", "gift_card", "house_account", "comp"]);
 const saleLine = z.union([
   z.object({ productId: z.uuid(), quantity: z.number().int().min(1).max(999) }),
   z.object({ description: z.string().max(200), unitCents: z.number().int().min(0).max(10_000_000), quantity: z.number().int().min(1).max(999), taxable: z.boolean().optional() }),
 ]);
-const salePaymentMethod = z.enum(["card", "cash", "gift_card", "comp"]);
+const salePaymentMethod = z.enum(["card", "cash", "gift_card", "house_account", "comp"]);
+const giftCardCode = z.string().trim().min(6).max(20);
 const checkInBody = z.object({
   cartNumbers: cartNumbers.optional(),
   waivers,
   payment: z.object({ method: paymentMethod }).optional(),
-  items: z.object({ lines: z.array(saleLine).max(100), paymentMethod: salePaymentMethod }).optional(),
+  items: z.object({ lines: z.array(saleLine).max(100), paymentMethod: salePaymentMethod, giftCardCode: giftCardCode.optional() }).optional(),
   round: z.object({ residency: z.enum(["resident", "nonresident"]), riding: z.boolean() }).optional(),
   cardPaymentId: z.uuid().optional(),
+  pass: z.object({ golferPassId: z.uuid(), rounds: z.number().int().min(1).max(8) }).optional(),
+  points: z.number().int().positive().max(10_000_000).optional(),
+  rainCheck: z.string().trim().min(4).max(20).optional(),
+  /** A gift card put toward the round; anything it doesn't cover is paid the usual way. */
+  giftCard: giftCardCode.optional(),
 });
 const teeOffBody = z.object({ cartNumbers: cartNumbers.optional(), waivers });
 const cartsBody = z.object({ cartNumbers, waivers });
@@ -537,6 +627,8 @@ export function buildApp(db: Db, opts: { fetchReport?: FetchReport; paymentsFetc
     trackStock: z.boolean().optional(),
     reorderLevel: z.number().int().min(0).max(100_000).optional(),
     stock: z.number().int().min(0).max(100_000).optional(),
+    foodBev: z.boolean().optional(),
+    station: z.enum(["kitchen", "bar"]).nullish(),
   });
   app.get("/v1/courses/:slug/products", async (req) => {
     const course = await courseFor(req);
@@ -563,7 +655,7 @@ export function buildApp(db: Db, opts: { fetchReport?: FetchReport; paymentsFetc
   app.post("/v1/courses/:slug/sales", async (req, reply) => {
     const course = await courseFor(req);
     const body = z
-      .object({ lines: z.array(saleLine).max(100), paymentMethod: salePaymentMethod, golferId: z.uuid().nullish(), cardPaymentId: z.uuid().nullish() })
+      .object({ lines: z.array(saleLine).max(100), paymentMethod: salePaymentMethod, golferId: z.uuid().nullish(), cardPaymentId: z.uuid().nullish(), giftCardCode: giftCardCode.nullish() })
       .parse(req.body);
     return reply.status(201).send(await createSale(db, course, req.staff?.user.id, body));
   });
@@ -653,6 +745,339 @@ export function buildApp(db: Db, opts: { fetchReport?: FetchReport; paymentsFetc
     return refundCardPayment(db, course, processors, idParams.parse(req.params).id, amountCents);
   });
 
+  // Punch cards, season passes and loyalty points. Managers set them up; anyone sells and uses them.
+  const passTypeBody = z.object({
+    name: z.string().trim().min(1).max(120),
+    kind: z.enum(["punch_card", "season_pass"]),
+    priceCents: z.number().int().min(0).max(10_000_000),
+    rounds: z.number().int().min(1).max(500).nullish(),
+    validDays: z.number().int().min(1).max(3660).nullish(),
+    coversCart: z.boolean().optional(),
+  });
+  app.get("/v1/courses/:slug/pass-types", async (req) => listPassTypes(db, await courseFor(req)));
+  app.post("/v1/courses/:slug/pass-types", async (req, reply) => {
+    const course = await managedCourseFor(req);
+    return reply.status(201).send(await createPassType(db, course, passTypeBody.parse(req.body)));
+  });
+  app.patch("/v1/courses/:slug/pass-types/:id", async (req) => {
+    const course = await managedCourseFor(req);
+    const patch = passTypeBody.omit({ kind: true }).partial().extend({ active: z.boolean().optional() }).parse(req.body);
+    return updatePassType(db, course, idParams.parse(req.params).id, patch);
+  });
+  app.get("/v1/courses/:slug/settings/loyalty", async (req) => getLoyaltySettings(db, await courseFor(req)));
+  app.put("/v1/courses/:slug/settings/loyalty", async (req) => {
+    const course = await managedCourseFor(req);
+    const body = z
+      .object({ pointsPerDollar: z.number().int().min(0).max(100), rewardPoints: z.number().int().min(1).max(1_000_000), rewardCents: z.number().int().min(0).max(1_000_000) })
+      .parse(req.body);
+    return saveLoyaltySettings(db, course, body);
+  });
+  app.get("/v1/courses/:slug/golfers/:id/wallet", async (req) => getWallet(db, await courseFor(req), idParams.parse(req.params).id));
+  app.post("/v1/courses/:slug/golfers/:id/passes", async (req, reply) => {
+    const course = await courseFor(req);
+    const body = z.object({ passTypeId: z.uuid(), paymentMethod: salePaymentMethod, cardPaymentId: z.uuid().nullish() }).parse(req.body);
+    return reply.status(201).send(await sellPass(db, course, req.staff?.user.id, idParams.parse(req.params).id, body));
+  });
+  app.post("/v1/courses/:slug/golfers/:id/passes/:passId/cancel", async (req) => {
+    const course = await managedCourseFor(req);
+    const { id, passId } = z.object({ slug: z.string(), id: z.uuid(), passId: z.uuid() }).parse(req.params);
+    return cancelPass(db, course, id, passId);
+  });
+  app.post("/v1/courses/:slug/golfers/:id/points", async (req) => {
+    const course = await managedCourseFor(req);
+    const { change, note } = z.object({ change: z.number().int().min(-1_000_000).max(1_000_000), note: z.string().max(300) }).parse(req.body);
+    return adjustPoints(db, course, req.staff?.user.id, idParams.parse(req.params).id, change, note);
+  });
+
+  // Rain checks and refunds on rounds cut short. Anyone can issue a rain check; setting its amount
+  // by hand, voiding one and giving money back are for managers.
+  app.post("/v1/courses/:slug/bookings/:id/rain-checks", async (req, reply) => {
+    const body = z
+      .object({
+        players: z.number().int().min(1).max(8),
+        holesPlayed: z.number().int().min(0).max(72),
+        includeCart: z.boolean().optional(),
+        amountCents: z.number().int().positive().max(10_000_000).optional(),
+        note: z.string().max(300).nullish(),
+      })
+      .parse(req.body);
+    const course = body.amountCents !== undefined ? await managedCourseFor(req) : await courseFor(req);
+    return reply.status(201).send(await issueRainCheck(db, course, req.staff?.user.id, idParams.parse(req.params).id, body));
+  });
+  app.get("/v1/courses/:slug/bookings/:id/rain-checks", async (req) => listRainChecks(db, await courseFor(req), { bookingId: idParams.parse(req.params).id }));
+  app.get("/v1/courses/:slug/rain-checks/:code", async (req) => {
+    const { code } = z.object({ slug: z.string(), code: z.string().trim().min(4).max(20) }).parse(req.params);
+    return findRainCheck(db, await courseFor(req), code);
+  });
+  app.post("/v1/courses/:slug/rain-checks/:id/void", async (req) => voidRainCheck(db, await managedCourseFor(req), idParams.parse(req.params).id));
+  app.post("/v1/courses/:slug/bookings/:id/refund", async (req) => {
+    const course = await managedCourseFor(req);
+    const body = z.object({ amountCents: z.number().int().positive().max(10_000_000), method: z.enum(["cash", "card"]), reason: z.string().max(300) }).parse(req.body);
+    return refundRound(db, course, req.staff?.user.id, idParams.parse(req.params).id, body, (client, cardPaymentId, cents) =>
+      refundCardPayment(client, course, processors, cardPaymentId, cents),
+    );
+  });
+  app.get("/v1/courses/:slug/settings/rain-checks", async (req) => getRainCheckDays(db, await courseFor(req)));
+  app.put("/v1/courses/:slug/settings/rain-checks", async (req) => {
+    const course = await managedCourseFor(req);
+    return saveRainCheckDays(db, course, z.object({ rainCheckDays: z.number().int().min(1).max(3660) }).parse(req.body).rainCheckDays);
+  });
+
+  // Standing tee times, leagues and outings. Managers set them up; the pro shop runs the day
+  // (pairings, check-in, payments).
+  const hhmm = z.string().regex(/^\d{2}:\d{2}$/);
+  app.get("/v1/courses/:slug/standing-times", async (req) => listStandingTimes(db, await courseFor(req)));
+  app.post("/v1/courses/:slug/standing-times", async (req, reply) => {
+    const course = await managedCourseFor(req);
+    const body = z
+      .object({
+        golferId: z.uuid(),
+        weekday: z.number().int().min(1).max(7),
+        localTime: hhmm,
+        players: z.number().int().min(1).max(8),
+        holes: z.number().int().min(9).max(72),
+        riding: z.boolean().default(false),
+        residency: z.enum(["resident", "nonresident"]).default("nonresident"),
+        startsOn: z.iso.date(),
+        endsOn: z.iso.date().nullish(),
+      })
+      .parse(req.body);
+    return reply.status(201).send(await createStandingTime(db, course, req.staff?.user.id, body));
+  });
+  app.patch("/v1/courses/:slug/standing-times/:id", async (req) => {
+    const course = await managedCourseFor(req);
+    return setStandingTimeActive(db, course, idParams.parse(req.params).id, z.object({ active: z.boolean() }).parse(req.body).active);
+  });
+  app.post("/v1/courses/:slug/standing-times/book-ahead", async (req) => {
+    const course = await courseFor(req);
+    await bookAhead(db, course);
+    return listStandingTimes(db, course);
+  });
+
+  const eventBody = z.object({
+    name: z.string().trim().min(1).max(120),
+    kind: z.enum(["league", "outing"]),
+    format: z.enum(["tee_times", "shotgun"]),
+    holes: z.number().int().min(9).max(72),
+    pricePerPlayerCents: z.number().int().min(0).max(10_000_000),
+    includesCart: z.boolean().optional(),
+    contactName: z.string().max(120).nullish(),
+    contactEmail: z.string().max(200).nullish(),
+    contactPhone: z.string().max(40).nullish(),
+    notes: z.string().max(1000).nullish(),
+  });
+  const dateBody = z.object({ date: z.iso.date(), startTime: hhmm, slots: z.number().int().min(1).max(60) });
+  app.get("/v1/courses/:slug/events", async (req) => listEvents(db, await courseFor(req)));
+  app.post("/v1/courses/:slug/events", async (req, reply) => {
+    const course = await managedCourseFor(req);
+    const body = eventBody.extend({ schedule: z.object({ startsOn: z.iso.date(), endsOn: z.iso.date().nullish(), startTime: hhmm, slots: z.number().int().min(1).max(60) }) }).parse(req.body);
+    return reply.status(201).send(await createEvent(db, course, body));
+  });
+  app.get("/v1/courses/:slug/events/:id", async (req) => getEvent(db, await courseFor(req), idParams.parse(req.params).id));
+  app.patch("/v1/courses/:slug/events/:id", async (req) => {
+    const course = await managedCourseFor(req);
+    const patch = eventBody.omit({ kind: true, format: true }).partial().extend({ active: z.boolean().optional() }).parse(req.body);
+    return updateEvent(db, course, idParams.parse(req.params).id, patch);
+  });
+  app.post("/v1/courses/:slug/events/:id/dates", async (req, reply) => {
+    const course = await managedCourseFor(req);
+    const id = idParams.parse(req.params).id;
+    const { conflicts } = await addEventDate(db, course, id, dateBody.parse(req.body));
+    return reply.status(201).send({ event: await getEvent(db, course, id), conflicts });
+  });
+  app.post("/v1/courses/:slug/event-dates/:id/cancel", async (req) => cancelEventDate(db, await managedCourseFor(req), idParams.parse(req.params).id));
+  app.post("/v1/courses/:slug/events/:id/players", async (req, reply) => {
+    const course = await courseFor(req);
+    const body = z
+      .object({ name: z.string().max(120).optional(), golferId: z.uuid().nullish(), email: z.string().max(200).nullish(), phone: z.string().max(40).nullish(), handicap: z.number().min(-10).max(54).nullish() })
+      .parse(req.body);
+    return reply.status(201).send(await addEventPlayer(db, course, idParams.parse(req.params).id, body));
+  });
+  app.delete("/v1/courses/:slug/events/:id/players/:playerId", async (req) => {
+    const course = await courseFor(req);
+    const { id, playerId } = z.object({ slug: z.string(), id: z.uuid(), playerId: z.uuid() }).parse(req.params);
+    return removeEventPlayer(db, course, id, playerId);
+  });
+  app.get("/v1/courses/:slug/event-dates/:id", async (req) => getEventDate(db, await courseFor(req), idParams.parse(req.params).id));
+  app.post("/v1/courses/:slug/event-dates/:id/pairings/auto", async (req) => {
+    const course = await courseFor(req);
+    const body = z.object({ groupSize: z.number().int().min(1).max(5).default(4), order: z.enum(["name", "random", "handicap"]).default("name"), playerIds: z.array(z.uuid()).max(500).optional() }).parse(req.body ?? {});
+    return autoPair(db, course, idParams.parse(req.params).id, body);
+  });
+  app.put("/v1/courses/:slug/event-dates/:id/pairings/:playerId", async (req) => {
+    const course = await courseFor(req);
+    const { id, playerId } = z.object({ slug: z.string(), id: z.uuid(), playerId: z.uuid() }).parse(req.params);
+    return setPairing(db, course, id, playerId, z.object({ groupNo: z.number().int().min(1).max(200).nullable() }).parse(req.body).groupNo);
+  });
+  app.post("/v1/courses/:slug/event-dates/:id/check-in", async (req) => {
+    const course = await courseFor(req);
+    const body = z.object({ playerIds: z.array(z.uuid()).min(1).max(500), checkedIn: z.boolean().default(true) }).parse(req.body);
+    return setCheckedIn(db, course, idParams.parse(req.params).id, body.playerIds, body.checkedIn);
+  });
+  app.post("/v1/courses/:slug/events/:id/payments", async (req, reply) => {
+    const course = await courseFor(req);
+    const body = z
+      .object({
+        amountCents: z.number().int().min(-10_000_000).max(10_000_000).refine((n) => n !== 0, "Enter an amount"),
+        method: z.enum(["card", "cash", "check", "gift_card", "comp"]),
+        eventDateId: z.uuid().nullish(),
+        note: z.string().max(300).nullish(),
+        cardPaymentId: z.uuid().nullish(),
+      })
+      .parse(req.body);
+    // Giving money back is for managers.
+    if (body.amountCents < 0) await managedCourseFor(req);
+    return reply.status(201).send(await addEventPayment(db, course, req.staff?.user.id, idParams.parse(req.params).id, body));
+  });
+
+  // Gift cards and house accounts. Anyone can sell a gift card, look one up, or take a payment on
+  // an account; managers open accounts, set limits, fix balances and make the monthly statements.
+  app.get("/v1/courses/:slug/gift-cards", async (req) => {
+    const course = await courseFor(req);
+    const { q, code } = z.object({ q: z.string().max(100).optional(), code: z.string().max(30).optional() }).parse(req.query);
+    return code ? findGiftCard(db, course, code) : listGiftCards(db, course, { q });
+  });
+  app.get("/v1/courses/:slug/gift-cards/:id", async (req) => getGiftCard(db, await courseFor(req), idParams.parse(req.params).id));
+  app.post("/v1/courses/:slug/gift-cards", async (req, reply) => {
+    const body = z
+      .object({
+        amountCents: z.number().int().min(100).max(1_000_000),
+        method: z.enum(["card", "cash", "check", "comp"]),
+        cardPaymentId: z.uuid().nullish(),
+        golferId: z.uuid().nullish(),
+        recipientName: z.string().max(100).nullish(),
+        code: giftCardCode.nullish(),
+        note: z.string().max(300).nullish(),
+      })
+      .parse(req.body);
+    // Giving a card away (a prize or a make-good) is a manager's call.
+    const course = body.method === "comp" ? await managedCourseFor(req) : await courseFor(req);
+    return reply.status(201).send(await sellGiftCard(db, course, req.staff?.user.id, body));
+  });
+  app.post("/v1/courses/:slug/gift-cards/:id/adjust", async (req) => {
+    const course = await managedCourseFor(req);
+    const body = z.object({ changeCents: z.number().int().min(-1_000_000).max(1_000_000).optional(), void: z.boolean().optional(), note: z.string().max(300) }).parse(req.body);
+    return adjustGiftCard(db, course, req.staff?.user.id, idParams.parse(req.params).id, body);
+  });
+  app.get("/v1/courses/:slug/house-accounts", async (req) => listAccounts(db, await courseFor(req)));
+  app.get("/v1/courses/:slug/house-accounts/:id", async (req) => getAccount(db, await courseFor(req), idParams.parse(req.params).id));
+  app.post("/v1/courses/:slug/house-accounts", async (req, reply) => {
+    const course = await managedCourseFor(req);
+    const body = z
+      .object({ golferId: z.uuid(), creditLimitCents: z.number().int().min(0).max(10_000_000).nullish(), billingEmail: z.email().nullish(), notes: z.string().max(500).nullish() })
+      .parse(req.body);
+    return reply.status(201).send(await openAccount(db, course, body));
+  });
+  app.patch("/v1/courses/:slug/house-accounts/:id", async (req) => {
+    const course = await managedCourseFor(req);
+    const body = z
+      .object({
+        creditLimitCents: z.number().int().min(0).max(10_000_000).nullish(),
+        status: z.enum(["active", "suspended", "closed"]).optional(),
+        billingEmail: z.email().nullish(),
+        notes: z.string().max(500).nullish(),
+      })
+      .parse(req.body);
+    return updateAccount(db, course, idParams.parse(req.params).id, body);
+  });
+  app.post("/v1/courses/:slug/house-accounts/:id/payments", async (req, reply) => {
+    const course = await courseFor(req);
+    const body = z
+      .object({ amountCents: z.number().int().min(1).max(10_000_000), method: z.enum(["card", "cash", "check"]), cardPaymentId: z.uuid().nullish(), note: z.string().max(200).nullish() })
+      .parse(req.body);
+    return reply.status(201).send(await payAccount(db, course, req.staff?.user.id, idParams.parse(req.params).id, body));
+  });
+  app.post("/v1/courses/:slug/house-accounts/:id/adjust", async (req) => {
+    const course = await managedCourseFor(req);
+    const body = z.object({ amountCents: z.number().int().min(-10_000_000).max(10_000_000).refine((n) => n !== 0, "Enter an amount"), description: z.string().max(200) }).parse(req.body);
+    return adjustAccount(db, course, req.staff?.user.id, idParams.parse(req.params).id, body);
+  });
+  app.post("/v1/courses/:slug/house-accounts/statements", async (req) => {
+    const course = await managedCourseFor(req);
+    return runStatements(db, course, z.object({ month: z.string().regex(/^\d{4}-\d{2}$/) }).parse(req.body).month);
+  });
+  app.get("/v1/courses/:slug/statements/:id", async (req) => getStatement(db, await courseFor(req), idParams.parse(req.params).id));
+
+  // The bookkeeper's daily summary, for QuickBooks or Xero. Managers only.
+  const accountingFormat = z.enum(["quickbooks", "xero"]);
+  app.get("/v1/courses/:slug/settings/accounting", async (req) => getAccountingSettings(db, await managedCourseFor(req)));
+  app.put("/v1/courses/:slug/settings/accounting", async (req) => {
+    const course = await managedCourseFor(req);
+    const body = z
+      .object({ format: accountingFormat.optional(), accounts: z.partialRecord(z.enum(ACCOUNT_KEYS), z.string().max(100)).optional() })
+      .parse(req.body);
+    return saveAccountingSettings(db, course, body);
+  });
+  app.get("/v1/courses/:slug/accounting/journal", async (req) => {
+    const course = await managedCourseFor(req);
+    const { from, to } = rangeQuery.parse(req.query);
+    return journal(db, course, from, to);
+  });
+  app.post("/v1/courses/:slug/accounting/export", async (req) => {
+    const course = await managedCourseFor(req);
+    const body = rangeQuery.extend({ format: accountingFormat.optional() }).parse(req.body);
+    return exportJournal(db, course, req.staff?.user.id, body.from, body.to, body.format);
+  });
+
+  // Food and bar: open tabs, the kitchen and bar screens, and paying a tab at the end.
+  const isManager = (req: FastifyRequest) => req.apiKey!.role === "manager";
+  const tabItem = z.union([
+    z.object({ productId: z.uuid(), quantity: z.number().int().min(1).max(99), note: z.string().max(200).nullish() }),
+    z.object({
+      description: z.string().max(200),
+      unitCents: money,
+      quantity: z.number().int().min(1).max(99),
+      taxable: z.boolean().optional(),
+      station: z.enum(["kitchen", "bar"]).nullish(),
+      note: z.string().max(200).nullish(),
+    }),
+  ]);
+  app.get("/v1/courses/:slug/tabs", async (req) => {
+    const course = await courseFor(req);
+    return listTabs(db, course, z.object({ status: z.enum(["open", "closed"]).optional() }).parse(req.query));
+  });
+  app.post("/v1/courses/:slug/tabs", async (req, reply) => {
+    const course = await courseFor(req);
+    const body = z
+      .object({ name: z.string().max(80).nullish(), location: z.enum(["grill", "bar", "turn", "cart"]).optional(), golferId: z.uuid().nullish(), bookingId: z.uuid().nullish() })
+      .parse(req.body);
+    return reply.status(201).send(await openTab(db, course, req.staff?.user.id, body));
+  });
+  app.get("/v1/courses/:slug/tabs/:id", async (req) => getTab(db, await courseFor(req), idParams.parse(req.params).id));
+  app.patch("/v1/courses/:slug/tabs/:id", async (req) => {
+    const course = await courseFor(req);
+    return renameTab(db, course, idParams.parse(req.params).id, z.object({ name: z.string().max(80) }).parse(req.body).name);
+  });
+  app.post("/v1/courses/:slug/tabs/:id/items", async (req, reply) => {
+    const course = await courseFor(req);
+    const { lines } = z.object({ lines: z.array(tabItem).min(1).max(50) }).parse(req.body);
+    return reply.status(201).send(await addTabItems(db, course, req.staff?.user.id, idParams.parse(req.params).id, lines));
+  });
+  app.delete("/v1/courses/:slug/tabs/:id/items/:itemId", async (req) => {
+    const course = await courseFor(req);
+    const { id, itemId } = z.object({ id: z.uuid(), itemId: z.uuid() }).parse(req.params);
+    return voidTabItem(db, course, id, itemId, isManager(req));
+  });
+  app.post("/v1/courses/:slug/tabs/:id/close", async (req) => {
+    const course = await courseFor(req);
+    const body = z.object({ paymentMethod: salePaymentMethod, cardPaymentId: z.uuid().nullish(), giftCardCode: giftCardCode.nullish() }).parse(req.body);
+    return closeTab(db, course, req.staff?.user.id, idParams.parse(req.params).id, body);
+  });
+  app.post("/v1/courses/:slug/tabs/:id/void", async (req) => {
+    const course = await courseFor(req);
+    const { reason } = z.object({ reason: z.string().max(300) }).parse(req.body);
+    return voidTab(db, course, req.staff?.user.id, idParams.parse(req.params).id, reason, isManager(req));
+  });
+  app.get("/v1/courses/:slug/prep/:station", async (req) => {
+    const course = await courseFor(req);
+    return prepTickets(db, course, z.object({ station: z.enum(["kitchen", "bar"]) }).parse(req.params).station);
+  });
+  app.post("/v1/courses/:slug/prep/items", async (req) => {
+    const course = await courseFor(req);
+    const body = z.object({ itemIds: z.array(z.uuid()).min(1).max(100), status: z.enum(["sent", "ready", "served"]) }).parse(req.body);
+    return setItemStatus(db, course, body.itemIds, body.status);
+  });
+
   // Processors call these when a card goes through. The raw body is kept for the signature check.
   app.register(async (hooks) => {
     hooks.addContentTypeParser("application/json", { parseAs: "string" }, (_req, body, done) => done(null, body));
@@ -713,6 +1138,8 @@ export function buildApp(db: Db, opts: { fetchReport?: FetchReport; paymentsFetc
   app.get("/v1/courses/:slug/tee-sheet", async (req) => {
     const course = await courseFor(req);
     const { date } = dateQuery.parse(req.query);
+    // Standing tee times land on the sheet the first time a day is opened.
+    await bookStandingForDate(db, course, date);
     const sheet = await getTeeSheet(db, course, date);
     const { start, end } = dayRange(course, date);
     const bookings = await listBookingsForDay(db, course, start, end);

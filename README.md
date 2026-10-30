@@ -114,6 +114,65 @@ API: `GET/PUT /settings/payments`, `GET /settings/payments/readers`, `GET/POST /
 
 ![Waiting for the card on the reader](docs/screenshots/card-reader-waiting.png)
 
+## Punch cards, passes and loyalty points
+
+Managers set up what the course sells under **Pro shop › Passes & points**: punch cards (a number of rounds) and season passes (unlimited rounds for the holder), each with a price, how many days it's good for and whether it includes a cart. The same tab turns loyalty points on and sets the rates: points per dollar, and how many points take how much off a round. Setting points per dollar to 0 turns them off.
+
+- **Selling.** On a golfer's account, **Sell a pass** rings it up as a pro shop sale (category "Passes", untaxed) and adds it to the account. Card sales go through the card reader.
+- **Using.** At check-in, a linked golfer's usable passes and points appear in the checkout. Each round on a punch card covers one player's green fee, plus their cart if the card includes one. A season pass covers the holder only. Points come off in whole rewards. The total updates as these are picked, and whatever's left is paid the usual way. On the API, check-in takes `pass: { golferPassId, rounds }` and `points`.
+- **Earning.** Golfers earn points on money they spend on rounds (card, cash or gift card) and in the pro shop. Rounds paid with a pass, points or a comp don't earn. A refunded sale takes its points back.
+- **Fixing.** Managers can cancel a pass sold by mistake (refund the sale separately) and add or take away points with a reason. Every change to points is kept in a ledger shown on the account.
+
+![A golfer's passes and points](docs/screenshots/golfer-wallet.png)
+
+## Rain checks and refunds
+
+When weather cuts a round short, the pro shop opens the group's tee time and presses **Rain check** (for groups that have checked in). They pick how many players and how many holes were played. The credit is worked out from what the group paid for the holes they didn't play, with or without carts, and managers can set a different amount. The golfer gets a code like `RC-7K2M9Q`, good for 365 days by default (set under **Pro shop › Passes & points**). It's also listed on their golfer account if the round was linked to one. At a later check-in, staff pick the rain check from the account or type the code. It pays toward the round, and anything left stays on the code. Managers can void a rain check that hasn't been used.
+
+Managers can also **Refund** a round, by cash or back to the card. Card refunds go through the reader's processor when the round was paid on one. Either way, the amount comes off the round as its own line ("Rain check RC-…" or "Refund: reason"), so revenue counts the round at what it ended up costing. A refund is recorded as a negative payment on the day it's given, so money taken and the cash drawer net it out.
+
+![Giving a rain check](docs/screenshots/rain-check.png)
+
+## Leagues, outings and standing tee times
+
+**Leagues & events** holds a course's weekly leagues and one-day outings. A manager sets one up with a price per player, holes, whether carts are included, and who the bill goes to, then picks the first (and for a league, last) date, the first tee time and how many tee times to hold. The app blocks those tee times on the tee sheet for every date. Any time that already has golfers on it is left alone and listed, so staff can move the golfers or play around them. Events run as one group per tee time or as a shotgun start, where groups are given starting holes (1A, 2A … then 1B for a second group on a hole).
+
+On the day, the pro shop opens the date, pairs everyone into groups (by handicap so groups are even, by random draw, or by name), moves players between groups by tapping them, and checks groups in. The event is billed as one account: each date charges the players who checked in (or who are in a group, before check-in starts) at the event's price, and payments by card, cash, check, gift card or comp are taken against the balance, for the whole season or a single date. Event payments show in reports as "Leagues and outings" and count in the cash drawer. Managers can cancel a rained-out date, which frees its tee times and drops its charge.
+
+**Standing tee times** are a golfer's permanent weekly time, such as Saturdays at 7:02 for a foursome. The golfer is booked 8 weeks ahead, and again whenever a later day is opened on the tee sheet. If a week can't be booked (the time is blocked or full), it's listed on the standing time so staff can sort it out. Stopping a standing time cancels its future bookings that haven't checked in.
+
+![Pairing a league night](docs/screenshots/league-pairings.png)
+
+## Food and bar
+
+**Food & bar** runs the grill, the bar, the turn stand and the beverage cart on open tabs. Staff open a tab for a table or a name, a golfer account (so it earns loyalty points), or a group on the course today, so food ordered at the turn goes on that golfer's tab. Tapping menu items builds the order, with a note for the kitchen ("no onions"), and **Send order** puts anything made in the kitchen or at the bar straight onto that screen. Prices are locked in when the order is placed.
+
+The **Kitchen screen** and **Bar screen** show one ticket per order, oldest first, with how long it's been waiting (amber after 8 minutes, red after 15). The cook taps each item as it's made and presses **Served** to clear the ticket. The screens refresh on their own, so they can stay up on a tablet in the kitchen.
+
+At the end, the tab is paid by card (on the reader), cash, gift card or comp. It becomes a normal register sale, so sales tax, stock counts, loyalty points and the cash drawer all work as they do at the pro shop. Anyone can take off an item the kitchen hasn't started. Once it's made, or to void a tab with items on it, a manager has to do it.
+
+Menu items are products with **Food or drink** turned on, and optionally **Made in the kitchen** or **Made at the bar** (set under **Pro shop**). Reports show food and drink as their own revenue line and category breakdown, apart from the pro shop.
+
+![A tab at the turn](docs/screenshots/food-tab.png)
+
+![The kitchen screen](docs/screenshots/kitchen-screen.png)
+
+## Gift cards and house accounts
+
+**Gift cards & accounts › Gift cards** sells a card for any amount, by card, cash or check (managers can also give one away). The golfer gets a code like `GC-7K2M-9QXA`, and the card can go on their golfer account so it shows up at check-in. More can be added to an existing card. A gift card pays for a round (anything it doesn't cover is paid the usual way), a register sale, or a food and bar tab, by picking it from the golfer's account or typing the code. Leaving the code blank records a paper certificate the shop doesn't track. Selling a card is money taken but not revenue. The revenue counts when the card is spent, and reports say how much of the day's money was gift cards sold. Managers can fix a balance or void a lost card, and every change is in the card's history.
+
+**Gift cards & accounts › House accounts** is for members who charge to an account and are billed monthly. A manager opens an account for a golfer, with an optional limit. Rounds at check-in, register sales and food and bar tabs can then be charged with **House account**, and each charge lists what was bought. A charge over the limit, or on an account that's on hold, is refused. Charges count as revenue on the day they're made. Payments on the account (check, cash or card) count as money taken that day and go in the cash drawer count, without counting the revenue twice. Once a month is over, a manager presses **Make … statements**: each account gets a statement with the opening balance, every charge and payment, and the amount due (15 days later). Running it again for the same month does nothing new. Statements open as a printable page. Emailing them waits on golfer messaging (item 9).
+
+![A house account](docs/screenshots/house-account.png)
+
+## Accounting export
+
+**Reports › Send to accounting** (managers) turns the report's dates into one balanced journal entry per day that QuickBooks Online or Xero imports, so the bookkeeper doesn't retype the day's totals. Money taken is debited to where it went (cash and checks to Undeposited Funds, cards to Card Clearing, gift cards and rain checks spent against what's held for golfers, charges to house accounts receivable). Revenue (green fees, carts and extras, pro shop, food and drink, leagues and outings), sales tax, gift cards sold and payments on house accounts are credited. A round paid on a different day than it's played lands in a clearing account, which evens out across days. **Show the entries** previews each day; **Download import file** saves the CSV (`Journal No, Journal Date, Account, Debits, Credits, Description` for QuickBooks, the manual journal layout for Xero) and records who exported which dates. **Account names** sets the course's own names (QuickBooks) or codes (Xero) for each line.
+
+API: `GET/PUT /settings/accounting`, `GET /accounting/journal?from&to` (up to two months), `POST /accounting/export`.
+
+![The daily journal entry](docs/screenshots/accounting-export.png)
+
 ## AI assistant
 
 Managers can ask Claude, ChatGPT or another MCP client about the course: "how many rounds today?", "who still owes?", "is Mike Sullivan booked this week?", "what did we take last week?". Add a custom connector with the address `https://<your server>/v1/courses/<course>/mcp` and the manager key as a Bearer token.

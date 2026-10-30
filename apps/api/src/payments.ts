@@ -231,7 +231,13 @@ export async function refundCardPayment(client: DbClient, course: Course, reg: P
 export async function useCardPayment(client: DbClient, course: Course, id: string, expectedCents: number, link: { bookingId?: string; saleId?: string }) {
   const row = await paymentRow(client, course, id, true);
   if (row.status !== "succeeded") throw conflict("card_not_paid", "The card hasn't gone through on the reader yet");
-  if (row.booking_id || row.sale_id) throw conflict("card_payment_used", "That card payment has already paid for something else");
+  const { rows: onEvent } = await client.query(
+    `SELECT 1 FROM event_payments WHERE card_payment_id = $1
+     UNION ALL SELECT 1 FROM gift_card_entries WHERE card_payment_id = $1
+     UNION ALL SELECT 1 FROM house_entries WHERE card_payment_id = $1`,
+    [id],
+  );
+  if (row.booking_id || row.sale_id || onEvent[0]) throw conflict("card_payment_used", "That card payment has already paid for something else");
   if (row.amount_cents !== expectedCents) {
     throw conflict("card_amount_mismatch", `The card was charged ${row.amount_cents} cents but this comes to ${expectedCents} cents`);
   }

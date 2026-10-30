@@ -7,7 +7,7 @@ import { revenue } from "./insights.ts";
 // Reports for managers and the end-of-day close. Tee sheet money comes from bookings and
 // their payments; pro shop money from register sales. Everything is read-only except the close.
 
-const METHODS = ["cash", "card", "gift_card", "punch_card", "prepaid", "comp"] as const;
+const METHODS = ["cash", "card", "check", "gift_card", "house_account", "punch_card", "season_pass", "loyalty", "rain_check", "prepaid", "comp"] as const;
 type Method = (typeof METHODS)[number];
 const emptyMethods = () => Object.fromEntries(METHODS.map((m) => [m, 0])) as Record<Method, number>;
 
@@ -29,12 +29,42 @@ export async function report(db: DbClient, course: Course, from: string, to: str
       GROUP BY 1, 2, 3`,
     range,
   );
+  // League and outing money is billed to the group, so it counts when it's paid.
+  const { rows: events } = await db.query(
+    `SELECT to_char(p.created_at AT TIME ZONE $4, 'YYYY-MM-DD') AS day, p.method, SUM(p.amount_cents)::int AS cents
+       FROM event_payments p JOIN events e ON e.id = p.event_id
+      WHERE e.course_id = $1 AND p.created_at >= $2 AND p.created_at < $3
+      GROUP BY 1, 2`,
+    range,
+  );
   const { rows: categories } = await db.query(
-    `SELECT l.category, SUM(l.total_cents)::int AS cents, SUM(l.quantity)::int AS items
+    `SELECT l.category, l.food_bev, SUM(l.total_cents)::int AS cents, SUM(l.quantity)::int AS items
        FROM sale_lines l JOIN sales s ON s.id = l.sale_id
       WHERE s.course_id = $1 AND s.created_at >= $2 AND s.created_at < $3 AND s.status = 'completed'
-      GROUP BY 1 ORDER BY 2 DESC`,
+      GROUP BY 1, 2 ORDER BY 3 DESC`,
     range.slice(0, 3),
+  );
+  // Food and drink are rung up on the same register, so their share of each day's sales is split out.
+  const { rows: foodBev } = await db.query(
+    `SELECT to_char(s.created_at AT TIME ZONE $4, 'YYYY-MM-DD') AS day, SUM(l.total_cents)::int AS cents
+       FROM sale_lines l JOIN sales s ON s.id = l.sale_id
+      WHERE s.course_id = $1 AND s.created_at >= $2 AND s.created_at < $3 AND s.status = 'completed' AND l.food_bev
+      GROUP BY 1`,
+    range,
+  );
+  // Gift cards sold and house account payments are money in, but not revenue: the revenue was (or
+  // will be) counted when the card is spent or the charge was made.
+  const { rows: held } = await db.query(
+    `SELECT to_char(e.created_at AT TIME ZONE $4, 'YYYY-MM-DD') AS day, 'gift' AS what, e.method, SUM(e.change_cents)::int AS cents
+       FROM gift_card_entries e JOIN gift_cards g ON g.id = e.gift_card_id
+      WHERE g.course_id = $1 AND e.created_at >= $2 AND e.created_at < $3 AND e.kind IN ('sold', 'reload')
+      GROUP BY 1, 2, 3
+     UNION ALL
+     SELECT to_char(e.created_at AT TIME ZONE $4, 'YYYY-MM-DD'), 'account', e.method, -SUM(e.amount_cents)::int
+       FROM house_entries e JOIN house_accounts a ON a.id = e.house_account_id
+      WHERE a.course_id = $1 AND e.created_at >= $2 AND e.created_at < $3 AND e.kind = 'payment'
+      GROUP BY 1, 2, 3`,
+    range,
   );
   const { rows: rounds } = await db.query(
     `SELECT to_char(t.starts_at AT TIME ZONE $4, 'YYYY-MM-DD') AS day, b.status, b.source, SUM(b.players)::int AS players, COUNT(*)::int AS groups
@@ -55,9 +85,9 @@ export async function report(db: DbClient, course: Course, from: string, to: str
     range.slice(0, 3),
   );
 
-  const days = new Map<string, { date: string; greenFeesCents: number; cartsAndExtrasCents: number; proShopCents: number; taxCents: number; collectedCents: number; rounds: number }>();
+  const days = new Map<string, { date: string; greenFeesCents: number; cartsAndExtrasCents: number; proShopCents: number; foodBevCents: number; eventsCents: number; taxCents: number; collectedCents: number; rounds: number }>();
   const at = (date: string) => {
-    if (!days.has(date)) days.set(date, { date, greenFeesCents: 0, cartsAndExtrasCents: 0, proShopCents: 0, taxCents: 0, collectedCents: 0, rounds: 0 });
+    if (!days.has(date)) days.set(date, { date, greenFeesCents: 0, cartsAndExtrasCents: 0, proShopCents: 0, foodBevCents: 0, eventsCents: 0, taxCents: 0, collectedCents: 0, rounds: 0 });
     return days.get(date)!;
   };
   const collected = emptyMethods();
@@ -81,6 +111,35 @@ export async function report(db: DbClient, course: Course, from: string, to: str
     collected[s.payment_method as Method] += s.total;
     proShop = { ...proShop, subtotalCents: proShop.subtotalCents + s.subtotal, taxCents: proShop.taxCents + s.tax, totalCents: proShop.totalCents + s.total, sales: proShop.sales + s.n };
   }
+  let foodBevCents = 0;
+  for (const f of foodBev) {
+    const row = at(f.day);
+    row.proShopCents -= f.cents;
+    row.foodBevCents += f.cents;
+    foodBevCents += f.cents;
+  }
+  let eventsCents = 0;
+  for (const e of events) {
+    const row = at(e.day);
+    row.collectedCents += e.cents;
+    collected[e.method as Method] += e.cents;
+    if (e.method !== "comp") {
+      row.eventsCents += e.cents;
+      eventsCents += e.cents;
+    }
+  }
+  let giftCardsSoldCents = 0;
+  let accountPaymentsCents = 0;
+  for (const h of held) {
+    collected[h.method as Method] += h.cents;
+    if (h.method === "comp") {
+      giftCardsSoldCents += h.cents;
+      continue;
+    }
+    at(h.day).collectedCents += h.cents;
+    if (h.what === "gift") giftCardsSoldCents += h.cents;
+    else accountPaymentsCents += h.cents;
+  }
   const played = rounds.filter((r) => r.status === "checked_in" || r.status === "teed_off");
   for (const r of played) at(r.day).rounds += r.players;
   const sources: Record<string, number> = {};
@@ -95,13 +154,18 @@ export async function report(db: DbClient, course: Course, from: string, to: str
     revenue: {
       greenFeesCents: greenFees,
       cartsAndExtrasCents: extras,
-      proShopCents: proShop.subtotalCents,
+      proShopCents: proShop.subtotalCents - foodBevCents,
+      foodBevCents,
+      eventsCents,
       // Sales tax is owed to the state, so it's kept out of revenue.
-      totalCents: greenFees + extras + proShop.subtotalCents,
+      totalCents: greenFees + extras + proShop.subtotalCents + eventsCents,
       salesTaxCents: proShop.taxCents,
       proShopRefundsCents: proShop.refundedCents,
-      proShopByCategory: categories.map((c) => ({ category: c.category, cents: c.cents, items: c.items })),
+      proShopByCategory: categories.filter((c) => !c.food_bev).map((c) => ({ category: c.category, cents: c.cents, items: c.items })),
+      foodBevByCategory: categories.filter((c) => c.food_bev).map((c) => ({ category: c.category, cents: c.cents, items: c.items })),
     },
+    /** Money in that isn't revenue yet (gift cards) or was revenue earlier (house account payments). */
+    other: { giftCardsSoldCents, accountPaymentsCents },
     // Money taken by type. Prepaid is what the booking provider collected online; comps are free.
     collected: { ...collected, totalCents: Object.values(collected).reduce((s, c) => s + c, 0) },
     rounds: {
@@ -132,7 +196,20 @@ async function expectedFor(db: DbClient, course: Course, date: string) {
       WHERE course_id = $1 AND created_at >= $2 AND created_at < $3 AND status = 'completed' GROUP BY 1`,
     range,
   );
-  for (const r of [...tee, ...shop]) totals[r.method as Method] += r.cents;
+  const { rows: events } = await db.query(
+    `SELECT p.method, SUM(p.amount_cents)::int AS cents FROM event_payments p JOIN events e ON e.id = p.event_id
+      WHERE e.course_id = $1 AND p.created_at >= $2 AND p.created_at < $3 GROUP BY 1`,
+    range,
+  );
+  const { rows: held } = await db.query(
+    `SELECT e.method, SUM(e.change_cents)::int AS cents FROM gift_card_entries e JOIN gift_cards g ON g.id = e.gift_card_id
+      WHERE g.course_id = $1 AND e.created_at >= $2 AND e.created_at < $3 AND e.kind IN ('sold', 'reload') GROUP BY 1
+     UNION ALL
+     SELECT e.method, -SUM(e.amount_cents)::int FROM house_entries e JOIN house_accounts a ON a.id = e.house_account_id
+      WHERE a.course_id = $1 AND e.created_at >= $2 AND e.created_at < $3 AND e.kind = 'payment' GROUP BY 1`,
+    range,
+  );
+  for (const r of [...tee, ...shop, ...events, ...held]) totals[r.method as Method] += r.cents;
   return totals;
 }
 

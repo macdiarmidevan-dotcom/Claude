@@ -26,7 +26,7 @@ export interface Course {
 }
 
 export type BookingStatus = "confirmed" | "checked_in" | "teed_off" | "cancelled" | "no_show";
-export type PaymentMethod = "card" | "cash" | "prepaid" | "punch_card" | "gift_card" | "comp";
+export type PaymentMethod = "card" | "cash" | "prepaid" | "punch_card" | "season_pass" | "loyalty" | "rain_check" | "gift_card" | "house_account" | "comp";
 
 export interface PaymentSummary {
   status: "paid" | "partial" | "unpaid";
@@ -54,6 +54,9 @@ export interface SheetBooking {
   riding: boolean;
   /** Paying resident rates. */
   resident: boolean;
+  /** The round's green fees and carts, for working out what a pass covers. */
+  greenFeeCents: number;
+  cartCents: number;
   payment: PaymentSummary;
 }
 
@@ -287,7 +290,237 @@ export interface Swap {
   createdAt: string;
 }
 
-export type SalePaymentMethod = "card" | "cash" | "gift_card" | "comp";
+export type SalePaymentMethod = "card" | "cash" | "gift_card" | "house_account" | "comp";
+
+export interface GiftCard {
+  id: string;
+  code: string;
+  initialCents: number;
+  balanceCents: number;
+  golfer: { id: string; name: string | null } | null;
+  recipientName: string | null;
+  status: "active" | "void";
+  issuedBy: string | null;
+  createdAt: string;
+}
+
+export interface GiftCardDetail extends GiftCard {
+  history: { changeCents: number; balanceAfter: number; kind: "sold" | "reload" | "redeem" | "adjust" | "void"; method: string | null; saleNumber: number | null; bookingId: string | null; note: string | null; staff: string | null; at: string }[];
+}
+
+export type GiftCardMethod = "card" | "cash" | "check" | "comp";
+
+export interface Statement {
+  id: string;
+  periodStart: string;
+  periodEnd: string;
+  openingCents: number;
+  chargesCents: number;
+  paymentsCents: number;
+  closingCents: number;
+  dueOn: string;
+}
+
+export interface HouseAccount {
+  id: string;
+  golfer: { id: string; name: string; email: string; phone: string };
+  creditLimitCents: number | null;
+  status: "active" | "suspended" | "closed";
+  billingEmail: string | null;
+  notes: string | null;
+  balanceCents: number;
+  /** Charges and payments not on a statement yet. */
+  unbilledCents: number;
+  /** What's left under the limit; empty when there's no limit. */
+  availableCents: number | null;
+  lastStatement: Statement | null;
+  createdAt: string;
+}
+
+export interface AccountEntry {
+  id: string;
+  amountCents: number;
+  kind: "charge" | "payment" | "adjustment";
+  description: string;
+  method: string | null;
+  saleNumber: number | null;
+  bookingId: string | null;
+  statementId: string | null;
+  staff: string | null;
+  at: string;
+}
+
+export interface HouseAccountDetail extends HouseAccount {
+  entries: AccountEntry[];
+  statements: Statement[];
+}
+
+export interface StatementDetail extends Statement {
+  account: HouseAccount;
+  entries: AccountEntry[];
+}
+
+export type PassKind = "punch_card" | "season_pass";
+
+export interface PassType {
+  id: string;
+  name: string;
+  kind: PassKind;
+  priceCents: number;
+  /** Rounds on a punch card; null for a season pass. */
+  rounds: number | null;
+  /** Days it's good for after it's sold; null for no end date. */
+  validDays: number | null;
+  coversCart: boolean;
+  active: boolean;
+}
+
+export interface GolferPass {
+  id: string;
+  name: string;
+  kind: PassKind;
+  roundsTotal: number | null;
+  roundsUsed: number;
+  roundsLeft: number | null;
+  coversCart: boolean;
+  expiresAt: string | null;
+  soldAt: string;
+  status: "active" | "cancelled";
+  usable: boolean;
+}
+
+export interface LoyaltySettings {
+  /** Points per whole dollar spent; 0 means loyalty is off. */
+  pointsPerDollar: number;
+  rewardPoints: number;
+  rewardCents: number;
+}
+
+export interface RainCheck {
+  id: string;
+  code: string;
+  bookingId: string;
+  golferId: string | null;
+  name: string;
+  players: number;
+  holesUnplayed: number;
+  amountCents: number;
+  remainingCents: number;
+  expiresAt: string | null;
+  status: "active" | "void";
+  note: string | null;
+  issuedBy: string | null;
+  issuedAt: string;
+  usable: boolean;
+}
+
+export interface Wallet {
+  passes: GolferPass[];
+  rainChecks: RainCheck[];
+  /** The golfer's gift cards with money on them. */
+  giftCards: GiftCard[];
+  houseAccount: HouseAccount | null;
+  loyalty: LoyaltySettings & {
+    enabled: boolean;
+    points: number;
+    rewardsAvailable: number;
+    history: { change: number; balanceAfter: number; reason: "round" | "sale" | "redeem" | "adjust" | "refund"; note: string | null; staff: string | null; at: string }[];
+  };
+}
+
+/** Passes and points used at check-in, before the rest is paid. */
+export interface Redemption {
+  pass?: { golferPassId: string; rounds: number };
+  points?: number;
+  /** A rain check's code. */
+  rainCheck?: string;
+  /** A gift card's code, put toward the round. */
+  giftCard?: string;
+}
+
+export interface StandingTime {
+  id: string;
+  golferId: string;
+  golferName: string;
+  /** 1 is Monday, 7 is Sunday. */
+  weekday: number;
+  localTime: string;
+  players: number;
+  holes: number;
+  riding: boolean;
+  residency: "resident" | "nonresident";
+  startsOn: string;
+  endsOn: string | null;
+  active: boolean;
+  upcoming: { date: string; bookingId: string | null; problem: string | null }[];
+}
+
+export type EventKind = "league" | "outing";
+export type EventFormat = "tee_times" | "shotgun";
+export type EventPaymentMethod = "card" | "cash" | "check" | "gift_card" | "comp";
+
+export interface EventSummary {
+  id: string;
+  name: string;
+  kind: EventKind;
+  format: EventFormat;
+  holes: number;
+  pricePerPlayerCents: number;
+  includesCart: boolean;
+  contactName: string | null;
+  contactEmail: string | null;
+  contactPhone: string | null;
+  notes: string | null;
+  active: boolean;
+  nextDate: string | null;
+  dates: number;
+  players: number;
+}
+
+export interface EventDetail extends Omit<EventSummary, "nextDate" | "dates" | "players"> {
+  dates: { id: string; date: string; startTime: string; slots: number; held: number; status: "scheduled" | "cancelled"; paired: number; chargedPlayers: number; chargeCents: number }[];
+  players: { id: string; name: string; golferId: string | null; email: string | null; phone: string | null; handicap: number | null }[];
+  billing: {
+    chargedCents: number;
+    paidCents: number;
+    balanceCents: number;
+    payments: { id: string; amountCents: number; method: EventPaymentMethod; date: string | null; note: string | null; staff: string | null; at: string }[];
+  };
+}
+
+export interface HoldConflict {
+  date: string;
+  localTime: string;
+  detail: string;
+}
+
+export interface EventDay {
+  id: string;
+  eventId: string;
+  eventName: string;
+  format: EventFormat;
+  date: string;
+  startTime: string;
+  status: "scheduled" | "cancelled";
+  heldTimes: string[];
+  groups: { groupNo: number; start: string; players: { id: string; name: string; golferId: string | null; handicap: number | null; checkedIn: boolean }[] }[];
+  unpaired: { id: string; name: string; handicap: number | null }[];
+  checkedIn: number;
+}
+
+export interface NewEvent {
+  name: string;
+  kind: EventKind;
+  format: EventFormat;
+  holes: number;
+  pricePerPlayerCents: number;
+  includesCart?: boolean;
+  contactName?: string | null;
+  contactEmail?: string | null;
+  contactPhone?: string | null;
+  notes?: string | null;
+  schedule: { startsOn: string; endsOn?: string | null; startTime: string; slots: number };
+}
 
 export interface Product {
   id: string;
@@ -300,9 +533,66 @@ export interface Product {
   trackStock: boolean;
   stock: number;
   reorderLevel: number;
+  /** Food or drink, reported apart from the pro shop. */
+  foodBev: boolean;
+  /** Where it's made: orders for it show on that prep screen. */
+  station: PrepStation | null;
   /** Stock is at or below the reorder level. */
   low: boolean;
   active: boolean;
+}
+
+export type PrepStation = "kitchen" | "bar";
+export type TabLocation = "grill" | "bar" | "turn" | "cart";
+
+export interface TabItem {
+  id: string;
+  productId: string | null;
+  description: string;
+  category: string;
+  quantity: number;
+  unitCents: number;
+  totalCents: number;
+  taxable: boolean;
+  station: PrepStation | null;
+  note: string | null;
+  status: "sent" | "ready" | "served" | "void";
+  addedBy: string | null;
+  addedAt: string;
+}
+
+export interface Tab {
+  id: string;
+  name: string;
+  location: TabLocation;
+  status: "open" | "closed" | "void";
+  golfer: { id: string; name: string } | null;
+  bookingId: string | null;
+  teeTime: string | null;
+  openedBy: string | null;
+  openedAt: string;
+  closedAt: string | null;
+  saleId: string | null;
+  voidReason: string | null;
+  items: TabItem[];
+  subtotalCents: number;
+  taxCents: number;
+  /** Items still on the kitchen or bar screen. */
+  waiting: number;
+}
+
+export type TabItemInput =
+  | { productId: string; quantity: number; note?: string | null }
+  | { description: string; unitCents: number; quantity: number; taxable?: boolean; station?: PrepStation | null; note?: string | null };
+
+export interface PrepTicket {
+  key: string;
+  tabId: string;
+  tabName: string;
+  location: TabLocation;
+  orderedAt: string;
+  by: string | null;
+  items: TabItem[];
 }
 
 export interface ProductInput {
@@ -315,6 +605,8 @@ export interface ProductInput {
   trackStock?: boolean;
   reorderLevel?: number;
   stock?: number;
+  foodBev?: boolean;
+  station?: PrepStation | null;
 }
 
 export interface StockMovement {
@@ -341,7 +633,7 @@ export interface Sale {
   totalCents: number;
   paymentMethod: SalePaymentMethod;
   status: "completed" | "refunded";
-  lines: { productId: string | null; description: string; category: string; quantity: number; unitCents: number; totalCents: number; taxable: boolean }[];
+  lines: { productId: string | null; description: string; category: string; quantity: number; unitCents: number; totalCents: number; taxable: boolean; foodBev?: boolean }[];
 }
 
 export interface SalesDay {
@@ -357,7 +649,7 @@ export interface SalesDay {
   };
 }
 
-export type MoneyMethod = "cash" | "card" | "gift_card" | "punch_card" | "prepaid" | "comp";
+export type MoneyMethod = "cash" | "card" | "check" | "gift_card" | "house_account" | "punch_card" | "season_pass" | "loyalty" | "rain_check" | "prepaid" | "comp";
 
 export interface Report {
   from: string;
@@ -365,17 +657,60 @@ export interface Report {
   revenue: {
     greenFeesCents: number;
     cartsAndExtrasCents: number;
+    /** Pro shop sales before tax, not counting food and drink. */
     proShopCents: number;
-    /** Green fees, carts and extras, and pro shop sales before tax. */
+    /** Food and drink sales before tax. */
+    foodBevCents: number;
+    /** League and outing payments, counted when paid. */
+    eventsCents: number;
+    /** Green fees, carts and extras, pro shop sales before tax, and leagues and outings. */
     totalCents: number;
     salesTaxCents: number;
     proShopRefundsCents: number;
     proShopByCategory: { category: string; cents: number; items: number }[];
+    foodBevByCategory: { category: string; cents: number; items: number }[];
   };
   collected: Record<MoneyMethod, number> & { totalCents: number };
+  /** Money in that isn't revenue: gift cards sold (spent later) and house account payments (charged earlier). */
+  other: { giftCardsSoldCents: number; accountPaymentsCents: number };
   rounds: { played: number; booked: number; noShows: number; openSpots: number; occupancy: number | null; bySource: Record<string, number> };
   labor: { hours: number; people: number };
-  days: { date: string; greenFeesCents: number; cartsAndExtrasCents: number; proShopCents: number; taxCents: number; collectedCents: number; rounds: number }[];
+  days: { date: string; greenFeesCents: number; cartsAndExtrasCents: number; proShopCents: number; foodBevCents: number; eventsCents: number; taxCents: number; collectedCents: number; rounds: number }[];
+}
+
+export type AccountingFormat = "quickbooks" | "xero";
+export type AccountKey =
+  | "cash"
+  | "card"
+  | "check"
+  | "house_account"
+  | "gift_card"
+  | "rain_check"
+  | "loyalty"
+  | "punch_card"
+  | "season_pass"
+  | "prepaid"
+  | "comp"
+  | "green_fees"
+  | "carts_extras"
+  | "pro_shop"
+  | "food_bev"
+  | "events"
+  | "sales_tax"
+  | "clearing";
+
+export interface AccountingSettings {
+  format: AccountingFormat;
+  accounts: Record<AccountKey, string>;
+  defaults: Record<AccountKey, string>;
+  recentExports: { from: string; to: string; format: AccountingFormat; staff: string | null; at: string }[];
+}
+
+export interface Journal {
+  from: string;
+  to: string;
+  format: AccountingFormat;
+  days: { date: string; totalCents: number; lines: { key: AccountKey; account: string; description: string; debitCents: number; creditCents: number }[] }[];
 }
 
 export interface DayClose {
@@ -457,10 +792,17 @@ function createHttpClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "ap
     /** Checks a group in, taking what's owed for the round and ringing up any items bought with it. */
     /** round: the pro shop's rate and walking/riding for the group, re-priced before payment. */
     /** cardPaymentId: a card that went through on a connected reader, covering everything paid by card. */
-    checkIn: (id: string, method?: PaymentMethod, items?: { lines: SaleLineInput[]; paymentMethod: SalePaymentMethod }, round?: RoundChoice, cardPaymentId?: string) =>
+    checkIn: (
+      id: string,
+      method?: PaymentMethod,
+      items?: { lines: SaleLineInput[]; paymentMethod: SalePaymentMethod; giftCardCode?: string },
+      round?: RoundChoice,
+      cardPaymentId?: string,
+      redeem?: Redemption,
+    ) =>
       request(`/bookings/${id}/check-in`, {
         method: "POST",
-        body: { ...(method ? { payment: { method } } : {}), ...(items ? { items } : {}), ...(round ? { round } : {}), ...(cardPaymentId ? { cardPaymentId } : {}) },
+        body: { ...(method ? { payment: { method } } : {}), ...(items ? { items } : {}), ...(round ? { round } : {}), ...(cardPaymentId ? { cardPaymentId } : {}), ...(redeem ?? {}) },
       }),
     waiver: () => request<Waiver>("/waiver"),
     /** Who is signed in. Managers can change course settings; other staff can't. */
@@ -502,7 +844,7 @@ function createHttpClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "ap
     productHistory: (id: string) => request<StockMovement[]>(`/products/${id}/history`),
     changeStock: (id: string, change: { kind: "receive" | "count" | "adjust"; quantity: number; note?: string | null }) =>
       request<Product>(`/products/${id}/stock`, { method: "POST", body: change }),
-    sell: (sale: { lines: SaleLineInput[]; paymentMethod: SalePaymentMethod; golferId?: string | null; cardPaymentId?: string }) =>
+    sell: (sale: { lines: SaleLineInput[]; paymentMethod: SalePaymentMethod; golferId?: string | null; cardPaymentId?: string; giftCardCode?: string | null }) =>
       request<Sale>("/sales", { method: "POST", body: sale }),
     paymentSettings: () => request<PaymentSettings>("/settings/payments"),
     savePaymentSettings: (input: { provider: ProcessorId; account?: Record<string, string>; credentials?: Record<string, string>; tipping?: boolean }) =>
@@ -519,6 +861,86 @@ function createHttpClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "ap
     cancelCardPayment: (id: string) => request<CardPayment>(`/card-payments/${id}/cancel`, { method: "POST" }),
     sales: (date: string) => request<SalesDay>(`/sales?date=${date}`),
     refundSale: (id: string) => request<Sale>(`/sales/${id}/refund`, { method: "POST" }),
+    tabs: (status: "open" | "closed" = "open") => request<Tab[]>(`/tabs?status=${status}`),
+    tab: (id: string) => request<Tab>(`/tabs/${id}`),
+    openTab: (t: { name?: string | null; location?: TabLocation; golferId?: string | null; bookingId?: string | null }) => request<Tab>("/tabs", { method: "POST", body: t }),
+    renameTab: (id: string, name: string) => request<Tab>(`/tabs/${id}`, { method: "PATCH", body: { name } }),
+    addTabItems: (id: string, lines: TabItemInput[]) => request<Tab>(`/tabs/${id}/items`, { method: "POST", body: { lines } }),
+    voidTabItem: (id: string, itemId: string) => request<Tab>(`/tabs/${id}/items/${itemId}`, { method: "DELETE" }),
+    closeTab: (id: string, paymentMethod: SalePaymentMethod, cardPaymentId?: string, giftCardCode?: string) =>
+      request<{ tab: Tab; sale: Sale }>(`/tabs/${id}/close`, {
+        method: "POST",
+        body: { paymentMethod, ...(cardPaymentId ? { cardPaymentId } : {}), ...(giftCardCode ? { giftCardCode } : {}) },
+      }),
+    giftCards: (q = "") => request<GiftCard[]>(`/gift-cards?q=${encodeURIComponent(q)}`),
+    findGiftCard: (code: string) => request<GiftCardDetail>(`/gift-cards?code=${encodeURIComponent(code)}`),
+    giftCard: (id: string) => request<GiftCardDetail>(`/gift-cards/${id}`),
+    sellGiftCard: (input: { amountCents: number; method: GiftCardMethod; cardPaymentId?: string; golferId?: string | null; recipientName?: string | null; code?: string | null; note?: string | null }) =>
+      request<GiftCardDetail>("/gift-cards", { method: "POST", body: input }),
+    adjustGiftCard: (id: string, input: { changeCents?: number; void?: boolean; note: string }) => request<GiftCardDetail>(`/gift-cards/${id}/adjust`, { method: "POST", body: input }),
+    houseAccounts: () => request<HouseAccount[]>("/house-accounts"),
+    houseAccount: (id: string) => request<HouseAccountDetail>(`/house-accounts/${id}`),
+    openHouseAccount: (input: { golferId: string; creditLimitCents?: number | null; billingEmail?: string | null; notes?: string | null }) =>
+      request<HouseAccountDetail>("/house-accounts", { method: "POST", body: input }),
+    updateHouseAccount: (id: string, patch: { creditLimitCents?: number | null; status?: HouseAccount["status"]; billingEmail?: string | null; notes?: string | null }) =>
+      request<HouseAccountDetail>(`/house-accounts/${id}`, { method: "PATCH", body: patch }),
+    payHouseAccount: (id: string, input: { amountCents: number; method: "card" | "cash" | "check"; cardPaymentId?: string; note?: string | null }) =>
+      request<HouseAccountDetail>(`/house-accounts/${id}/payments`, { method: "POST", body: input }),
+    adjustHouseAccount: (id: string, input: { amountCents: number; description: string }) => request<HouseAccountDetail>(`/house-accounts/${id}/adjust`, { method: "POST", body: input }),
+    runStatements: (month: string) => request<{ month: string; statements: number }>("/house-accounts/statements", { method: "POST", body: { month } }),
+    statement: (id: string) => request<StatementDetail>(`/statements/${id}`),
+    accountingSettings: () => request<AccountingSettings>("/settings/accounting"),
+    saveAccountingSettings: (input: { format?: AccountingFormat; accounts?: Partial<Record<AccountKey, string>> }) =>
+      request<AccountingSettings>("/settings/accounting", { method: "PUT", body: input }),
+    journal: (from: string, to: string) => request<Journal>(`/accounting/journal?from=${from}&to=${to}`),
+    exportJournal: (from: string, to: string, format?: AccountingFormat) =>
+      request<{ fileName: string; csv: string; days: number }>("/accounting/export", { method: "POST", body: { from, to, ...(format ? { format } : {}) } }),
+    voidTab: (id: string, reason: string) => request<Tab>(`/tabs/${id}/void`, { method: "POST", body: { reason } }),
+    prep: (station: PrepStation) => request<PrepTicket[]>(`/prep/${station}`),
+    setPrepStatus: (itemIds: string[], status: "sent" | "ready" | "served") => request<{ updated: number }>("/prep/items", { method: "POST", body: { itemIds, status } }),
+    passTypes: () => request<PassType[]>("/pass-types"),
+    addPassType: (t: { name: string; kind: PassKind; priceCents: number; rounds?: number | null; validDays?: number | null; coversCart?: boolean }) =>
+      request<PassType>("/pass-types", { method: "POST", body: t }),
+    updatePassType: (id: string, patch: Partial<Omit<PassType, "id" | "kind">>) => request<PassType>(`/pass-types/${id}`, { method: "PATCH", body: patch }),
+    loyaltySettings: () => request<LoyaltySettings>("/settings/loyalty"),
+    saveLoyaltySettings: (s: LoyaltySettings) => request<LoyaltySettings>("/settings/loyalty", { method: "PUT", body: s }),
+    wallet: (golferId: string) => request<Wallet>(`/golfers/${golferId}/wallet`),
+    sellPass: (golferId: string, sale: { passTypeId: string; paymentMethod: SalePaymentMethod; cardPaymentId?: string }) =>
+      request<Wallet>(`/golfers/${golferId}/passes`, { method: "POST", body: sale }),
+    cancelPass: (golferId: string, passId: string) => request<Wallet>(`/golfers/${golferId}/passes/${passId}/cancel`, { method: "POST" }),
+    adjustPoints: (golferId: string, change: number, note: string) => request<Wallet>(`/golfers/${golferId}/points`, { method: "POST", body: { change, note } }),
+    issueRainCheck: (bookingId: string, input: { players: number; holesPlayed: number; includeCart?: boolean; amountCents?: number; note?: string | null }) =>
+      request<RainCheck>(`/bookings/${bookingId}/rain-checks`, { method: "POST", body: input }),
+    bookingRainChecks: (bookingId: string) => request<RainCheck[]>(`/bookings/${bookingId}/rain-checks`),
+    findRainCheck: (code: string) => request<RainCheck>(`/rain-checks/${encodeURIComponent(code.trim().toUpperCase())}`),
+    voidRainCheck: (id: string) => request<RainCheck>(`/rain-checks/${id}/void`, { method: "POST" }),
+    refundRound: (bookingId: string, input: { amountCents: number; method: "cash" | "card"; reason: string }) =>
+      request(`/bookings/${bookingId}/refund`, { method: "POST", body: input }),
+    rainCheckSettings: () => request<{ rainCheckDays: number }>("/settings/rain-checks"),
+    saveRainCheckSettings: (s: { rainCheckDays: number }) => request<{ rainCheckDays: number }>("/settings/rain-checks", { method: "PUT", body: s }),
+    standingTimes: () => request<StandingTime[]>("/standing-times"),
+    addStandingTime: (s: Omit<StandingTime, "id" | "golferName" | "active" | "upcoming">) => request<StandingTime>("/standing-times", { method: "POST", body: s }),
+    setStandingTimeActive: (id: string, active: boolean) => request<StandingTime>(`/standing-times/${id}`, { method: "PATCH", body: { active } }),
+    bookAhead: () => request<StandingTime[]>("/standing-times/book-ahead", { method: "POST" }),
+    events: () => request<EventSummary[]>("/events"),
+    event: (id: string) => request<EventDetail>(`/events/${id}`),
+    addEvent: (e: NewEvent) => request<{ event: EventDetail; conflicts: HoldConflict[] }>("/events", { method: "POST", body: e }),
+    updateEvent: (id: string, patch: Partial<Omit<NewEvent, "kind" | "format" | "schedule">> & { active?: boolean }) =>
+      request<EventDetail>(`/events/${id}`, { method: "PATCH", body: patch }),
+    addEventDate: (id: string, d: { date: string; startTime: string; slots: number }) =>
+      request<{ event: EventDetail; conflicts: HoldConflict[] }>(`/events/${id}/dates`, { method: "POST", body: d }),
+    cancelEventDate: (dateId: string) => request<EventDetail>(`/event-dates/${dateId}/cancel`, { method: "POST" }),
+    addEventPlayer: (id: string, p: { name?: string; golferId?: string | null; email?: string | null; phone?: string | null; handicap?: number | null }) =>
+      request<EventDetail>(`/events/${id}/players`, { method: "POST", body: p }),
+    removeEventPlayer: (id: string, playerId: string) => request<EventDetail>(`/events/${id}/players/${playerId}`, { method: "DELETE" }),
+    eventDay: (dateId: string) => request<EventDay>(`/event-dates/${dateId}`),
+    autoPair: (dateId: string, opts: { groupSize: number; order: "name" | "random" | "handicap" }) =>
+      request<EventDay>(`/event-dates/${dateId}/pairings/auto`, { method: "POST", body: opts }),
+    setPairing: (dateId: string, playerId: string, groupNo: number | null) => request<EventDay>(`/event-dates/${dateId}/pairings/${playerId}`, { method: "PUT", body: { groupNo } }),
+    eventCheckIn: (dateId: string, playerIds: string[], checkedIn: boolean) =>
+      request<EventDay>(`/event-dates/${dateId}/check-in`, { method: "POST", body: { playerIds, checkedIn } }),
+    addEventPayment: (id: string, p: { amountCents: number; method: EventPaymentMethod; eventDateId?: string | null; note?: string | null; cardPaymentId?: string }) =>
+      request<EventDetail>(`/events/${id}/payments`, { method: "POST", body: p }),
     posSettings: () => request<{ salesTaxBps: number }>("/settings/pos"),
     savePosSettings: (settings: { salesTaxBps: number }) => request<{ salesTaxBps: number }>("/settings/pos", { method: "PUT", body: settings }),
     report: (from: string, to: string) => request<Report>(`/reports?from=${from}&to=${to}`),

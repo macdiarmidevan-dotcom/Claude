@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import type { Client, DayClose, Me, MoneyMethod, Report } from "./api";
 import { addDays, dayParts, todayIn, weekStart } from "./dates";
+import { AccountingCard } from "./AccountingCard";
 import { colors, money, radius, type WebPress } from "./theme";
 
 type Period = "today" | "yesterday" | "week" | "last-week" | "month" | "last-month";
@@ -18,8 +19,13 @@ const PERIODS: { id: Period; label: string }[] = [
 const METHOD_LABEL: Record<MoneyMethod, string> = {
   cash: "Cash",
   card: "Card",
+  check: "Check",
   gift_card: "Gift card",
+  house_account: "Charged to house accounts",
   punch_card: "Punch card",
+  season_pass: "Season pass",
+  loyalty: "Loyalty points",
+  rain_check: "Rain check",
   prepaid: "Prepaid online",
   comp: "Comp",
 };
@@ -114,6 +120,8 @@ function ManagerReports({ client, today }: { client: Client; today: string }) {
                 ["Green fees", r.revenue.greenFeesCents],
                 ["Carts and extras", r.revenue.cartsAndExtrasCents],
                 ["Pro shop", r.revenue.proShopCents],
+                ...(r.revenue.foodBevCents ? ([["Food and drink", r.revenue.foodBevCents]] as [string, number][]) : []),
+                ...(r.revenue.eventsCents ? ([["Leagues and outings", r.revenue.eventsCents]] as [string, number][]) : []),
               ]}
               total={["Total", r.revenue.totalCents]}
               note={r.revenue.proShopRefundsCents ? `Pro shop refunds: ${money(r.revenue.proShopRefundsCents)} (already left out)` : undefined}
@@ -122,9 +130,16 @@ function ManagerReports({ client, today }: { client: Client; today: string }) {
               title="Money taken"
               rows={(Object.keys(METHOD_LABEL) as MoneyMethod[]).filter((m) => r.collected[m]).map((m) => [METHOD_LABEL[m], r.collected[m]])}
               total={["Total", r.collected.totalCents]}
-              note="Prepaid online was collected by the booking provider, not at the course."
+              note={[
+                "Prepaid online was collected by the booking provider, not at the course.",
+                r.other.giftCardsSoldCents ? `Includes ${money(r.other.giftCardsSoldCents)} of gift cards sold, which count as revenue when they're spent.` : "",
+                r.other.accountPaymentsCents ? `Includes ${money(r.other.accountPaymentsCents)} paid on house accounts, already counted as revenue when charged.` : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
             />
             <Breakdown title="Pro shop by category" rows={r.revenue.proShopByCategory.map((c) => [`${c.category} (${c.items})`, c.cents])} empty="No pro shop sales." />
+            {r.revenue.foodBevByCategory.length > 0 && <Breakdown title="Food and drink by category" rows={r.revenue.foodBevByCategory.map((c) => [`${c.category} (${c.items})`, c.cents])} />}
             <View style={[styles.card, styles.breakdown]}>
               <Text style={styles.label}>Players by booking source</Text>
               {Object.keys(r.rounds.bySource).length === 0 && <Text style={styles.muted}>No bookings.</Text>}
@@ -177,6 +192,7 @@ function ManagerReports({ client, today }: { client: Client; today: string }) {
           <Text style={styles.muted}>
             Green fees and carts count on the day of the round; money taken counts on the day it was paid. No-shows and cancellations are left out of revenue.
           </Text>
+          <AccountingCard client={client} from={from} to={to} />
         </>
       )}
     </View>
@@ -378,9 +394,21 @@ function DayCloseCard({ client, today, isManager }: { client: Client; today: str
 function downloadCsv(r: Report) {
   const cell = (c: number) => (c / 100).toFixed(2);
   const lines = [
-    ["Date", "Rounds", "Green fees", "Carts and extras", "Pro shop", "Sales tax", "Money taken"].join(","),
-    ...r.days.map((d) => [d.date, d.rounds, cell(d.greenFeesCents), cell(d.cartsAndExtrasCents), cell(d.proShopCents), cell(d.taxCents), cell(d.collectedCents)].join(",")),
-    ["Total", r.rounds.played, cell(r.revenue.greenFeesCents), cell(r.revenue.cartsAndExtrasCents), cell(r.revenue.proShopCents), cell(r.revenue.salesTaxCents), cell(r.collected.totalCents)].join(","),
+    ["Date", "Rounds", "Green fees", "Carts and extras", "Pro shop", "Food and drink", "Leagues and outings", "Sales tax", "Money taken"].join(","),
+    ...r.days.map((d) =>
+      [d.date, d.rounds, cell(d.greenFeesCents), cell(d.cartsAndExtrasCents), cell(d.proShopCents), cell(d.foodBevCents), cell(d.eventsCents), cell(d.taxCents), cell(d.collectedCents)].join(","),
+    ),
+    [
+      "Total",
+      r.rounds.played,
+      cell(r.revenue.greenFeesCents),
+      cell(r.revenue.cartsAndExtrasCents),
+      cell(r.revenue.proShopCents),
+      cell(r.revenue.foodBevCents),
+      cell(r.revenue.eventsCents),
+      cell(r.revenue.salesTaxCents),
+      cell(r.collected.totalCents),
+    ].join(","),
   ];
   const url = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv" }));
   const a = document.createElement("a");

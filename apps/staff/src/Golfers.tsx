@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import type { Client, GolferAccount, GolferProfile, SheetBooking } from "./api";
 import { colors, money, statusLabel, type WebPress } from "./theme";
+import { WalletSection } from "./Wallet";
 
 // Golfer accounts. The first time someone is checked in, the pro shop creates their account with
 // their phone and email. Every check-in after that is a name search and one tap, so all their
@@ -160,14 +161,14 @@ function GolferForm(props: {
 }
 
 /** The Customers section: find any golfer and see their rounds. */
-export function GolfersScreen({ client, openId, onOpenBooking }: { client: Client; openId?: string; onOpenBooking?: OpenBooking }) {
+export function GolfersScreen({ client, openId, onOpenBooking, isManager }: { client: Client; openId?: string; onOpenBooking?: OpenBooking; isManager?: boolean }) {
   const [q, setQ] = useState("");
   const { results, error } = useSearch(client, q);
   const [open, setOpen] = useState<string | undefined>(openId);
   const [adding, setAdding] = useState(false);
   useEffect(() => setOpen(openId), [openId]);
 
-  if (open) return <GolferDetail client={client} id={open} onBack={() => setOpen(undefined)} onOpenBooking={onOpenBooking} />;
+  if (open) return <GolferDetail client={client} id={open} onBack={() => setOpen(undefined)} onOpenBooking={onOpenBooking} isManager={isManager} />;
 
   return (
     <ScrollView contentContainerStyle={styles.page} keyboardShouldPersistTaps="handled">
@@ -223,7 +224,7 @@ export function GolfersScreen({ client, openId, onOpenBooking }: { client: Clien
 export type OpenBooking = (booking: { bookingId: string; startsAt: string }) => void;
 
 /** One golfer's account: totals, contact details and every booking, newest first. */
-export function GolferDetail({ client, id, onBack, onOpenBooking }: { client: Client; id: string; onBack?: () => void; onOpenBooking?: OpenBooking }) {
+export function GolferDetail({ client, id, onBack, onOpenBooking, isManager = false }: { client: Client; id: string; onBack?: () => void; onOpenBooking?: OpenBooking; isManager?: boolean }) {
   const [g, setG] = useState<GolferProfile>();
   const [error, setError] = useState<string>();
   const [editing, setEditing] = useState(false);
@@ -277,6 +278,8 @@ export function GolferDetail({ client, id, onBack, onOpenBooking }: { client: Cl
         <Stat label="Guests brought" value={String(g.stats.guestsBrought)} />
         <Stat label="Own spend" value={money(g.stats.paidCents)} />
       </View>
+
+      <WalletSection client={client} golferId={g.id} isManager={isManager} />
 
       <Text role="heading" style={styles.h2}>Rounds and bookings</Text>
       {g.history.length === 0 ? (

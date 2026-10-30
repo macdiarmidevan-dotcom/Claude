@@ -12,10 +12,13 @@ import { GolfersScreen } from "./Golfers";
 import { ScheduleScreen } from "./ScheduleScreen";
 import { ProShopScreen } from "./ProShopScreen";
 import { CardPaymentSettings, CardReaderProvider } from "./CardReader";
+import { AccountsScreen } from "./AccountsScreen";
+import { EventsScreen } from "./EventsScreen";
+import { FoodBarScreen } from "./FoodBarScreen";
 import { ReportsScreen, StartDayForm } from "./ReportsScreen";
 import { colors, type WebPress } from "./theme";
 
-type Section = "tee-sheet" | "import" | "staff" | "customers" | "reports" | "schedule" | "inventory" | "settings";
+type Section = "tee-sheet" | "import" | "staff" | "customers" | "events" | "food" | "accounts" | "reports" | "schedule" | "inventory" | "settings";
 
 // starters: false hides a section on the starter station (managers still see it).
 const SECTIONS: { id: Section; label: string; soon?: string; managers?: boolean; starters?: false }[] = [
@@ -23,6 +26,9 @@ const SECTIONS: { id: Section; label: string; soon?: string; managers?: boolean;
   { id: "import", label: "Sync tee sheet", managers: true },
   { id: "staff", label: "Staff accounts", managers: true },
   { id: "customers", label: "Golfers" },
+  { id: "events", label: "Leagues & events" },
+  { id: "food", label: "Food & bar" },
+  { id: "accounts", label: "Gift cards & accounts" },
   { id: "reports", label: "Reports", starters: false },
   { id: "schedule", label: "Staff schedule" },
   { id: "inventory", label: "Pro shop" },
@@ -135,6 +141,7 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
               onOpenMenu={openMenu}
               onOpenGolfer={openGolfer}
               jumpTo={jumpTo}
+              isManager={isManager}
             />
           ) : (
             <Header title="Tee sheet" onOpenMenu={openMenu} subtitle={error ?? "Loading…"} />
@@ -147,7 +154,7 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
         ) : section === "customers" ? (
           <>
             <Header title="Golfers" onOpenMenu={openMenu} />
-            <GolfersScreen key={golferId ?? "search"} client={client} openId={golferId} onOpenBooking={openBooking} />
+            <GolfersScreen key={golferId ?? "search"} client={client} openId={golferId} onOpenBooking={openBooking} isManager={isManager} />
           </>
         ) : section === "staff" ? (
           <>
@@ -158,6 +165,21 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
           <>
             <Header title="Staff schedule" onOpenMenu={openMenu} />
             {course && <ScheduleScreen client={client} me={me} timeZone={course.timeZone} />}
+          </>
+        ) : section === "events" ? (
+          <>
+            <Header title="Leagues & events" onOpenMenu={openMenu} />
+            {course && <EventsScreen client={client} isManager={isManager} timeZone={course.timeZone} courseHoles={course.holes} />}
+          </>
+        ) : section === "food" ? (
+          <>
+            <Header title="Food & bar" onOpenMenu={openMenu} />
+            {course && <FoodBarScreen client={client} isManager={isManager} timeZone={course.timeZone} />}
+          </>
+        ) : section === "accounts" ? (
+          <>
+            <Header title="Gift cards & accounts" onOpenMenu={openMenu} />
+            <AccountsScreen client={client} isManager={isManager} />
           </>
         ) : section === "reports" ? (
           <>

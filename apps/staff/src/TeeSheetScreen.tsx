@@ -27,9 +27,10 @@ interface Props {
   onOpenGolfer?: (golferId: string) => void;
   /** Shows this booking's day and opens its tee time, e.g. from a golfer's account. */
   jumpTo?: { date: string; bookingId: string };
+  isManager?: boolean;
 }
 
-export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu, onOpenGolfer, jumpTo }: Props) {
+export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu, onOpenGolfer, jumpTo, isManager = false }: Props) {
   const { width } = useWindowDimensions();
   const sideBySide = width >= 1100; // laptops and desktops: grid and details side by side
   const compact = width < 600; // phones
@@ -265,6 +266,7 @@ export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu,
       courseHoles={course.holes}
       course={course}
       station={station}
+      isManager={isManager}
       onOpenGolfer={onOpenGolfer}
       onChanged={load}
       onClose={() => setSelectedId(undefined)}
