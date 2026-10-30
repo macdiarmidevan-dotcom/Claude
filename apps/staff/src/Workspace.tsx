@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Modal, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 import { ApiError, createClient, type Course, type Me, type Settings } from "./api";
-import { StationPicker } from "./SetupScreen";
 import { TeeSheetScreen } from "./TeeSheetScreen";
 import { WaiverEditor } from "./WaiverEditor";
 import { Header } from "./Header";
@@ -14,12 +13,14 @@ import { CardPaymentSettings, CardReaderProvider } from "./CardReader";
 import { AccountsScreen } from "./AccountsScreen";
 import { EventsScreen } from "./EventsScreen";
 import { FoodBarScreen } from "./FoodBarScreen";
+import { FOOD_BAR } from "./features";
+import { StationPicker } from "./SetupScreen";
 import { ReportsScreen } from "./ReportsScreen";
 import { colors, type WebPress } from "./theme";
 
 type Section = "tee-sheet" | "import" | "staff" | "customers" | "events" | "food" | "accounts" | "reports" | "schedule" | "inventory" | "settings";
 
-const SECTIONS: { id: Section; label: string; soon?: string; managers?: boolean }[] = [
+const ALL_SECTIONS: { id: Section; label: string; soon?: string; managers?: boolean }[] = [
   { id: "tee-sheet", label: "Tee sheet" },
   { id: "import", label: "Sync tee sheet", managers: true },
   { id: "staff", label: "Staff accounts", managers: true },
@@ -32,6 +33,7 @@ const SECTIONS: { id: Section; label: string; soon?: string; managers?: boolean 
   { id: "inventory", label: "Pro shop" },
   { id: "settings", label: "Settings" },
 ];
+const SECTIONS = ALL_SECTIONS.filter((s) => FOOD_BAR || s.id !== "food");
 
 // Below this width the menu folds away behind a button, as on phones and iPads held upright.
 const RAIL_BREAKPOINT = 1024;
@@ -172,10 +174,19 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
             <Header title="Settings" onOpenMenu={openMenu} />
             <ScrollView contentContainerStyle={styles.content}>
               <Text style={styles.label}>This device is for</Text>
-              <View style={{ maxWidth: 360 }}>
-                <StationPicker value={settings.station} onChange={(station) => onChangeSettings({ ...settings, station })} />
-              </View>
-              <Text style={styles.help}>The pro shop takes payment and checks groups in. The starter sends them off the first tee and assigns carts.</Text>
+              {isManager ? (
+                <View style={{ maxWidth: 360 }}>
+                  <StationPicker value={settings.station} onChange={(station) => onChangeSettings({ ...settings, station })} />
+                </View>
+              ) : (
+                <Text style={[styles.help, { fontWeight: "700", color: colors.text }]}>{STATION_LABEL[settings.station]}</Text>
+              )}
+              <Text style={styles.help}>
+                The pro shop takes payment and checks groups in. The starter sends them off the first tee and assigns carts.
+                {isManager
+                  ? " Managers can switch between the two at any time."
+                  : ` This was picked when you signed in; to use this device for the ${settings.station === "proshop" ? "starter" : "pro shop"}, sign out and pick it on the sign-in page.`}
+              </Text>
               <Text style={[styles.label, { marginTop: 24 }]}>Card payments</Text>
               <CardPaymentSettings
                 client={client}
@@ -256,8 +267,13 @@ function SideMenu(props: {
           </Pressable>
         )}
       </View>
-      <View style={{ paddingHorizontal: 12, marginBottom: 6 }}>
-        <StationPicker dark value={settings.station} onChange={(station) => onChangeSettings({ ...settings, station })} />
+      <View style={{ paddingHorizontal: 12, marginBottom: 12 }}>
+        {/* Staff stay on the station they signed in to; managers can switch. */}
+        {isManager ? (
+          <StationPicker dark value={settings.station} onChange={(station) => onChangeSettings({ ...settings, station })} />
+        ) : (
+          <Text style={styles.stationTag}>{STATION_LABEL[settings.station]}</Text>
+        )}
       </View>
       <ScrollView style={{ flex: 1 }}>
         {SECTIONS.filter((s) => !s.managers || isManager).map((s) => {
@@ -295,7 +311,10 @@ function SideMenu(props: {
   );
 }
 
+const STATION_LABEL: Record<Settings["station"], string> = { proshop: "Pro shop", starter: "Starter" };
+
 const styles = StyleSheet.create({
+  stationTag: { color: "#fff", backgroundColor: colors.primary, borderRadius: 3, paddingVertical: 8, fontSize: 14, fontWeight: "600", textAlign: "center" },
   page: { flex: 1, flexDirection: "row", backgroundColor: colors.bg },
   main: { flex: 1, minWidth: 0 },
   rail: { width: 240, backgroundColor: colors.rail, paddingTop: 16, height: "100%" },

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { PassSetup } from "./PassSetup";
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, useWindowDimensions, View } from "react-native";
 import type { Client, GolferAccount, Me, PrepStation, Product, ProductInput, Sale, SalePaymentMethod, SalesDay, StockMovement } from "./api";
+import { FOOD_BAR } from "./features";
 import { addDays, dayParts, todayIn } from "./dates";
 import { useSearch } from "./Golfers";
 import { CardChargeModal, useCardReader } from "./CardReader";
@@ -549,12 +550,18 @@ function ProductEditor(props: { client: Client; product?: Product; categories: s
       </View>
       {(foodBev || !!station) && (
         <>
-          <View style={[styles.choices, { marginTop: 6 }]}>
-            <Chip label="Handed over (cooler, counter)" on={!station} onPress={() => setStation(null)} />
-            <Chip label="Made in the kitchen" on={station === "kitchen"} onPress={() => setStation("kitchen")} />
-            <Chip label="Made at the bar" on={station === "bar"} onPress={() => setStation("bar")} />
-          </View>
-          <Text style={styles.muted}>Shows on the Food & bar menu and is reported apart from the pro shop. Items made in the kitchen or at the bar go to that screen when ordered.</Text>
+          {FOOD_BAR && (
+            <View style={[styles.choices, { marginTop: 6 }]}>
+              <Chip label="Handed over (cooler, counter)" on={!station} onPress={() => setStation(null)} />
+              <Chip label="Made in the kitchen" on={station === "kitchen"} onPress={() => setStation("kitchen")} />
+              <Chip label="Made at the bar" on={station === "bar"} onPress={() => setStation("bar")} />
+            </View>
+          )}
+          <Text style={styles.muted}>
+            {FOOD_BAR
+              ? "Shows on the Food & bar menu and is reported apart from the pro shop. Items made in the kitchen or at the bar go to that screen when ordered."
+              : "Reported as food and drink, apart from the pro shop."}
+          </Text>
         </>
       )}
       {error && <Text role="alert" style={styles.error}>{error}</Text>}

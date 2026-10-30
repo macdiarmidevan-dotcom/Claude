@@ -145,7 +145,7 @@ On the day, the pro shop opens the date, pairs everyone into groups (by handicap
 
 ## Food and bar
 
-**Food & bar** runs the grill, the bar, the turn stand and the beverage cart on open tabs. Staff open a tab for a table or a name, a golfer account (so it earns loyalty points), or a group on the course today, so food ordered at the turn goes on that golfer's tab. Tapping menu items builds the order, with a note for the kitchen ("no onions"), and **Send order** puts anything made in the kitchen or at the bar straight onto that screen. Prices are locked in when the order is placed.
+**Food & bar** is built but switched off for now (`FOOD_BAR` in `apps/staff/src/features.ts`). It runs the grill, the bar, the turn stand and the beverage cart on open tabs. Staff open a tab for a table or a name, a golfer account (so it earns loyalty points), or a group on the course today, so food ordered at the turn goes on that golfer's tab. Tapping menu items builds the order, with a note for the kitchen ("no onions"), and **Send order** puts anything made in the kitchen or at the bar straight onto that screen. Prices are locked in when the order is placed.
 
 The **Kitchen screen** and **Bar screen** show one ticket per order, oldest first, with how long it's been waiting (amber after 8 minutes, red after 15). The cook taps each item as it's made and presses **Served** to clear the ticket. The screens refresh on their own, so they can stay up on a tablet in the kitchen.
 
@@ -194,7 +194,7 @@ The app has a menu on the left (Tee sheet, Golfers, Reports, Staff schedule, Pro
 
 Accessibility: every row and button has a spoken label for screen readers (for example "7:26am: Tom Reyes, 3 players, booked, not paid, owes $108.00; 1 open"). Keyboard focus is visible. Group colors have at least 4.5:1 contrast with their text, and each state also has its own mark (✓ ⛳ ✕ $), so color is never the only cue. Confirmations happen on the page instead of in pop-up dialogs.
 
-Each device is set to **Pro shop** or **Starter** (switchable in the top bar). Check-in has two steps: the pro shop takes payment and checks the group in, then the starter checks them in at the tee box and assigns carts. The starter can't send off a group the pro shop hasn't checked in.
+Each device is set to **Pro shop** or **Starter** on the sign-in page, and staff stay on it until they sign out. Managers can switch between the two from the sidebar. Check-in has two steps: the pro shop takes payment and checks the group in, then the starter checks them in at the tee box and assigns carts. The starter can't send off a group the pro shop hasn't checked in.
 
 Each row shows the time, filled spots, the groups (✓ checked in at the shop, ⛳ on the course, ✕ no-show), cart numbers, and whether the time is paid or what's owed. Tapping a time opens a panel to take payment and check in, send a group off with carts, mark no-shows, move a group to another time, cancel, add a walk-in, or block the time with a note. On an iPad in landscape or a desktop the panel sits beside the sheet; on a phone it slides up. The sheet refreshes every 5 seconds, so changes from the pro shop show up on the starter's iPad.
 
