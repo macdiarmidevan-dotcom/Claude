@@ -14,6 +14,7 @@ import { AccountsScreen } from "./AccountsScreen";
 import { EventsScreen } from "./EventsScreen";
 import { FoodBarScreen } from "./FoodBarScreen";
 import { FOOD_BAR } from "./features";
+import { StationPicker } from "./SetupScreen";
 import { ReportsScreen } from "./ReportsScreen";
 import { colors, type WebPress } from "./theme";
 
@@ -173,10 +174,18 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
             <Header title="Settings" onOpenMenu={openMenu} />
             <ScrollView contentContainerStyle={styles.content}>
               <Text style={styles.label}>This device is for</Text>
-              <Text style={[styles.help, { fontWeight: "700", color: colors.text }]}>{STATION_LABEL[settings.station]}</Text>
+              {isManager ? (
+                <View style={{ maxWidth: 360 }}>
+                  <StationPicker value={settings.station} onChange={(station) => onChangeSettings({ ...settings, station })} />
+                </View>
+              ) : (
+                <Text style={[styles.help, { fontWeight: "700", color: colors.text }]}>{STATION_LABEL[settings.station]}</Text>
+              )}
               <Text style={styles.help}>
-                The pro shop takes payment and checks groups in. The starter sends them off the first tee and assigns carts. This was picked when you signed in; to use
-                this device for the {settings.station === "proshop" ? "starter" : "pro shop"}, sign out and pick it on the sign-in page.
+                The pro shop takes payment and checks groups in. The starter sends them off the first tee and assigns carts.
+                {isManager
+                  ? " Managers can switch between the two at any time."
+                  : ` This was picked when you signed in; to use this device for the ${settings.station === "proshop" ? "starter" : "pro shop"}, sign out and pick it on the sign-in page.`}
               </Text>
               <Text style={[styles.label, { marginTop: 24 }]}>Card payments</Text>
               <CardPaymentSettings
@@ -259,7 +268,12 @@ function SideMenu(props: {
         )}
       </View>
       <View style={{ paddingHorizontal: 12, marginBottom: 12 }}>
-        <Text style={styles.stationTag}>{STATION_LABEL[settings.station]}</Text>
+        {/* Staff stay on the station they signed in to; managers can switch. */}
+        {isManager ? (
+          <StationPicker dark value={settings.station} onChange={(station) => onChangeSettings({ ...settings, station })} />
+        ) : (
+          <Text style={styles.stationTag}>{STATION_LABEL[settings.station]}</Text>
+        )}
       </View>
       <ScrollView style={{ flex: 1 }}>
         {SECTIONS.filter((s) => !s.managers || isManager).map((s) => {

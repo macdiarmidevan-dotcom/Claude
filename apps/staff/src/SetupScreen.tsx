@@ -105,13 +105,13 @@ export function SetupScreen({ initial, onSave }: { initial?: Settings; onSave: (
   );
 }
 
-function StationPicker({ value, onChange }: { value: Station; onChange: (s: Station) => void }) {
+export function StationPicker({ value, onChange, dark }: { value: Station; onChange: (s: Station) => void; dark?: boolean }) {
   const options: { id: Station; label: string }[] = [
     { id: "proshop", label: "Pro shop" },
     { id: "starter", label: "Starter" },
   ];
   return (
-    <View style={styles.segment}>
+    <View style={[styles.segment, dark && { borderColor: "#3a3d42" }]}>
       {options.map((o) => {
         const on = o.id === value;
         return (
@@ -122,7 +122,7 @@ function StationPicker({ value, onChange }: { value: Station; onChange: (s: Stat
             onPress={() => onChange(o.id)}
             style={[styles.segmentItem, on && { backgroundColor: colors.primary }]}
           >
-            <Text style={{ fontWeight: "600", color: on ? "#fff" : colors.text }}>{o.label}</Text>
+            <Text style={{ fontWeight: "600", color: on ? "#fff" : dark ? colors.railText : colors.text }}>{o.label}</Text>
           </Pressable>
         );
       })}
