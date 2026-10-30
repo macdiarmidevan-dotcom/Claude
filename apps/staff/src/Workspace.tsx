@@ -258,8 +258,8 @@ function SideMenu(props: {
           </Pressable>
         )}
       </View>
-      <View style={{ paddingHorizontal: 12, marginBottom: 6 }}>
-        <Text style={styles.stationTag}>{STATION_LABEL[settings.station]} station</Text>
+      <View style={{ paddingHorizontal: 12, marginBottom: 12 }}>
+        <Text style={styles.stationTag}>{STATION_LABEL[settings.station]}</Text>
       </View>
       <ScrollView style={{ flex: 1 }}>
         {SECTIONS.filter((s) => !s.managers || isManager).map((s) => {
@@ -300,7 +300,7 @@ function SideMenu(props: {
 const STATION_LABEL: Record<Settings["station"], string> = { proshop: "Pro shop", starter: "Starter" };
 
 const styles = StyleSheet.create({
-  stationTag: { color: colors.railText, borderWidth: 1, borderColor: "#3a3d42", borderRadius: 3, paddingHorizontal: 10, paddingVertical: 6, fontSize: 13, fontWeight: "600" },
+  stationTag: { color: "#fff", backgroundColor: colors.primary, borderRadius: 3, paddingVertical: 8, fontSize: 14, fontWeight: "600", textAlign: "center" },
   page: { flex: 1, flexDirection: "row", backgroundColor: colors.bg },
   main: { flex: 1, minWidth: 0 },
   rail: { width: 240, backgroundColor: colors.rail, paddingTop: 16, height: "100%" },
