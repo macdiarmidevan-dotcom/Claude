@@ -191,7 +191,7 @@ const clock = (iso: string) => new Date(iso).toLocaleTimeString("en-US", { hour:
 
 /**
  * The start of the day at the pro shop: count the starting cash into the drawer. Shown in place of
- * the tee sheet and register until it's done, and on the cash drawer card in Reports.
+ * the register until it's done, and on the cash drawer card in Reports.
  */
 export function StartDayForm({ client, date, onOpened, inCard }: { client: Client; date: string; onOpened: (day: DayClose) => void; inCard?: boolean }) {
   const [amount, setAmount] = useState("");

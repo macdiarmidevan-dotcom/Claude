@@ -45,12 +45,12 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
   const [error, setError] = useState<string>();
   const [me, setMe] = useState<Me>();
   const isManager = me?.role === "manager";
-  // The pro shop counts the starting cash into the drawer before the tee sheet or register opens.
+  // The pro shop counts the starting cash into the drawer before the register opens. The tee sheet stays open either way.
   const [drawer, setDrawer] = useState<DayClose>();
   const proShop = settings.station === "proshop";
   const today = course ? todayIn(course.timeZone) : undefined;
   useEffect(() => {
-    // Checked again on each section change, so starting the day from Reports opens the tee sheet.
+    // Checked again on each section change, so starting the day from Reports opens the register.
     if (proShop && today) client.dayClose(today).then(setDrawer).catch(() => undefined);
   }, [client, proShop, today, section]);
   useEffect(() => {
@@ -123,8 +123,8 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
     <View style={styles.page}>
       {rail && menu}
       <View style={styles.main}>
-        {needsStart && (section === "tee-sheet" || section === "inventory") ? (
-          startDay(section === "tee-sheet" ? "Tee sheet" : "Pro shop")
+        {needsStart && section === "inventory" ? (
+          startDay("Pro shop")
         ) : section === "tee-sheet" ? (
           course ? (
             <TeeSheetScreen

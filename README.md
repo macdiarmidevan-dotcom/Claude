@@ -179,7 +179,7 @@ If a group marked as a no-show turns up late, **Undo no-show** puts them back to
 
 ![Pro shop register](docs/screenshots/pro-shop-register.png)
 
-**Starting the day.** On the pro shop station, the tee sheet and register stay closed each morning until someone counts the starting cash into the drawer and enters it under **Start the day**. Once it's in, only a manager can change it (until the day is closed).
+**Starting the day.** On the pro shop station, the register stays closed each morning until someone counts the starting cash into the drawer and enters it under **Start the day**. The tee sheet is open either way. Once it's in, only a manager can change it (until the day is closed).
 
 ![Start the day](docs/screenshots/start-day.png)
 
