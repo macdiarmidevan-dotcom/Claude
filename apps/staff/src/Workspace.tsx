@@ -19,16 +19,18 @@ import { StationPicker } from "./SetupScreen";
 import { FleetScreen } from "./FleetScreen";
 import { MessagesScreen } from "./MessagesScreen";
 import { ReportsScreen, StartDayForm } from "./ReportsScreen";
+import { AccountMenu, FeedbackList, HelpScreen } from "./AccountMenu";
 import { colors, type WebPress } from "./theme";
 
-type Section = "tee-sheet" | "import" | "staff" | "customers" | "events" | "food" | "accounts" | "messages" | "reports" | "schedule" | "inventory" | "settings";
+type Section = "tee-sheet" | "import" | "staff" | "customers" | "events" | "food" | "accounts" | "messages" | "reports" | "schedule" | "inventory" | "settings" | "help";
 
 // Sections with a group fold under one menu item, so the menu stays short.
 type Group = "shop";
 const GROUP_LABEL: Record<Group, string> = { shop: "Golfers & shop" };
 
 // starters: false hides a section on the starter station (managers still see it).
-const ALL_SECTIONS: { id: Section; label: string; soon?: string; managers?: boolean; group?: Group; starters?: false }[] = [
+// inMenu: false keeps a section out of the sidebar; it opens from the account menu instead.
+const ALL_SECTIONS: { id: Section; label: string; soon?: string; managers?: boolean; group?: Group; starters?: false; inMenu?: false }[] = [
   { id: "tee-sheet", label: "Tee sheet" },
   { id: "import", label: "Sync tee sheet", managers: true },
   { id: "staff", label: "Staff accounts", managers: true },
@@ -40,7 +42,8 @@ const ALL_SECTIONS: { id: Section; label: string; soon?: string; managers?: bool
   { id: "food", label: "Food & bar" },
   { id: "reports", label: "Reports", starters: false },
   { id: "schedule", label: "Staff schedule" },
-  { id: "settings", label: "Settings" },
+  { id: "settings", label: "Settings", inMenu: false },
+  { id: "help", label: "Help", inMenu: false },
 ];
 const SECTIONS = ALL_SECTIONS.filter((s) => (FOOD_BAR || s.id !== "food") && (PRO_SHOP || s.id !== "inventory"));
 
@@ -84,6 +87,8 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
   // Moving between a golfer's account and their bookings on the tee sheet.
   const [jumpTo, setJumpTo] = useState<{ date: string; bookingId: string }>();
   const [golferId, setGolferId] = useState<string>();
+  // "My schedule" in the account menu opens the schedule showing only your own shifts.
+  const [onlyMine, setOnlyMine] = useState(false);
   const openGolfer = (id: string) => {
     setGolferId(id);
     setSection("customers");
@@ -113,6 +118,7 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
 
   const go = (s: Section) => {
     setSection(s);
+    if (s !== "schedule") setOnlyMine(false);
     if (s === "customers") setGolferId(undefined);
     setMenuOpen(false);
   };
@@ -128,6 +134,21 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
       me={me}
       onSignOut={signOut}
       onClose={rail ? undefined : () => setMenuOpen(false)}
+      account={
+        <AccountMenu
+          client={client}
+          course={course}
+          me={me}
+          isManager={isManager}
+          station={settings.station}
+          page={SECTIONS.find((s) => s.id === section)?.label ?? section}
+          onGo={(to) => {
+            setOnlyMine(to === "schedule");
+            go(to);
+          }}
+          onSignOut={signOut}
+        />
+      }
     />
   );
   const openMenu = rail ? undefined : () => setMenuOpen(true);
@@ -173,7 +194,7 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
         ) : section === "schedule" ? (
           <>
             <Header title="Staff schedule" onOpenMenu={openMenu} />
-            {course && <ScheduleScreen client={client} me={me} timeZone={course.timeZone} />}
+            {course && <ScheduleScreen key={String(onlyMine)} client={client} me={me} timeZone={course.timeZone} startMine={onlyMine} />}
           </>
         ) : section === "events" ? (
           <>
@@ -204,6 +225,11 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
           <>
             <Header title="Pro shop" onOpenMenu={openMenu} />
             {course && <ProShopScreen client={client} me={me} timeZone={course.timeZone} />}
+          </>
+        ) : section === "help" ? (
+          <>
+            <Header title="Help" onOpenMenu={openMenu} />
+            <HelpScreen />
           </>
         ) : section === "settings" ? (
           <>
@@ -242,6 +268,12 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
               <Text style={styles.help}>
                 {me?.user ? `${me.user.name} (${me.user.email})` : "Shared device key"} · {isManager ? "Manager" : "Staff"} · {course?.name}
               </Text>
+              {isManager && (
+                <>
+                  <Text style={[styles.label, { marginTop: 24 }]}>Feedback from staff</Text>
+                  <FeedbackList client={client} />
+                </>
+              )}
               {me?.user && (
                 <>
                   <Text style={[styles.label, { marginTop: 24 }]}>Your password</Text>
@@ -288,15 +320,17 @@ function SideMenu(props: {
   me?: Me;
   onSignOut: () => void;
   onClose?: () => void;
+  /** The name at the foot of the menu, which opens the account menu. */
+  account: React.ReactNode;
 }) {
-  const { courseName, section, onGo, settings, onChangeSettings, isManager, me, onSignOut, onClose } = props;
+  const { courseName, section, onGo, settings, onChangeSettings, isManager, onClose, account } = props;
   const currentGroup = SECTIONS.find((s) => s.id === section)?.group;
   const [openGroup, setOpenGroup] = useState<Group | undefined>(currentGroup);
   // Going to a section in a group (from a golfer link, say) opens that group.
   useEffect(() => {
     if (currentGroup) setOpenGroup(currentGroup);
   }, [currentGroup]);
-  const visible = SECTIONS.filter((s) => (!s.managers || isManager) && (s.starters !== false || isManager || settings.station !== "starter"));
+  const visible = SECTIONS.filter((s) => (!s.managers || isManager) && (s.starters !== false || isManager || settings.station !== "starter") && s.inMenu !== false);
   const item = (s: (typeof SECTIONS)[number], nested?: boolean) => {
     const on = s.id === section;
     return (
@@ -364,15 +398,7 @@ function SideMenu(props: {
           );
         })}
       </ScrollView>
-      <View style={styles.railFoot}>
-        <View style={{ flex: 1, marginRight: 8 }}>
-          <Text style={styles.railName} numberOfLines={1}>{me?.user?.name ?? "Shared device"}</Text>
-          <Text style={styles.railMuted}>{isManager ? "Manager" : "Staff"}</Text>
-        </View>
-        <Pressable accessibilityRole="button" onPress={onSignOut} hitSlop={8}>
-          <Text style={styles.railLink}>Sign out</Text>
-        </Pressable>
-      </View>
+      {account}
     </View>
   );
 }
@@ -426,10 +452,6 @@ const styles = StyleSheet.create({
   navText: { color: colors.railText, fontSize: 14, flex: 1 },
   groupArrow: { color: colors.railMuted, fontSize: 12 },
   soonTag: { color: colors.railMuted, fontSize: 11, fontWeight: "600" },
-  railFoot: { borderTopWidth: 1, borderColor: "#2a4433", padding: 16, flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  railMuted: { color: colors.railMuted, fontSize: 12 },
-  railName: { color: colors.railText, fontSize: 13, fontWeight: "700" },
-  railLink: { color: colors.railText, fontSize: 13, fontWeight: "600", textDecorationLine: "underline" },
   focusRing: { outlineColor: colors.focus, outlineWidth: 2, outlineStyle: "solid" } as object,
   drawerWrap: { flex: 1, flexDirection: "row" },
   backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.45)" },

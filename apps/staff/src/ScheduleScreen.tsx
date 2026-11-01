@@ -27,7 +27,7 @@ const shiftLabel = (s: Shift) => `${shortDate(s.date)}, ${formatTime(s.start)}â€
  * The staff schedule: the week's shifts, the time clock, shift swaps and, for managers,
  * timesheets. Everyone sees the whole schedule; only managers change it.
  */
-export function ScheduleScreen({ client, me, timeZone }: { client: Client; me: Me | undefined; timeZone: string }) {
+export function ScheduleScreen({ client, me, timeZone, startMine = false }: { client: Client; me: Me | undefined; timeZone: string; startMine?: boolean }) {
   const isManager = me?.role === "manager";
   const [tab, setTab] = useState<Tab>("week");
   const [swapCount, setSwapCount] = useState(0);
@@ -55,7 +55,7 @@ export function ScheduleScreen({ client, me, timeZone }: { client: Client; me: M
         ))}
       </View>
       {tab === "week" ? (
-        <WeekView client={client} me={me} timeZone={timeZone} onSwapAsked={() => setTab("swaps")} />
+        <WeekView client={client} me={me} timeZone={timeZone} onSwapAsked={() => setTab("swaps")} startMine={startMine} />
       ) : tab === "swaps" ? (
         <SwapsView client={client} me={me} onCount={setSwapCount} />
       ) : (
@@ -105,14 +105,14 @@ function ClockCard({ client, timeZone }: { client: Client; timeZone: string }) {
   );
 }
 
-function WeekView({ client, me, timeZone, onSwapAsked }: { client: Client; me: Me | undefined; timeZone: string; onSwapAsked: () => void }) {
+function WeekView({ client, me, timeZone, onSwapAsked, startMine }: { client: Client; me: Me | undefined; timeZone: string; onSwapAsked: () => void; startMine: boolean }) {
   const isManager = me?.role === "manager";
   const today = todayIn(timeZone);
   const [monday, setMonday] = useState(weekStart(today));
   const [shifts, setShifts] = useState<Shift[]>();
   const [people, setPeople] = useState<Coworker[]>([]);
   const [types, setTypes] = useState<EmployeeType[]>([]);
-  const [mine, setMine] = useState(false);
+  const [mine, setMine] = useState(startMine);
   const [editing, setEditing] = useState<Partial<Shift> & { date: string }>();
   const [swapping, setSwapping] = useState<Shift>();
   const [notice, setNotice] = useState<string>();

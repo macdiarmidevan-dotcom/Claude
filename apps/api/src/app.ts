@@ -263,6 +263,7 @@ const ACTIONS: Record<string, string> = {
   "PUT /v1/courses/:slug/settings/messaging": "Changed messaging settings",
   "POST /v1/courses/:slug/tee-sheet/delays": "Pushed the tee sheet back",
   "POST /v1/courses/:slug/tee-sheet/delays/:id/undo": "Took back a tee sheet delay",
+  "POST /v1/courses/:slug/feedback": "Sent feedback",
 };
 
 const player = z.object({
@@ -1412,6 +1413,28 @@ export function buildApp(db: Db, opts: { fetchReport?: FetchReport; paymentsFetc
     return reply.status(201).send(await delayTeeSheet(db, await courseFor(req), req.staff?.user.id, body));
   });
   app.post("/v1/courses/:slug/tee-sheet/delays/:id/undo", async (req) => undoDelay(db, await courseFor(req), req.staff?.user.id, idParams.parse(req.params).id));
+
+  // Feedback from the account menu. Anyone signed in can send it; managers read it.
+  app.post("/v1/courses/:slug/feedback", async (req, reply) => {
+    const course = await courseFor(req);
+    const body = z.object({ body: z.string().trim().min(1).max(4000), page: z.string().max(60).nullish() }).parse(req.body);
+    const { rows } = await db.query(
+      `INSERT INTO staff_feedback (course_id, staff_user_id, page, body) VALUES ($1, $2, $3, $4) RETURNING id, page, body, created_at`,
+      [course.id, req.staff?.user.id ?? null, body.page ?? null, body.body],
+    );
+    reply.code(201);
+    const r = rows[0];
+    return { id: r.id, page: r.page, body: r.body, staff: req.staff?.user.name ?? null, at: r.created_at.toISOString() };
+  });
+  app.get("/v1/courses/:slug/feedback", async (req) => {
+    const course = await managedCourseFor(req);
+    const { rows } = await db.query(
+      `SELECT f.id, f.page, f.body, u.name AS staff, f.created_at FROM staff_feedback f LEFT JOIN staff_users u ON u.id = f.staff_user_id
+        WHERE f.course_id = $1 ORDER BY f.created_at DESC LIMIT 200`,
+      [course.id],
+    );
+    return rows.map((r) => ({ id: r.id, page: r.page, body: r.body, staff: r.staff, at: r.created_at.toISOString() }));
+  });
 
   app.put("/v1/courses/:slug/bookings/:id/carts", async (req) => {
     const course = await courseFor(req);
