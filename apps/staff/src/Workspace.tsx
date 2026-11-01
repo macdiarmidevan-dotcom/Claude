@@ -14,7 +14,7 @@ import { GolfersScreen } from "./Golfers";
 import { ScheduleScreen } from "./ScheduleScreen";
 import { ProShopScreen } from "./ProShopScreen";
 import { CardPaymentSettings, CardReaderProvider } from "./CardReader";
-import { AccountsScreen } from "./AccountsScreen";
+import { GiftCards, HouseAccounts } from "./AccountsScreen";
 import { EventsScreen } from "./EventsScreen";
 import { FoodBarScreen } from "./FoodBarScreen";
 import { FOOD_BAR, PRO_SHOP } from "./features";
@@ -26,7 +26,7 @@ import { AccountMenu, FeedbackList } from "./AccountMenu";
 import { HelpCenter } from "./HelpCenter";
 import { colors, type WebPress } from "./theme";
 
-type Section = "tee-sheet" | "radar" | "pricing" | "add-ons" | "import" | "staff" | "customers" | "events" | "food" | "accounts" | "messages" | "reports" | "schedule" | "inventory" | "settings" | "help";
+type Section = "tee-sheet" | "radar" | "pricing" | "add-ons" | "import" | "staff" | "customers" | "events" | "food" | "messages" | "reports" | "schedule" | "inventory" | "settings" | "help";
 
 // Sections with a group fold under one menu item, so the menu stays short.
 type Group = "shop";
@@ -42,7 +42,6 @@ const SECTION_ICON: Record<Section, IconName> = {
   staff: "user",
   customers: "users",
   messages: "message",
-  accounts: "gift",
   inventory: "bag",
   events: "flag",
   food: "coffee",
@@ -59,10 +58,9 @@ const ALL_SECTIONS: { id: Section; label: string; soon?: string; managers?: bool
   { id: "radar", label: "Radar" },
   { id: "import", label: "Sync tee sheet", managers: true },
   { id: "staff", label: "Staff accounts", managers: true },
-  { id: "customers", label: "Golfers", group: "shop" },
-  { id: "messages", label: "Messages", group: "shop" },
-  { id: "accounts", label: "Gift cards & accounts", group: "shop" },
-  { id: "inventory", label: "Pro shop", group: "shop" },
+  { id: "customers", label: "Customers" },
+  { id: "messages", label: "Messages" },
+  { id: "inventory", label: "Pro shop" },
   { id: "pricing", label: "Pricing", starters: false },
   { id: "add-ons", label: "Add-ons", starters: false },
   { id: "events", label: "Leagues & events" },
@@ -215,8 +213,13 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
           </>
         ) : section === "customers" ? (
           <>
-            <Header title="Golfers" onOpenMenu={openMenu} />
-            <GolfersScreen key={golferId ?? "search"} client={client} openId={golferId} onOpenBooking={openBooking} isManager={isManager} />
+            <Header title="Customers" onOpenMenu={openMenu} />
+            <CustomersArea
+              key={golferId ?? "search"}
+              client={client}
+              isManager={isManager}
+              customers={<GolfersScreen client={client} openId={golferId} onOpenBooking={openBooking} isManager={isManager} />}
+            />
           </>
         ) : section === "staff" ? (
           <>
@@ -237,11 +240,6 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
           <>
             <Header title="Food & bar" onOpenMenu={openMenu} />
             {course && <FoodBarScreen client={client} isManager={isManager} timeZone={course.timeZone} />}
-          </>
-        ) : section === "accounts" ? (
-          <>
-            <Header title="Gift cards & accounts" onOpenMenu={openMenu} />
-            <AccountsScreen client={client} isManager={isManager} />
           </>
         ) : section === "messages" ? (
           <>
@@ -451,6 +449,35 @@ function SideMenu(props: {
         })}
       </ScrollView>
       {account}
+    </View>
+  );
+}
+
+/** Customers: golfer accounts, with gift cards and house accounts in tabs beside them. */
+function CustomersArea({ client, isManager, customers }: { client: Client; isManager: boolean; customers: React.ReactNode }) {
+  const [part, setPart] = useState<"customers" | "gift" | "house">("customers");
+  return (
+    <View style={{ flex: 1 }}>
+      <View role="tablist" style={styles.tabs}>
+        {(
+          [
+            ["customers", "Customers"],
+            ["gift", "Gift cards"],
+            ["house", "House accounts"],
+          ] as const
+        ).map(([id, label]) => (
+          <Pressable
+            key={id}
+            role="tab"
+            aria-selected={part === id}
+            onPress={() => setPart(id)}
+            style={({ focused }: WebPress) => [styles.tab, part === id && styles.tabOn, focused && styles.focusRing]}
+          >
+            <Text style={[styles.tabText, part === id && styles.tabTextOn]}>{label}</Text>
+          </Pressable>
+        ))}
+      </View>
+      {part === "customers" ? customers : part === "gift" ? <GiftCards client={client} isManager={isManager} /> : <HouseAccounts client={client} isManager={isManager} />}
     </View>
   );
 }

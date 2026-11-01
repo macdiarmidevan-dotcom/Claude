@@ -9,7 +9,6 @@ import { colors, money, type WebPress } from "./theme";
 // once a month). Anyone can sell a card or take a payment; managers open accounts, set limits
 // and make the monthly statements.
 
-type Tab = "gift" | "house";
 
 const parseCents = (text: string) => {
   const clean = text.replace(/[$,\s]/g, "");
@@ -27,31 +26,10 @@ const lastMonth = () => {
 };
 const KIND_LABEL: Record<GiftCardDetail["history"][number]["kind"], string> = { sold: "Sold", reload: "Added", redeem: "Spent", adjust: "Adjusted", void: "Voided" };
 
-export function AccountsScreen({ client, isManager }: { client: Client; isManager: boolean }) {
-  const [tab, setTab] = useState<Tab>("gift");
-  return (
-    <View style={{ flex: 1 }}>
-      <View role="tablist" style={styles.tabs}>
-        {(
-          [
-            ["gift", "Gift cards"],
-            ["house", "House accounts"],
-          ] as const
-        ).map(([id, label]) => (
-          <Pressable key={id} role="tab" aria-selected={tab === id} onPress={() => setTab(id)} style={({ focused }: WebPress) => [styles.tab, tab === id && styles.tabOn, focused && styles.focus]}>
-            <Text style={[styles.tabText, tab === id && styles.tabTextOn]}>{label}</Text>
-          </Pressable>
-        ))}
-      </View>
-      {tab === "gift" ? <GiftCards client={client} isManager={isManager} /> : <HouseAccounts client={client} isManager={isManager} />}
-    </View>
-  );
-}
-
 // ---------------------------------------------------------------------------------------------
 // Gift cards
 
-function GiftCards({ client, isManager }: { client: Client; isManager: boolean }) {
+export function GiftCards({ client, isManager }: { client: Client; isManager: boolean }) {
   const [list, setList] = useState<GiftCard[]>();
   const [q, setQ] = useState("");
   const [open, setOpen] = useState<string>();
@@ -307,7 +285,7 @@ function GiftCardView({ client, id, isManager, onBack }: { client: Client; id: s
 // ---------------------------------------------------------------------------------------------
 // House accounts
 
-function HouseAccounts({ client, isManager }: { client: Client; isManager: boolean }) {
+export function HouseAccounts({ client, isManager }: { client: Client; isManager: boolean }) {
   const [list, setList] = useState<HouseAccount[]>();
   const [open, setOpen] = useState<string>();
   const [adding, setAdding] = useState(false);

@@ -7,7 +7,7 @@ export const HELP_CATEGORIES: { id: HelpCategory; label: string; blurb: string }
   { id: "tee-sheet", label: "Tee sheet", blurb: "Walk-ins, guests, moving groups, weather" },
   { id: "check-in", label: "Check-in & payments", blurb: "Pro shop, starter, carts, refunds" },
   { id: "golfers", label: "Golfers", blurb: "Accounts, history, messages" },
-  { id: "shop", label: "Gift cards & accounts", blurb: "Gift cards, house accounts, passes" },
+  { id: "shop", label: "Gift cards & pricing", blurb: "Gift cards, house accounts, passes, rates" },
   { id: "events", label: "Leagues & events", blurb: "Weekly leagues, outings, shotguns" },
   { id: "reports", label: "Reports", blurb: "Cash drawer, sales, maintenance" },
   { id: "staff", label: "Staff & schedule", blurb: "Shifts, swaps, staff accounts" },
@@ -191,7 +191,7 @@ export const HELP_ARTICLES: HelpArticle[] = [
     summary: "Create, find and update a golfer.",
     body: [
       "Every golfer who plays needs an account with their name, mobile phone and email. Each phone number and email can only belong to one golfer.",
-      "Create one the first time they check in, or from Golfers & shop › Golfers › New golfer. After that, find them by searching their name, phone or email.",
+      "Create one the first time they check in, or from Customers › New golfer. After that, find them by searching their name, phone or email.",
       "A golfer's page shows the rounds they've played and what they've spent.",
     ],
     keywords: ["customer", "account", "profile", "new golfer", "phone", "email", "history"],
@@ -202,7 +202,7 @@ export const HELP_ARTICLES: HelpArticle[] = [
     title: "Emailing and texting golfers",
     summary: "Send a note to a day's golfers, a league, or everyone.",
     body: [
-      "Open Golfers & shop › Messages. Pick who it's for: everyone booked on a day, a league or outing, all golfers, house account holders, or one golfer.",
+      "Open Messages in the menu. Pick who it's for: everyone booked on a day, a league or outing, all golfers, house account holders, or one golfer.",
       "Choose email, text or both and write the message. Marketing messages skip golfers who opted out; notes about a round they're booked for always go.",
     ],
     keywords: ["email", "text", "sms", "message", "notify", "announcement"],
@@ -214,7 +214,7 @@ export const HELP_ARTICLES: HelpArticle[] = [
     title: "Selling and using gift cards",
     summary: "Load money onto a card the golfer spends later.",
     body: [
-      "Open Golfers & shop › Gift cards & accounts › Gift cards and sell one for any amount. Write the code on the card or hand over the printed receipt.",
+      "Open Customers › Gift cards and sell one for any amount. Write the code on the card or hand over the printed receipt.",
       "At check-in, choose gift card as the payment and enter the code. The balance goes down by what was spent.",
     ],
     keywords: ["gift card", "voucher", "balance", "code"],
@@ -225,7 +225,7 @@ export const HELP_ARTICLES: HelpArticle[] = [
     title: "House accounts",
     summary: "Let members charge now and pay monthly.",
     body: [
-      "Open Gift cards & accounts › House accounts to open an account for a golfer, with an optional limit.",
+      "Open Customers › House accounts to open an account for a golfer, with an optional limit.",
       "At check-in, charge the round to their house account. Statements go out monthly and can be emailed from the account.",
     ],
     keywords: ["member", "charge", "tab", "statement", "billing", "monthly"],
