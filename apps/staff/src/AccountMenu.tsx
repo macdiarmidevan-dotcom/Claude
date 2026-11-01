@@ -239,30 +239,6 @@ export function FeedbackList({ client }: { client: Client }) {
   );
 }
 
-const HELP: { title: string; body: string }[] = [
-  { title: "Checking a group in", body: "Tap their tee time, then Check in. Every golfer needs an account: search their name, or create one on their first visit. Take payment, add any items, and the group shows as checked in at the shop." },
-  { title: "Starting them off the tee", body: "On the starter station, tap a checked-in group and choose Check in at the tee. Pick their carts; riders sign the cart waiver, then send them off." },
-  { title: "Walk-ins and guests", body: "Tap an open tee time and use Add a walk-in. To add guests to a group, slide the golfer's name to the right across the open spots." },
-  { title: "Moving or removing a group", body: "Drag a group to another time to move it. Tap the tee time and use Remove to take off the whole group or some players. A no-show can be undone if they turn up late." },
-  { title: "Weather", body: "Weather delay… above the tee sheet pushes tee times back and can text or email the golfers. Rain checks and refunds are on a checked-in group's tee time." },
-  { title: "Carts and problems", body: "Reports › Maintenance shows every cart and machine. Report a problem there to take a cart out of service until it's fixed." },
-  { title: "Your shifts", body: "My schedule shows your week. Ask a coworker to swap from a shift; a manager approves it." },
-];
-
-export function HelpScreen() {
-  return (
-    <ScrollView contentContainerStyle={{ padding: 16, maxWidth: 720 }}>
-      {HELP.map((h) => (
-        <View key={h.title} style={styles.helpCard}>
-          <Text role="heading" aria-level={2} style={styles.helpTitle}>{h.title}</Text>
-          <Text style={styles.help}>{h.body}</Text>
-        </View>
-      ))}
-      <Text style={[styles.help, { marginTop: 8 }]}>Still stuck? Use Send feedback in the menu under your name, and a manager will see it.</Text>
-    </ScrollView>
-  );
-}
-
 function Button({ label, onPress, primary, disabled }: { label: string; onPress: () => void; primary?: boolean; disabled?: boolean }) {
   return (
     <Pressable
@@ -322,6 +298,4 @@ const styles = StyleSheet.create({
   feedback: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, padding: 10, backgroundColor: colors.card, marginBottom: 8 },
   meta: { color: colors.muted, fontSize: 12 },
   feedbackBody: { color: colors.text, fontSize: 14, lineHeight: 20, marginBottom: 4 },
-  helpCard: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, padding: 14, backgroundColor: colors.card, marginBottom: 10 },
-  helpTitle: { fontSize: 15, fontWeight: "700", color: colors.text, marginBottom: 4 },
 });

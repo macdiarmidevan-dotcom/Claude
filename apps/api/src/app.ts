@@ -86,7 +86,8 @@ import {
 } from "./events.ts";
 import { ACCOUNT_KEYS, exportJournal, getAccountingSettings, journal, saveAccountingSettings } from "./accounting.ts";
 import { delayTeeSheet, listDelays, undoDelay } from "./delays.ts";
-import { emailStatement, getCampaign, getMessageSettings, golferMessages, listCampaigns, previewAudience, saveMessageSettings, sendMessage } from "./messages.ts";
+import { askHelp, claudeHelpAi, createSupportRequest, listSupportRequests, type HelpAi } from "./help.ts";
+import { emailStatement, getCampaign, getMessageSettings, golferMessages, listCampaigns, previewAudience, saveMessageSettings, sendMessage, simulator, type MessageSender } from "./messages.ts";
 import {
   addCarts,
   addWorkOrderNote,
@@ -264,6 +265,7 @@ const ACTIONS: Record<string, string> = {
   "POST /v1/courses/:slug/tee-sheet/delays": "Pushed the tee sheet back",
   "POST /v1/courses/:slug/tee-sheet/delays/:id/undo": "Took back a tee sheet delay",
   "POST /v1/courses/:slug/feedback": "Sent feedback",
+  "POST /v1/courses/:slug/support": "Emailed support",
 };
 
 const player = z.object({
@@ -397,7 +399,18 @@ const paymentBody = z.object({ amountCents: z.number().int().positive(), method:
 const idParams = z.object({ slug: z.string(), id: z.uuid() });
 const slugParams = z.object({ slug: z.string() });
 
-export function buildApp(db: Db, opts: { fetchReport?: FetchReport; paymentsFetch?: PaymentsFetch } = {}): FastifyInstance {
+export function buildApp(
+  db: Db,
+  opts: {
+    fetchReport?: FetchReport;
+    paymentsFetch?: PaymentsFetch;
+    /** The help center's assistant. Defaults to Claude when ANTHROPIC_API_KEY is set; null turns it off. */
+    helpAi?: HelpAi | null;
+    /** Sends support emails. The simulator until an email provider is picked. */
+    supportSender?: MessageSender;
+  } = {},
+): FastifyInstance {
+  const helpAi = opts.helpAi === undefined ? claudeHelpAi() : (opts.helpAi ?? undefined);
   const app = Fastify({ logger: process.env.NODE_ENV !== "test" });
   const processors = providers(opts.paymentsFetch);
 
@@ -1434,6 +1447,38 @@ export function buildApp(db: Db, opts: { fetchReport?: FetchReport; paymentsFetc
       [course.id],
     );
     return rows.map((r) => ({ id: r.id, page: r.page, body: r.body, staff: r.staff, at: r.created_at.toISOString() }));
+  });
+
+  // Help center: the assistant answers from the help articles; Email support saves and sends a request.
+  app.post("/v1/courses/:slug/help/ask", async (req) => {
+    const course = await courseFor(req);
+    const body = z
+      .object({
+        question: z.string().trim().min(1).max(1000),
+        history: z.array(z.object({ role: z.enum(["user", "assistant"]), content: z.string().max(4000) })).max(20).default([]),
+        page: z.string().max(60).nullish(),
+      })
+      .parse(req.body);
+    return askHelp(helpAi, course, { question: body.question, history: body.history, page: body.page ?? null, isManager: req.apiKey!.role === "manager" });
+  });
+  app.post("/v1/courses/:slug/support", async (req, reply) => {
+    const course = await courseFor(req);
+    const body = z
+      .object({
+        topic: z.enum(["question", "problem", "billing", "idea"]),
+        subject: z.string().trim().min(1).max(200),
+        body: z.string().trim().min(1).max(5000),
+        replyTo: z.string().trim().email().max(200),
+        page: z.string().max(60).nullish(),
+      })
+      .parse(req.body);
+    const staff = req.staff ? { id: req.staff.user.id, name: req.staff.user.name } : null;
+    reply.code(201);
+    return createSupportRequest(db, opts.supportSender ?? simulator, course, staff, { ...body, page: body.page ?? null });
+  });
+  app.get("/v1/courses/:slug/support", async (req) => {
+    const course = await courseFor(req);
+    return listSupportRequests(db, course, req.staff?.user.id ?? null, req.apiKey!.role === "manager");
   });
 
   app.put("/v1/courses/:slug/bookings/:id/carts", async (req) => {

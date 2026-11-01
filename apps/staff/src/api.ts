@@ -133,6 +133,35 @@ export interface SheetTeeTime {
 export type DelayReason = "frost" | "fog" | "rain" | "lightning" | "heat" | "course" | "other";
 
 /** A weather delay: every tee time from fromTime on was pushed back by minutes. */
+/** One turn of a help center conversation. */
+export interface HelpTurn {
+  role: "user" | "assistant";
+  content: string;
+}
+
+/** The assistant's reply: "ai" when Claude wrote it, "search" when it's the closest help articles. */
+export interface HelpAnswer {
+  answer: string;
+  articles: { id: string; title: string }[];
+  via: "ai" | "search";
+}
+
+export type SupportTopic = "question" | "problem" | "billing" | "idea";
+
+/** A request sent from the help center's Email support form. */
+export interface SupportRequest {
+  id: string;
+  reference: string;
+  topic: SupportTopic;
+  subject: string;
+  body: string;
+  replyTo: string;
+  page: string | null;
+  status: "sent" | "failed";
+  staff: string | null;
+  at: string;
+}
+
 /** Feedback a staff member sent from the account menu. */
 export interface StaffFeedback {
   id: string;
@@ -965,6 +994,10 @@ function createHttpClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "ap
     undoDelay: (id: string) => request<TeeSheetDelay[]>(`/tee-sheet/delays/${id}/undo`, { method: "POST" }),
     sendFeedback: (input: { body: string; page?: string | null }) => request<StaffFeedback>("/feedback", { method: "POST", body: input }),
     feedback: () => request<StaffFeedback[]>("/feedback"),
+    askHelp: (input: { question: string; history: HelpTurn[]; page?: string | null }) => request<HelpAnswer>("/help/ask", { method: "POST", body: input }),
+    sendSupport: (input: { topic: SupportTopic; subject: string; body: string; replyTo: string; page?: string | null }) =>
+      request<SupportRequest>("/support", { method: "POST", body: input }),
+    supportRequests: () => request<SupportRequest[]>("/support"),
     setTeeTime: (id: string, patch: { status?: "open" | "blocked"; note?: string | null }) =>
       request(`/tee-times/${id}`, { method: "PATCH", body: patch }),
     book: (walkIn: WalkIn) => request(`/bookings`, { method: "POST", body: { ...walkIn, source: "staff" } }),
