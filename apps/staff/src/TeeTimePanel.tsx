@@ -21,17 +21,15 @@ interface Props {
   onOpenGolfer?: (golferId: string) => void;
   onChanged: () => void;
   onClose: () => void;
-  /** The group whose name was tapped on the tee sheet: shown highlighted and scrolled to. */
+  /** The group whose name was tapped on the tee sheet. Only that group shows; with none, the panel is for the open spots. */
   focusBookingId?: string;
   /** The player tapped in that group: 0 is the golfer who booked, then their guests. */
   focusPlayer?: number;
-  /** Back from one group to the whole tee time (every group, walk-ins and the time's note). */
-  onShowAll?: () => void;
   /** Guests dragged onto a group on the tee sheet, waiting for staff to confirm. */
   guestRequest?: { bookingId: string; count: number; key: number };
 }
 
-export function TeeTimePanel({ client, teeTime, sheet, courseHoles, course, station, isManager = false, onOpenGolfer, onChanged, onClose, focusBookingId, focusPlayer, onShowAll, guestRequest }: Props) {
+export function TeeTimePanel({ client, teeTime, sheet, courseHoles, course, station, isManager = false, onOpenGolfer, onChanged, onClose, focusBookingId, focusPlayer, guestRequest }: Props) {
   const price = (p: { players: number; holes: number; resident: boolean; riding: boolean }) => priceRound(course, teeTime.startsAt, p);
   const [error, setError] = useState<string>();
   const [moving, setMoving] = useState<SheetBooking>();
@@ -63,7 +61,7 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, course, stat
   const active = teeTime.bookings.filter((b) => b.status !== "cancelled");
   // Tapping a name opens just that group; tapping an open spot opens the whole time, walk-ins and all.
   const focused = focusBookingId ? active.find((b) => b.id === focusBookingId) : undefined;
-  const shown = focused ? [focused] : active;
+  const shown = focused ? [focused] : [];
   // Players picked in a group, starting with the one whose name was tapped.
   const [picked, setPicked] = useState<{ id: string; players: number[] }>();
   useEffect(() => {
@@ -109,8 +107,7 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, course, stat
 
       {error && <Text style={styles.error} accessibilityLiveRegion="assertive" role="alert">{error}</Text>}
 
-      <Text style={styles.section}>{focused ? "Group" : "Groups"}</Text>
-      {active.length === 0 && <Text style={styles.muted}>No one booked yet.</Text>}
+      {focused && <Text style={styles.section}>Group</Text>}
       {shown.map((b) => (
         <View
           key={b.id}
@@ -357,14 +354,6 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, course, stat
             );
           }}
         />
-      )}
-
-      {focused && (
-        <Pressable accessibilityRole="button" onPress={onShowAll} hitSlop={6} style={{ marginTop: 4, alignSelf: "flex-start" }}>
-          <Text style={styles.link}>
-            {active.length > 1 ? `Show everyone at ${formatTime(teeTime.localTime)}` : `Show the whole ${formatTime(teeTime.localTime)} tee time`}
-          </Text>
-        </Pressable>
       )}
 
       {!focused && teeTime.status === "open" && spotsLeft > 0 && (
@@ -1336,7 +1325,6 @@ const styles = StyleSheet.create({
   player: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, paddingHorizontal: 10, minHeight: 30, justifyContent: "center", backgroundColor: "#fff", maxWidth: 180 },
   playerOn: { backgroundColor: colors.primary, borderColor: colors.primary },
   playerText: { fontSize: 13, color: colors.text, fontWeight: "600" },
-  link: { color: colors.primaryText, fontSize: 14, fontWeight: "600", textDecorationLine: "underline" },
   toggle: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, minWidth: 44, minHeight: 34, paddingHorizontal: 12, alignItems: "center", justifyContent: "center", marginRight: 6, marginBottom: 4 },
   toggleOn: { backgroundColor: colors.primary, borderColor: colors.primary },
 });

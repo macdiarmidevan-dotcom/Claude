@@ -275,7 +275,6 @@ export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu,
       onClose={() => setSelectedId(undefined)}
       focusBookingId={focusId}
       focusPlayer={focusPlayer}
-      onShowAll={() => (setFocusId(undefined), setFocusPlayer(undefined))}
       guestRequest={guestRequest && selected.bookings.some((b) => b.id === guestRequest.bookingId) ? guestRequest : undefined}
     />
   );
@@ -342,6 +341,8 @@ export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu,
                     }}
                     onAddGuests={(bookingId, count) => {
                       setSelectedId(item.teeTime.id);
+                      setFocusId(bookingId);
+                      setFocusPlayer(undefined);
                       setGuestRequest({ bookingId, count, key: Date.now() });
                     }}
                     movingId={moveDrag?.booking.id}
