@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { Modal, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 import { ApiError, createClient, type Course, type DayClose, type Me, type Settings } from "./api";
 import { todayIn } from "./dates";
-import { StationPicker } from "./SetupScreen";
 import { TeeSheetScreen } from "./TeeSheetScreen";
 import { WaiverEditor } from "./WaiverEditor";
 import { Header } from "./Header";
@@ -15,6 +14,8 @@ import { CardPaymentSettings, CardReaderProvider } from "./CardReader";
 import { AccountsScreen } from "./AccountsScreen";
 import { EventsScreen } from "./EventsScreen";
 import { FoodBarScreen } from "./FoodBarScreen";
+import { FOOD_BAR } from "./features";
+import { StationPicker } from "./SetupScreen";
 import { FleetScreen } from "./FleetScreen";
 import { MessagesScreen } from "./MessagesScreen";
 import { ReportsScreen, StartDayForm } from "./ReportsScreen";
@@ -22,22 +23,27 @@ import { colors, type WebPress } from "./theme";
 
 type Section = "tee-sheet" | "import" | "staff" | "customers" | "events" | "food" | "accounts" | "fleet" | "messages" | "reports" | "schedule" | "inventory" | "settings";
 
+// Sections with a group fold under one menu item, so the menu stays short.
+type Group = "shop";
+const GROUP_LABEL: Record<Group, string> = { shop: "Golfers & shop" };
+
 // starters: false hides a section on the starter station (managers still see it).
-const SECTIONS: { id: Section; label: string; soon?: string; managers?: boolean; starters?: false }[] = [
+const ALL_SECTIONS: { id: Section; label: string; soon?: string; managers?: boolean; group?: Group; starters?: false }[] = [
   { id: "tee-sheet", label: "Tee sheet" },
   { id: "import", label: "Sync tee sheet", managers: true },
   { id: "staff", label: "Staff accounts", managers: true },
-  { id: "customers", label: "Golfers" },
+  { id: "customers", label: "Golfers", group: "shop" },
+  { id: "messages", label: "Messages", group: "shop" },
+  { id: "accounts", label: "Gift cards & accounts", group: "shop" },
+  { id: "inventory", label: "Pro shop", group: "shop" },
   { id: "events", label: "Leagues & events" },
   { id: "food", label: "Food & bar" },
-  { id: "accounts", label: "Gift cards & accounts" },
   { id: "fleet", label: "Carts & maintenance" },
-  { id: "messages", label: "Messages" },
   { id: "reports", label: "Reports", starters: false },
   { id: "schedule", label: "Staff schedule" },
-  { id: "inventory", label: "Pro shop" },
   { id: "settings", label: "Settings" },
 ];
+const SECTIONS = ALL_SECTIONS.filter((s) => FOOD_BAR || s.id !== "food");
 
 // Below this width the menu folds away behind a button, as on phones and iPads held upright.
 const RAIL_BREAKPOINT = 1024;
@@ -210,10 +216,19 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
             <Header title="Settings" onOpenMenu={openMenu} />
             <ScrollView contentContainerStyle={styles.content}>
               <Text style={styles.label}>This device is for</Text>
-              <View style={{ maxWidth: 360 }}>
-                <StationPicker value={settings.station} onChange={(station) => onChangeSettings({ ...settings, station })} />
-              </View>
-              <Text style={styles.help}>The pro shop takes payment and checks groups in. The starter sends them off the first tee and assigns carts.</Text>
+              {isManager ? (
+                <View style={{ maxWidth: 360 }}>
+                  <StationPicker value={settings.station} onChange={(station) => onChangeSettings({ ...settings, station })} />
+                </View>
+              ) : (
+                <Text style={[styles.help, { fontWeight: "700", color: colors.text }]}>{STATION_LABEL[settings.station]}</Text>
+              )}
+              <Text style={styles.help}>
+                The pro shop takes payment and checks groups in. The starter sends them off the first tee and assigns carts.
+                {isManager
+                  ? " Managers can switch between the two at any time."
+                  : ` This was picked when you signed in; to use this device for the ${settings.station === "proshop" ? "starter" : "pro shop"}, sign out and pick it on the sign-in page.`}
+              </Text>
               <Text style={[styles.label, { marginTop: 24 }]}>Card payments</Text>
               <CardPaymentSettings
                 client={client}
@@ -281,6 +296,35 @@ function SideMenu(props: {
   onClose?: () => void;
 }) {
   const { courseName, section, onGo, settings, onChangeSettings, isManager, me, onSignOut, onClose } = props;
+  const currentGroup = SECTIONS.find((s) => s.id === section)?.group;
+  const [openGroup, setOpenGroup] = useState<Group | undefined>(currentGroup);
+  // Going to a section in a group (from a golfer link, say) opens that group.
+  useEffect(() => {
+    if (currentGroup) setOpenGroup(currentGroup);
+  }, [currentGroup]);
+  const visible = SECTIONS.filter((s) => (!s.managers || isManager) && (s.starters !== false || isManager || settings.station !== "starter"));
+  const item = (s: (typeof SECTIONS)[number], nested?: boolean) => {
+    const on = s.id === section;
+    return (
+      <Pressable
+        key={s.id}
+        accessibilityRole="link"
+        accessibilityState={{ selected: on }}
+        aria-current={on ? "page" : undefined}
+        onPress={() => onGo(s.id)}
+        style={({ hovered, focused }: WebPress) => [
+          styles.navItem,
+          nested && { paddingLeft: 28 },
+          on && styles.navItemOn,
+          hovered && !on && { backgroundColor: "#1d3826" },
+          focused && styles.focusRing,
+        ]}
+      >
+        <Text style={[styles.navText, on && { fontWeight: "700", color: "#fff" }]}>{s.label}</Text>
+        {s.soon && <Text style={styles.soonTag}>Soon</Text>}
+      </Pressable>
+    );
+  };
   return (
     <View role="navigation" aria-label="Main menu" style={styles.rail}>
       <View style={styles.railTop}>
@@ -294,29 +338,35 @@ function SideMenu(props: {
           </Pressable>
         )}
       </View>
-      <View style={{ paddingHorizontal: 12, marginBottom: 6 }}>
-        <StationPicker dark value={settings.station} onChange={(station) => onChangeSettings({ ...settings, station })} />
+      <View style={{ paddingHorizontal: 12, marginBottom: 12 }}>
+        {/* Staff stay on the station they signed in to; managers can switch. */}
+        {isManager ? (
+          <StationPicker dark value={settings.station} onChange={(station) => onChangeSettings({ ...settings, station })} />
+        ) : (
+          <Text style={styles.stationTag}>{STATION_LABEL[settings.station]}</Text>
+        )}
       </View>
       <ScrollView style={{ flex: 1 }}>
-        {SECTIONS.filter((s) => (!s.managers || isManager) && (s.starters !== false || isManager || settings.station !== "starter")).map((s) => {
-          const on = s.id === section;
+        {visible.map((s, i) => {
+          if (!s.group) return item(s);
+          // A group shows once, where its first section is.
+          if (visible[i - 1]?.group === s.group) return null;
+          const group = s.group;
+          const open = openGroup === group;
+          const holdsCurrent = currentGroup === group;
           return (
-            <Pressable
-              key={s.id}
-              accessibilityRole="link"
-              accessibilityState={{ selected: on }}
-              aria-current={on ? "page" : undefined}
-              onPress={() => onGo(s.id)}
-              style={({ hovered, focused }: WebPress) => [
-                styles.navItem,
-                on && styles.navItemOn,
-                hovered && !on && { backgroundColor: "#1d3826" },
-                focused && styles.focusRing,
-              ]}
-            >
-              <Text style={[styles.navText, on && { fontWeight: "700", color: "#fff" }]}>{s.label}</Text>
-              {s.soon && <Text style={styles.soonTag}>Soon</Text>}
-            </Pressable>
+            <View key={group}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ expanded: open }}
+                onPress={() => setOpenGroup(open ? undefined : group)}
+                style={({ hovered, focused }: WebPress) => [styles.navItem, hovered && { backgroundColor: "#1d3826" }, focused && styles.focusRing]}
+              >
+                <Text style={[styles.navText, holdsCurrent && !open && { fontWeight: "700", color: "#fff" }]}>{GROUP_LABEL[group]}</Text>
+                <Text style={styles.groupArrow}>{open ? "▾" : "▸"}</Text>
+              </Pressable>
+              {open && visible.filter((x) => x.group === group).map((x) => item(x, true))}
+            </View>
           );
         })}
       </ScrollView>
@@ -333,7 +383,10 @@ function SideMenu(props: {
   );
 }
 
+const STATION_LABEL: Record<Settings["station"], string> = { proshop: "Pro shop", starter: "Starter" };
+
 const styles = StyleSheet.create({
+  stationTag: { color: "#fff", backgroundColor: colors.primary, borderRadius: 3, paddingVertical: 8, fontSize: 14, fontWeight: "600", textAlign: "center" },
   page: { flex: 1, flexDirection: "row", backgroundColor: colors.bg },
   main: { flex: 1, minWidth: 0 },
   rail: { width: 240, backgroundColor: colors.rail, paddingTop: 16, height: "100%" },
@@ -344,6 +397,7 @@ const styles = StyleSheet.create({
   navItemOn: { backgroundColor: colors.railActive },
   navIcon: { color: colors.railText, fontSize: 14, width: 20, textAlign: "center" },
   navText: { color: colors.railText, fontSize: 14, flex: 1 },
+  groupArrow: { color: colors.railMuted, fontSize: 12 },
   soonTag: { color: colors.railMuted, fontSize: 11, fontWeight: "600" },
   railFoot: { borderTopWidth: 1, borderColor: "#2a4433", padding: 16, flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   railMuted: { color: colors.railMuted, fontSize: 12 },
