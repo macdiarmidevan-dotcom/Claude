@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import type { Client, Course, Me, StaffFeedback, Station } from "./api";
+import { ChangePassword } from "./StaffScreen";
 import { colors, type WebPress } from "./theme";
 
-// The account menu: tapping your name at the foot of the sidebar opens settings, help, your
-// schedule, feedback, the course you're signed in to, and log out.
+// The account menu: tapping your name at the foot of the sidebar opens settings, your schedule,
+// your account, feedback, the help center, and log out.
 
 export type AccountAction = "settings" | "help" | "schedule";
 
@@ -29,17 +30,17 @@ export function AccountMenu({
   onSignOut: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [dialog, setDialog] = useState<"feedback" | "location">();
+  const [dialog, setDialog] = useState<"feedback" | "account">();
   const pick = (fn: () => void) => () => {
     setOpen(false);
     fn();
   };
   const items: { label: string; onPress: () => void }[] = [
     { label: "Settings", onPress: pick(() => onGo("settings")) },
-    { label: "Help", onPress: pick(() => onGo("help")) },
     { label: "My schedule", onPress: pick(() => onGo("schedule")) },
+    { label: "My account", onPress: pick(() => setDialog("account")) },
     { label: "Send feedback", onPress: pick(() => setDialog("feedback")) },
-    { label: "Location", onPress: pick(() => setDialog("location")) },
+    { label: "Help center", onPress: pick(() => onGo("help")) },
     { label: "Log out", onPress: pick(onSignOut) },
   ];
 
@@ -92,7 +93,7 @@ export function AccountMenu({
             {dialog === "feedback" ? (
               <FeedbackForm client={client} page={page} onClose={() => setDialog(undefined)} />
             ) : (
-              <LocationInfo course={course} station={station} onClose={() => setDialog(undefined)} onSignOut={() => (setDialog(undefined), onSignOut())} />
+              <MyAccount client={client} me={me} isManager={isManager} course={course} station={station} onClose={() => setDialog(undefined)} />
             )}
           </View>
         </View>
@@ -165,22 +166,51 @@ function FeedbackForm({ client, page, onClose }: { client: Client; page: string;
 const zoneName = (timeZone: string) =>
   new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: "long" }).formatToParts(new Date()).find((p) => p.type === "timeZoneName")?.value ?? timeZone;
 
-function LocationInfo({ course, station, onClose, onSignOut }: { course?: Course; station: Station; onClose: () => void; onSignOut: () => void }) {
+/** Who you're signed in as, where, and a place to change your password. */
+function MyAccount({
+  client,
+  me,
+  isManager,
+  course,
+  station,
+  onClose,
+}: {
+  client: Client;
+  me?: Me;
+  isManager: boolean;
+  course?: Course;
+  station: Station;
+  onClose: () => void;
+}) {
+  const user = me?.user;
+  const rows: [string, string][] = [
+    ["Name", user?.name ?? "Shared device"],
+    ...(user ? ([["Email", user.email]] as [string, string][]) : []),
+    ["Role", (isManager ? "Manager" : "Staff") + (user?.employeeType ? ` · ${user.employeeType.name}` : "")],
+    ["Course", course ? `${course.name} · ${zoneName(course.timeZone)}` : "Loading…"],
+    ["This device", station === "proshop" ? "Pro shop" : "Starter"],
+  ];
   return (
-    <>
-      <Text style={styles.title}>Location</Text>
-      <Text style={styles.locationName}>{course?.name ?? "Loading…"}</Text>
-      {course && (
-        <Text style={styles.help}>
-          {course.holes} holes · {zoneName(course.timeZone)} · this device is the {station === "proshop" ? "pro shop" : "starter"}
-        </Text>
+    <ScrollView style={{ maxHeight: 560 }}>
+      <Text style={styles.title}>My account</Text>
+      {rows.map(([k, v]) => (
+        <View key={k} style={styles.row}>
+          <Text style={styles.rowLabel}>{k}</Text>
+          <Text style={styles.rowValue} numberOfLines={2}>{v}</Text>
+        </View>
+      ))}
+      {user ? (
+        <>
+          <Text style={[styles.locationName, { marginTop: 16, marginBottom: 8 }]}>Change password</Text>
+          <ChangePassword client={client} />
+        </>
+      ) : (
+        <Text style={[styles.help, { marginTop: 10 }]}>This device signs in with a shared key. Sign in with your own email to change a password.</Text>
       )}
-      <Text style={[styles.help, { marginTop: 10 }]}>Your sign-in is for this course. To work at another location, log out and sign in there.</Text>
       <View style={styles.actions}>
         <Button label="Done" primary onPress={onClose} />
-        <Button label="Log out" onPress={onSignOut} />
       </View>
-    </>
+    </ScrollView>
   );
 }
 
@@ -277,6 +307,9 @@ const styles = StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)", alignItems: "center", justifyContent: "center", padding: 16 },
   dialog: { width: "100%", maxWidth: 440, backgroundColor: colors.card, borderRadius: 3, padding: 18 },
   title: { fontSize: 17, fontWeight: "700", color: colors.text, marginBottom: 6 },
+  row: { flexDirection: "row", gap: 12, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: colors.border },
+  rowLabel: { width: 96, color: colors.muted, fontSize: 14 },
+  rowValue: { flex: 1, color: colors.text, fontSize: 14, fontWeight: "600" },
   locationName: { fontSize: 15, fontWeight: "700", color: colors.text, marginBottom: 2 },
   help: { color: colors.muted, fontSize: 14, lineHeight: 21 },
   input: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, padding: 10, fontSize: 14, color: colors.text, backgroundColor: "#fff", marginTop: 10 },

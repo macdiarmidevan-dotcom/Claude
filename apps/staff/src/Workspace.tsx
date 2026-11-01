@@ -43,7 +43,7 @@ const ALL_SECTIONS: { id: Section; label: string; soon?: string; managers?: bool
   { id: "reports", label: "Reports", starters: false },
   { id: "schedule", label: "Staff schedule" },
   { id: "settings", label: "Settings", inMenu: false },
-  { id: "help", label: "Help", inMenu: false },
+  { id: "help", label: "Help center", inMenu: false },
 ];
 const SECTIONS = ALL_SECTIONS.filter((s) => (FOOD_BAR || s.id !== "food") && (PRO_SHOP || s.id !== "inventory"));
 
@@ -228,7 +228,7 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
           </>
         ) : section === "help" ? (
           <>
-            <Header title="Help" onOpenMenu={openMenu} />
+            <Header title="Help center" onOpenMenu={openMenu} />
             <HelpScreen />
           </>
         ) : section === "settings" ? (
