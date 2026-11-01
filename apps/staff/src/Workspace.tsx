@@ -23,7 +23,7 @@ import { StationPicker } from "./SetupScreen";
 import { FleetScreen } from "./FleetScreen";
 import { MessagesScreen } from "./MessagesScreen";
 import { ReportsScreen, StartDayForm } from "./ReportsScreen";
-import { DEFAULT_RANGE, LaborReportScreen, OverviewReport, type ReportRange } from "./ManagerReports";
+import { BalancesReportScreen, DEFAULT_RANGE, InventoryReportScreen, LaborReportScreen, OverviewReport, type ReportRange } from "./ManagerReports";
 import { AccountMenu, FeedbackList } from "./AccountMenu";
 import { HelpCenter } from "./HelpCenter";
 import { colors, type WebPress } from "./theme";
@@ -515,7 +515,7 @@ function CustomersArea({ client, isManager, customers }: { client: Client; isMan
 
 /** Reports: the money side (cash drawer and sales) and maintenance (carts, equipment, work orders). */
 function ReportsArea({ client, me, isManager, timeZone, onOpenStaff }: { client: Client; me: Me | undefined; isManager: boolean; timeZone: string; onOpenStaff: () => void }) {
-  const [part, setPart] = useState<"revenue" | "rounds" | "labor" | "sales" | "maintenance">(isManager ? "revenue" : "sales");
+  const [part, setPart] = useState<"revenue" | "rounds" | "labor" | "inventory" | "balances" | "sales" | "maintenance">(isManager ? "revenue" : "sales");
   const [range, setRange] = useState<ReportRange>(DEFAULT_RANGE);
   return (
     <View style={{ flex: 1 }}>
@@ -527,6 +527,8 @@ function ReportsArea({ client, me, isManager, timeZone, onOpenStaff }: { client:
                   ["revenue", "Revenue"],
                   ["rounds", "Rounds & tee sheet"],
                   ["labor", "Labor"],
+                  ["inventory", "Inventory"],
+                  ["balances", "Payments & balances"],
                 ] as const)
               : []),
             ["sales", "Cash & sales"],
@@ -548,6 +550,10 @@ function ReportsArea({ client, me, isManager, timeZone, onOpenStaff }: { client:
         <OverviewReport client={client} timeZone={timeZone} view={part} range={range} onRange={setRange} />
       ) : part === "labor" ? (
         <LaborReportScreen client={client} timeZone={timeZone} range={range} onRange={setRange} onOpenStaff={onOpenStaff} />
+      ) : part === "inventory" ? (
+        <InventoryReportScreen client={client} timeZone={timeZone} range={range} onRange={setRange} />
+      ) : part === "balances" ? (
+        <BalancesReportScreen client={client} timeZone={timeZone} range={range} onRange={setRange} />
       ) : part === "sales" ? <ReportsScreen client={client} me={me} timeZone={timeZone} /> : <FleetScreen client={client} isManager={isManager} meId={me?.user?.id} />}
     </View>
   );

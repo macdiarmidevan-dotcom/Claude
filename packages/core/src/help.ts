@@ -341,6 +341,32 @@ export const HELP_ARTICLES: HelpArticle[] = [
     managersOnly: true,
   },
   {
+    id: "inventory-report",
+    category: "reports",
+    title: "Pro shop inventory report",
+    summary: "What sold, at what margin, and what to reorder.",
+    body: [
+      "Reports › Inventory (managers) shows pro shop sales and gross margin for the dates you pick, sales by category, best sellers, stock on hand at cost and at retail, and the reorder list.",
+      "Margin uses each product's cost as it is today, and leaves out items with no cost set, so add costs in Pro shop › Products to see the true margin.",
+      "Slow movers are products that sat on the shelf the whole period and never sold. Shrink adds up stock counts and adjustments: a negative number is stock that went missing or was damaged.",
+    ],
+    keywords: ["inventory", "stock", "margin", "reorder", "slow movers", "shrink", "pro shop", "cost"],
+    managersOnly: true,
+  },
+  {
+    id: "balances-report",
+    category: "reports",
+    title: "Payments and balances report",
+    summary: "Money taken by tender, and what the course holds or is owed.",
+    body: [
+      "Reports › Payments & balances (managers) lists the money taken in the period by how it was paid, then what the course holds for golfers right now: gift card balances, open rain checks, punch card rounds left and loyalty points, valued in dollars. Your accountant carries those as liabilities.",
+      "House accounts shows what members owe, what was charged and paid in the period, who is over their limit and the largest balances.",
+      "Punch cards are valued at what each round cost on the card. Rain checks past their expiry are shown apart, as unused.",
+    ],
+    keywords: ["payments", "liabilities", "gift card", "house account", "owed", "balances", "rain check", "punch card", "loyalty", "accountant"],
+    managersOnly: true,
+  },
+  {
     id: "maintenance",
     category: "reports",
     title: "Carts, equipment and work orders",

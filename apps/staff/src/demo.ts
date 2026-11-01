@@ -12,6 +12,8 @@ import {
   type EmployeeType,
   type DayClose,
   type LaborReport,
+  type InventoryReport,
+  type BalancesReport,
   type Pay,
   type Overview,
   type ReportCompare,
@@ -1565,6 +1567,21 @@ export function createDemoClient(apiKey: string): Client {
     for (let i = 0; i < key.length; i++) h = Math.imul(h ^ key.charCodeAt(i), 16777619);
     return ((h >>> 0) % 10000) / 10000;
   };
+  // How often a golfer buys from each category, for the made-up days before today.
+  const BUY_RATE: Record<string, number> = { Balls: 0.05, Gloves: 0.03, Apparel: 0.015, Accessories: 0.06, Drinks: 0.4, Beer: 0.3, Cocktails: 0.04, Grill: 0.25, Range: 0.06 };
+  function shopDay(date: string, rounds: number) {
+    seedProducts();
+    const out: { product: Product; units: number }[] = [];
+    for (const p of products) {
+      if (!p.active) continue;
+      const inCategory = products.filter((x) => x.category === p.category && x.active).length;
+      // The umbrella almost never sells, so it shows up as a slow mover.
+      const pull = p.sku === "UMB" ? 0.02 : 0.4 + noise(`mix${p.id}`) * 1.2;
+      const units = Math.round(((rounds * (BUY_RATE[p.category] ?? 0.02)) / inCategory) * pull * (0.6 + noise(`u${p.id}${date}`) * 0.8));
+      if (units > 0) out.push({ product: p, units });
+    }
+    return out;
+  }
   type Group = { date: string; dow: number; hour: number; startsAt: string; localTime: string; players: number; holes: number; riding: boolean; noShow: boolean; resident: boolean; ageGroup: "adult" | "senior" | "junior"; source: string; played: boolean };
   const quoteCache = new Map<string, { lines: { rateId: string; name: string; priceCents: number }[] }>();
   function quoteGroup(g: Group) {
@@ -1633,8 +1650,10 @@ export function createDemoClient(apiKey: string): Client {
         rounds += players;
       }
       const m = money(date);
-      m.proShopCents = Math.round(rounds * (450 + noise(`s${date}`) * 300));
-      m.foodBevCents = Math.round(rounds * (650 + noise(`f${date}`) * 400));
+      for (const s of shopDay(date, rounds)) {
+        if (s.product.foodBev) m.foodBevCents += s.units * s.product.priceCents;
+        else m.proShopCents += s.units * s.product.priceCents;
+      }
       m.eventsCents = weekend && SEASON[month] > 0.4 && noise(`e${date}`) < 0.35 ? 60000 + Math.round(noise(`ev${date}`) * 120000) : 0;
     }
     // Sales and league payments on the demo's own days.
@@ -1832,6 +1851,157 @@ export function createDemoClient(apiKey: string): Client {
       days: [...days.values()].map((d) => ({ ...d, hours: r1(d.hours), costCents: Math.round(d.costCents), laborPct: pct(d.costCents, d.revenueCents) })),
       missingPay: list.filter((p) => p.missingPay).length,
       openPunches: punches.filter((p) => !p.clockOut).length,
+    };
+  }
+
+  // Pro shop inventory. Sales today come from the register; earlier days are the same made-up
+  // sales the revenue report uses. Cost is each product's cost now.
+  function demoInventory(from: string, to: string): InventoryReport {
+    managerOnly();
+    seedProducts();
+    if (to < from) throw new ApiError(400, "invalid_range", "from must be on or before to");
+    const today = todayIn(riverBend.timeZone);
+    const dayOfIso = (iso: string) => new Intl.DateTimeFormat("en-CA", { timeZone: riverBend.timeZone }).format(new Date(iso));
+    const sold = new Map<string, { productId: string | null; name: string; category: string; foodBev: boolean; units: number; revenueCents: number; unitCost: number | null }>();
+    const add = (key: string, productId: string | null, name: string, category: string, foodBev: boolean, units: number, cents: number, unitCost: number | null) => {
+      const row = sold.get(key) ?? { productId, name, category, foodBev, units: 0, revenueCents: 0, unitCost };
+      row.units += units;
+      row.revenueCents += cents;
+      sold.set(key, row);
+    };
+    // Rounds per made-up day, the same ones the revenue report counts.
+    const past = from < today ? overviewPeriod(from, to < today ? to : addDays(today, -1)) : null;
+    const roundsOn = new Map<string, number>();
+    if (past) {
+      // overviewPeriod doesn't return rounds per day, so work them back out of green fees at the average.
+      const avg = past.yield.avgGreenFeeCents || 1;
+      for (const d of past.days) roundsOn.set(d.date, Math.round(d.greenFeesCents / avg));
+    }
+    for (const [date, rounds] of roundsOn)
+      for (const s of shopDay(date, rounds)) add(s.product.id, s.product.id, s.product.name, s.product.category, s.product.foodBev, s.units, s.units * s.product.priceCents, s.product.costCents);
+    for (const sale of sales) {
+      const d = dayOfIso(sale.at);
+      if (sale.status !== "completed" || d < from || d > to) continue;
+      for (const l of sale.lines) {
+        const p = l.productId ? products.find((x) => x.id === l.productId) : undefined;
+        add(l.productId ?? `one-off:${l.description}`, l.productId ?? null, l.description, l.category, !!l.foodBev, l.quantity, l.totalCents, p?.costCents ?? null);
+      }
+    }
+    const pct = (a: number, b: number) => (b ? Math.round((a / b) * 1000) / 10 : null);
+    const items = [...sold.values()]
+      .map((s) => {
+        const costCents = s.unitCost == null || (s.unitCost === 0 && s.category === "Range") ? null : s.unitCost * s.units;
+        return { productId: s.productId, name: s.name, category: s.category, foodBev: s.foodBev, units: s.units, revenueCents: s.revenueCents, costCents, marginCents: costCents == null ? null : s.revenueCents - costCents, marginPct: costCents == null ? null : pct(s.revenueCents - costCents, s.revenueCents) };
+      })
+      .sort((a, b) => b.revenueCents - a.revenueCents);
+    const costed = items.filter((i) => i.costCents != null);
+    const revenueCents = items.reduce((t, i) => t + i.revenueCents, 0);
+    const costedRevenue = costed.reduce((t, i) => t + i.revenueCents, 0);
+    const costCents = costed.reduce((t, i) => t + i.costCents!, 0);
+    const cats = new Map<string, { category: string; foodBev: boolean; units: number; revenueCents: number; cost: number; costedRevenue: number }>();
+    for (const i of items) {
+      const c = cats.get(i.category) ?? { category: i.category, foodBev: i.foodBev, units: 0, revenueCents: 0, cost: 0, costedRevenue: 0 };
+      c.units += i.units;
+      c.revenueCents += i.revenueCents;
+      if (i.costCents != null) {
+        c.cost += i.costCents;
+        c.costedRevenue += i.revenueCents;
+      }
+      cats.set(i.category, c);
+    }
+    const tracked = products.filter((p) => p.active && p.trackStock);
+    const onHand = tracked.filter((p) => p.stock > 0);
+    const units = new Map(items.filter((i) => i.productId).map((i) => [i.productId!, i.units]));
+    const shrink = new Map<string, { units: number; costCents: number }>();
+    for (const p of tracked)
+      for (const m of movements.get(p.id) ?? []) {
+        const d = dayOfIso(m.at);
+        if ((m.reason !== "count" && m.reason !== "adjust") || d < from || d > to) continue;
+        const s = shrink.get(p.id) ?? { units: 0, costCents: 0 };
+        s.units += m.change;
+        s.costCents += m.change * (p.costCents ?? 0);
+        shrink.set(p.id, s);
+      }
+    return {
+      from,
+      to,
+      sales: { revenueCents, units: items.reduce((t, i) => t + i.units, 0), costCents, marginCents: costedRevenue - costCents, marginPct: pct(costedRevenue - costCents, costedRevenue), uncostedRevenueCents: revenueCents - costedRevenue },
+      categories: [...cats.values()].map((c) => ({ category: c.category, foodBev: c.foodBev, units: c.units, revenueCents: c.revenueCents, marginPct: pct(c.costedRevenue - c.cost, c.costedRevenue) })).sort((a, b) => b.revenueCents - a.revenueCents),
+      items,
+      stock: {
+        products: tracked.length,
+        units: onHand.reduce((t, p) => t + p.stock, 0),
+        costCents: onHand.reduce((t, p) => t + p.stock * (p.costCents ?? 0), 0),
+        retailCents: onHand.reduce((t, p) => t + p.stock * p.priceCents, 0),
+        missingCost: onHand.filter((p) => p.costCents == null).length,
+      },
+      reorder: tracked
+        .filter((p) => p.stock <= p.reorderLevel || p.stock <= 0)
+        .map((p) => ({ id: p.id, name: p.name, sku: p.sku, category: p.category, stock: p.stock, reorderLevel: p.reorderLevel, soldInPeriod: units.get(p.id) ?? 0 }))
+        .sort((a, b) => a.stock - b.stock || b.soldInPeriod - a.soldInPeriod),
+      slowMovers: onHand
+        .filter((p) => !units.has(p.id))
+        .map((p) => ({ id: p.id, name: p.name, category: p.category, stock: p.stock, costCents: p.costCents == null ? null : p.stock * p.costCents, retailCents: p.stock * p.priceCents }))
+        .sort((a, b) => b.retailCents - a.retailCents),
+      shrink: tracked
+        .filter((p) => shrink.get(p.id)?.units)
+        .map((p) => ({ id: p.id, name: p.name, ...shrink.get(p.id)! }))
+        .sort((a, b) => a.costCents - b.costCents),
+    };
+  }
+
+  function demoBalances(from: string, to: string): BalancesReport {
+    const r = demoReport(from, to);
+    const dayOfIso = (iso: string) => new Intl.DateTimeFormat("en-CA", { timeZone: riverBend.timeZone }).format(new Date(iso));
+    const inRange = (iso: string) => dayOfIso(iso) >= from && dayOfIso(iso) <= to;
+    const now = Date.now();
+    const live = giftCards.filter((g) => g.status === "active");
+    const history = giftCards.flatMap((g) => g.history).filter((h) => inRange(h.at));
+    const openRain = rainChecks.filter((c) => c.status === "active" && c.remainingCents > 0);
+    const unexpired = (iso: string | null) => !iso || Date.parse(iso) > now;
+    const punch = golferPasses.filter((p) => p.status === "active" && p.kind === "punch_card" && p.roundsTotal != null && p.roundsTotal > p.roundsUsed && unexpired(p.expiresAt));
+    const priceOf = (name: string) => passTypes.find((t) => t.name === name && t.rounds);
+    const punchCents = punch.reduce((t, p) => {
+      const type = priceOf(p.name);
+      return t + (type ? Math.round(((p.roundsTotal! - p.roundsUsed) * type.priceCents) / type.rounds!) : 0);
+    }, 0);
+    const pointTotal = [...points.values()].reduce((t, n) => t + n, 0);
+    const loyaltyCents = Math.round((pointTotal / loyalty.rewardPoints) * loyalty.rewardCents);
+    const giftCents = live.reduce((t, g) => t + g.balanceCents, 0);
+    const rainCents = openRain.filter((c) => unexpired(c.expiresAt)).reduce((t, c) => t + c.remainingCents, 0);
+    const balances = houseAccounts.filter((a) => a.status !== "closed").map((a) => ({ a, balance: balanceOf(a) }));
+    const owed = balances.filter((b) => b.balance > 0);
+    const entries = houseAccounts.flatMap((a) => a.entries).filter((e) => inRange(e.at));
+    return {
+      from,
+      to,
+      collected: r.collected,
+      other: r.other,
+      held: {
+        giftCards: {
+          cards: live.filter((g) => g.balanceCents > 0).length,
+          cents: giftCents,
+          soldInPeriodCents: history.filter((h) => h.kind === "sold" || h.kind === "reload").reduce((t, h) => t + h.changeCents, 0),
+          redeemedInPeriodCents: -history.filter((h) => h.kind === "redeem").reduce((t, h) => t + h.changeCents, 0),
+        },
+        rainChecks: { open: openRain.filter((c) => unexpired(c.expiresAt)).length, cents: rainCents, expiredCents: openRain.filter((c) => !unexpired(c.expiresAt)).reduce((t, c) => t + c.remainingCents, 0) },
+        punchCards: { cards: punch.length, roundsLeft: punch.reduce((t, p) => t + p.roundsTotal! - p.roundsUsed, 0), cents: punchCents, unpriced: punch.filter((p) => !priceOf(p.name)).length },
+        seasonPasses: { active: golferPasses.filter((p) => p.status === "active" && p.kind === "season_pass" && unexpired(p.expiresAt)).length },
+        loyalty: { golfers: [...points.values()].filter((n) => n > 0).length, points: pointTotal, cents: loyaltyCents },
+        totalCents: giftCents + rainCents + punchCents + loyaltyCents,
+      },
+      receivable: {
+        accounts: owed.length,
+        cents: owed.reduce((t, b) => t + b.balance, 0),
+        creditCents: -balances.filter((b) => b.balance < 0).reduce((t, b) => t + b.balance, 0),
+        chargedInPeriodCents: entries.filter((e) => e.kind === "charge").reduce((t, e) => t + e.amountCents, 0),
+        paidInPeriodCents: -entries.filter((e) => e.kind === "payment").reduce((t, e) => t + e.amountCents, 0),
+        overLimit: owed.filter((b) => b.a.creditLimitCents != null && b.balance > b.a.creditLimitCents).length,
+        largest: owed
+          .sort((x, y) => y.balance - x.balance)
+          .slice(0, 10)
+          .map((b) => ({ id: b.a.id, name: golfers.find((g) => g.id === b.a.golferId)?.name ?? "Golfer", balanceCents: b.balance, limitCents: b.a.creditLimitCents, status: b.a.status })),
+      },
     };
   }
 
@@ -2407,6 +2577,8 @@ export function createDemoClient(apiKey: string): Client {
     report: (from: string, to: string) => reply(() => demoReport(from, to)),
     overview: (from: string, to: string, compare: ReportCompare = "previous") => reply(() => demoOverview(from, to, compare)),
     labor: (from: string, to: string) => reply(() => demoLabor(from, to)),
+    inventoryReport: (from: string, to: string) => reply(() => demoInventory(from, to)),
+    balancesReport: (from: string, to: string) => reply(() => demoBalances(from, to)),
     dayClose: (date: string) => reply(() => demoClose(date)),
     delays: (date: string) => reply(() => delays.filter((d) => d.date === date).map(({ fromAt: _, ...d }) => d)),
     sendFeedback: (input: { body: string; page?: string | null }) =>

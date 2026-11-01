@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import type { Client, Departments, LaborReport, Overview, ReportCompare, RoundsSummary } from "./api";
+import type { BalancesReport, Client, Departments, InventoryReport, LaborReport, MoneyMethod, Overview, ReportCompare, RoundsSummary } from "./api";
 import { addDays, todayIn } from "./dates";
 import { colors, radius, type WebPress } from "./theme";
 
@@ -311,6 +311,256 @@ function LaborView({ r, onOpenStaff }: { r: LaborReport; onOpenStaff?: () => voi
       </View>
     </>
   );
+}
+
+/** Loads a report for the picked dates, keeping the last one on screen while the next loads. */
+function useRangeReport<T extends { from: string; to: string }>(load: (from: string, to: string) => Promise<T>, timeZone: string, range: ReportRange) {
+  const [data, setData] = useState<T>();
+  const [error, setError] = useState<string>();
+  const [from, to] = datesFor(range.preset, todayIn(timeZone));
+  useEffect(() => {
+    let live = true;
+    setError(undefined);
+    load(from, to)
+      .then((r) => live && setData(r))
+      .catch((e) => live && setError(e instanceof Error ? e.message : "Couldn't load the report"));
+    return () => {
+      live = false;
+    };
+    // load is a client method, stable for the client's lifetime.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [from, to]);
+  return { data, error, fresh: !!data && data.from === from && data.to === to };
+}
+
+function RangeShell<T extends { from: string; to: string }>({ range, onRange, state, csv, children }: { range: ReportRange; onRange: (r: ReportRange) => void; state: { data?: T; error?: string; fresh: boolean }; csv?: (d: T) => void; children: (d: T) => React.ReactNode }) {
+  const { data, error, fresh } = state;
+  return (
+    <ScrollView contentContainerStyle={styles.page}>
+      <View style={[styles.bar, styles.choices]}>
+        {PRESETS.map((p) => (
+          <Chip key={p.id} label={p.label} on={range.preset === p.id} onPress={() => onRange({ ...range, preset: p.id })} />
+        ))}
+        {data && csv && Platform.OS === "web" && (
+          <Pressable accessibilityRole="button" onPress={() => csv(data)} style={({ focused }: WebPress) => [styles.csv, focused && styles.focus]}>
+            <Text style={styles.csvText}>Download CSV</Text>
+          </Pressable>
+        )}
+      </View>
+      {error && <Text role="alert" style={styles.error}>{error}</Text>}
+      {!data && !error && <ActivityIndicator style={{ marginTop: 24 }} color={colors.primary} />}
+      {data && (
+        <View style={{ opacity: fresh ? 1 : 0.55 }}>
+          <Text style={styles.period}>{span(data.from, data.to)}</Text>
+          {children(data)}
+        </View>
+      )}
+    </ScrollView>
+  );
+}
+
+function Row({ cells, head, bold }: { cells: (string | number | React.ReactNode)[]; head?: boolean; bold?: boolean }) {
+  return (
+    <View style={[styles.tr, head && styles.th]}>
+      {cells.map((c, i) => {
+        const style = [head ? styles.thText : styles.td, i === 0 ? { flex: 1, minWidth: 0 } : styles.numS, bold && { fontWeight: "700" as const }];
+        return typeof c === "string" || typeof c === "number" ? (
+          <Text key={i} style={style} numberOfLines={i === 0 ? 1 : undefined}>
+            {c}
+          </Text>
+        ) : (
+          <View key={i} style={i === 0 ? { flex: 1, minWidth: 0 } : styles.numS}>
+            {c}
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
+const pctText = (n: number | null) => (n == null ? "–" : `${n}%`);
+
+/** Reports › Inventory: what sold and at what margin, what's on the shelf, and what to reorder. */
+export function InventoryReportScreen({ client, timeZone, range, onRange }: { client: Client; timeZone: string; range: ReportRange; onRange: (r: ReportRange) => void }) {
+  const state = useRangeReport(client.inventoryReport, timeZone, range);
+  return (
+    <RangeShell range={range} onRange={onRange} state={state} csv={inventoryCsv}>
+      {(r) => (
+        <>
+          <View style={styles.tiles}>
+            <Tile label="Shop sales" value={dollars(r.sales.revenueCents)} note={`${count(r.sales.units)} items, before tax`} />
+            <Tile label="Gross margin" value={pctText(r.sales.marginPct)} note={`${dollars(r.sales.marginCents)} over cost`} />
+            <Tile label="Stock at cost" value={dollars(r.stock.costCents)} note={`${dollars(r.stock.retailCents)} at retail, ${count(r.stock.units)} items`} />
+            <Tile label="To reorder" value={count(r.reorder.length)} note={r.reorder.length ? "At or below reorder level" : "Nothing low"} />
+          </View>
+          {(r.sales.uncostedRevenueCents > 0 || r.stock.missingCost > 0) && (
+            <View style={styles.notice}>
+              <Text style={styles.noticeText}>
+                {`${dollars(r.sales.uncostedRevenueCents)} of sales had no product cost, so margin leaves them out.`}
+                {r.stock.missingCost ? ` ${r.stock.missingCost} product${r.stock.missingCost === 1 ? "" : "s"} on the shelf ${r.stock.missingCost === 1 ? "has" : "have"} no cost. Add costs in Pro shop › Products.` : ""}
+              </Text>
+            </View>
+          )}
+          <View style={styles.columns}>
+            <Card title="By category" half note="Cost is each product's cost today.">
+              <Row head cells={["Category", "Items", "Sales", "Margin"]} />
+              {r.categories.length === 0 && <Text style={styles.cardNote}>Nothing sold in this period.</Text>}
+              {r.categories.map((c) => (
+                <Row key={c.category} cells={[c.foodBev ? `${c.category} (food & drink)` : c.category, count(c.units), dollars(c.revenueCents), pctText(c.marginPct)]} />
+              ))}
+            </Card>
+            <Card title="Reorder list" half note="Products at or below their reorder level, lowest first.">
+              <Row head cells={["Product", "On hand", "Reorder at", "Sold"]} />
+              {r.reorder.length === 0 && <Text style={styles.cardNote}>Nothing needs reordering.</Text>}
+              {r.reorder.map((p) => (
+                <Row key={p.id} cells={[p.sku ? `${p.name} · ${p.sku}` : p.name, <Text style={[styles.td, p.stock <= 0 && { color: colors.noShow, fontWeight: "700" }]}>{p.stock}</Text>, p.reorderLevel, p.soldInPeriod]} />
+              ))}
+            </Card>
+          </View>
+          <Card title="Best sellers">
+            <Row head cells={["Product", "Items", "Sales", "Margin $", "Margin"]} />
+            {r.items.slice(0, 15).map((i) => (
+              <Row key={`${i.productId ?? i.name}`} cells={[i.name, count(i.units), dollars(i.revenueCents), i.marginCents == null ? "–" : dollars(i.marginCents), pctText(i.marginPct)]} />
+            ))}
+            {r.items.length > 15 && <Text style={[styles.cardNote, { marginTop: 8 }]}>{`And ${r.items.length - 15} more in the CSV.`}</Text>}
+          </Card>
+          <View style={styles.columns}>
+            <Card title="Slow movers" half note="On the shelf the whole period with nothing sold. Cash tied up you could free with a markdown.">
+              <Row head cells={["Product", "On hand", "At cost", "At retail"]} />
+              {r.slowMovers.length === 0 && <Text style={styles.cardNote}>Everything on the shelf sold at least once.</Text>}
+              {r.slowMovers.map((p) => (
+                <Row key={p.id} cells={[p.name, p.stock, p.costCents == null ? "–" : dollars(p.costCents), dollars(p.retailCents)]} />
+              ))}
+            </Card>
+            <Card title="Shrink" half note="Stock counts and adjustments. Negative is stock that went missing or was damaged; positive was found.">
+              <Row head cells={["Product", "Items", "At cost"]} />
+              {r.shrink.length === 0 && <Text style={styles.cardNote}>No count differences in this period.</Text>}
+              {r.shrink.map((s) => (
+                <Row key={s.id} cells={[s.name, <Text style={[styles.td, { color: s.units < 0 ? colors.noShow : colors.checkedIn }]}>{s.units > 0 ? `+${s.units}` : s.units}</Text>, dollars(s.costCents)]} />
+              ))}
+              {r.shrink.length > 0 && (
+                <Row bold cells={["Total", r.shrink.reduce((t, s) => t + s.units, 0), dollars(r.shrink.reduce((t, s) => t + s.costCents, 0))]} />
+              )}
+            </Card>
+          </View>
+        </>
+      )}
+    </RangeShell>
+  );
+}
+
+function inventoryCsv(r: InventoryReport) {
+  const cell = (c: number | null) => (c == null ? "" : (c / 100).toFixed(2));
+  const quote = (s: string) => (/[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);
+  saveCsv(`river-bend-inventory-${r.from}-to-${r.to}.csv`, [
+    ["Product", "Category", "Items sold", "Sales", "Cost", "Margin", "Margin %"].join(","),
+    ...r.items.map((i) => [quote(i.name), quote(i.category), i.units, cell(i.revenueCents), cell(i.costCents), cell(i.marginCents), i.marginPct ?? ""].join(",")),
+    "",
+    ["Reorder", "SKU", "On hand", "Reorder level", "Sold in period"].join(","),
+    ...r.reorder.map((p) => [quote(p.name), quote(p.sku ?? ""), p.stock, p.reorderLevel, p.soldInPeriod].join(",")),
+  ]);
+}
+
+const METHOD_LABEL: Record<MoneyMethod, string> = {
+  cash: "Cash",
+  card: "Card",
+  check: "Check",
+  gift_card: "Gift card",
+  house_account: "Charged to house accounts",
+  punch_card: "Punch card",
+  season_pass: "Season pass",
+  loyalty: "Loyalty points",
+  rain_check: "Rain check",
+  prepaid: "Prepaid online",
+  comp: "Comp",
+};
+
+/** Reports › Payments & balances: money taken by tender, and what the course holds for or is owed by golfers. */
+export function BalancesReportScreen({ client, timeZone, range, onRange }: { client: Client; timeZone: string; range: ReportRange; onRange: (r: ReportRange) => void }) {
+  const state = useRangeReport(client.balancesReport, timeZone, range);
+  return (
+    <RangeShell range={range} onRange={onRange} state={state} csv={balancesCsv}>
+      {(r) => {
+        const methods = (Object.keys(METHOD_LABEL) as MoneyMethod[]).filter((m) => r.collected[m]);
+        const h = r.held;
+        return (
+          <>
+            <View style={styles.tiles}>
+              <Tile label="Money taken" value={dollars(r.collected.totalCents)} note="In the period, every tender" />
+              <Tile label="Held for golfers" value={dollars(h.totalCents)} note="Right now: cards, credits and points" />
+              <Tile label="Owed on house accounts" value={dollars(r.receivable.cents)} note={`${r.receivable.accounts} account${r.receivable.accounts === 1 ? "" : "s"}`} />
+              <Tile label="Gift card balances" value={dollars(h.giftCards.cents)} note={`${h.giftCards.cards} card${h.giftCards.cards === 1 ? "" : "s"} with money left`} />
+            </View>
+            <View style={styles.columns}>
+              <Card title="Money taken by tender" half note="Prepaid online was collected by the booking provider, not the shop. Comps are rounds and items given away.">
+                <Row head cells={["Tender", "Amount"]} />
+                {methods.length === 0 && <Text style={styles.cardNote}>Nothing taken in this period.</Text>}
+                {methods.map((m) => (
+                  <Row key={m} cells={[METHOD_LABEL[m], dollars(r.collected[m])]} />
+                ))}
+                <Row bold cells={["Total", dollars(r.collected.totalCents)]} />
+                <Text style={[styles.cardNote, { marginTop: 8 }]}>
+                  {`Includes ${dollars(r.other.giftCardsSoldCents)} of gift cards sold and ${dollars(r.other.accountPaymentsCents)} of house account payments, which aren't revenue.`}
+                </Text>
+              </Card>
+              <Card title="Held for golfers" half note="Balances as of now that golfers can still spend. Your accountant carries these as liabilities.">
+                <Row head cells={["", "Count", "Value"]} />
+                <Row cells={["Gift cards", count(h.giftCards.cards), dollars(h.giftCards.cents)]} />
+                <Row cells={["Rain checks", count(h.rainChecks.open), dollars(h.rainChecks.cents)]} />
+                <Row cells={[`Punch cards (${count(h.punchCards.roundsLeft)} rounds left)`, count(h.punchCards.cards), dollars(h.punchCards.cents)]} />
+                <Row cells={[`Loyalty points (${count(h.loyalty.points)} points)`, count(h.loyalty.golfers), dollars(h.loyalty.cents)]} />
+                <Row cells={["Season passes", count(h.seasonPasses.active), "–"]} />
+                <Row bold cells={["Total", "", dollars(h.totalCents)]} />
+                <Text style={[styles.cardNote, { marginTop: 8 }]}>
+                  {`Gift cards in the period: ${dollars(h.giftCards.soldInPeriodCents)} sold, ${dollars(h.giftCards.redeemedInPeriodCents)} spent.`}
+                  {h.rainChecks.expiredCents ? ` ${dollars(h.rainChecks.expiredCents)} of rain checks expired unused.` : ""}
+                  {h.punchCards.unpriced ? ` ${h.punchCards.unpriced} punch card${h.punchCards.unpriced === 1 ? " has" : "s have"} no price on file, so ${h.punchCards.unpriced === 1 ? "it isn't" : "they aren't"} valued.` : ""}
+                </Text>
+              </Card>
+            </View>
+            <Card title="House accounts" note="What members owe the course on their accounts, as of now.">
+              <View style={styles.tiles}>
+                <Tile label="Owed" value={dollars(r.receivable.cents)} />
+                <Tile label="Charged in period" value={dollars(r.receivable.chargedInPeriodCents)} />
+                <Tile label="Paid in period" value={dollars(r.receivable.paidInPeriodCents)} />
+                <Tile label="Over their limit" value={count(r.receivable.overLimit)} note={r.receivable.creditCents ? `${dollars(r.receivable.creditCents)} in credit` : undefined} />
+              </View>
+              <Row head cells={["Largest balances", "Owed", "Limit"]} />
+              {r.receivable.largest.length === 0 && <Text style={styles.cardNote}>No one owes anything.</Text>}
+              {r.receivable.largest.map((a) => (
+                <Row key={a.id} cells={[a.status === "suspended" ? `${a.name} (on hold)` : a.name, <Text style={[styles.td, a.limitCents != null && a.balanceCents > a.limitCents && { color: colors.noShow, fontWeight: "700" }]}>{dollars(a.balanceCents)}</Text>, a.limitCents == null ? "None" : dollars(a.limitCents)]} />
+              ))}
+            </Card>
+          </>
+        );
+      }}
+    </RangeShell>
+  );
+}
+
+function balancesCsv(r: BalancesReport) {
+  const cell = (c: number) => (c / 100).toFixed(2);
+  saveCsv(`river-bend-balances-${r.from}-to-${r.to}.csv`, [
+    ["Tender", "Amount"].join(","),
+    ...(Object.keys(METHOD_LABEL) as MoneyMethod[]).filter((m) => r.collected[m]).map((m) => [METHOD_LABEL[m], cell(r.collected[m])].join(",")),
+    ["Total", cell(r.collected.totalCents)].join(","),
+    "",
+    ["Held for golfers", "Count", "Value"].join(","),
+    ["Gift cards", r.held.giftCards.cards, cell(r.held.giftCards.cents)].join(","),
+    ["Rain checks", r.held.rainChecks.open, cell(r.held.rainChecks.cents)].join(","),
+    ["Punch cards", r.held.punchCards.cards, cell(r.held.punchCards.cents)].join(","),
+    ["Loyalty points", r.held.loyalty.golfers, cell(r.held.loyalty.cents)].join(","),
+    ["Owed on house accounts", r.receivable.accounts, cell(r.receivable.cents)].join(","),
+  ]);
+}
+
+function saveCsv(name: string, lines: string[]) {
+  const url = URL.createObjectURL(new Blob([lines.join("\n") + "\n"], { type: "text/csv" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 function laborCsv(r: LaborReport) {
