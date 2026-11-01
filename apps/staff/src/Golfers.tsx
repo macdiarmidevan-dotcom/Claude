@@ -143,7 +143,7 @@ export function GolferForm(props: {
   return (
     <View>
       <Field label="Full name" value={name} onChangeText={setName} autoCapitalize="words" autoComplete="name" placeholder="Jane Smith" />
-      <Field label="Mobile phone" value={phone} onChangeText={setPhone} keyboardType="phone-pad" autoComplete="tel" placeholder="(630) 555-0100" />
+      <Field label="Mobile phone" value={phone} onChangeText={setPhone} keyboardType="phone-pad" autoComplete="tel" placeholder="123 456 7890" />
       <Field label="Email" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" autoComplete="email" placeholder="jane@example.com" />
       <Text style={styles.help}>Each phone number and email can only belong to one golfer.</Text>
       {error && <Text role="alert" style={styles.error}>{error}</Text>}
