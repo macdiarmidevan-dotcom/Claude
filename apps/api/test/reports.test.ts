@@ -81,16 +81,25 @@ describe("reports and day close", () => {
 
   it("closes the day against the cash drawer", async () => {
     const before = (await call(staff, "GET", `/closes/${today}`)).json();
-    expect(before.close).toBeNull();
+    expect(before).toMatchObject({ open: null, close: null });
     expect(before.expected).toMatchObject({ cash: roundCents, card: saleCents });
 
-    const short = await call(staff, "PUT", `/closes/${today}`, { countedCashCents: roundCents - 500 });
-    expect(short.json().error.code).toBe("note_required");
-    const closed = (await call(staff, "PUT", `/closes/${today}`, { countedCashCents: roundCents - 500, note: "Gave change twice" })).json();
-    expect(closed.close).toMatchObject({ expectedCashCents: roundCents, overShortCents: -500, closedBy: "Jordan Price" });
+    // The starting cash goes in first.
+    expect((await call(staff, "PUT", `/closes/${today}`, { countedCashCents: roundCents })).json().error.code).toBe("not_opened");
+    const opened = (await call(staff, "PUT", `/opens/${today}`, { startingCashCents: 20000 })).json();
+    expect(opened.open).toMatchObject({ startingCashCents: 20000, openedBy: "Jordan Price" });
+    expect((await call(staff, "PUT", `/opens/${today}`, { startingCashCents: 15000 })).json().error.code).toBe("already_opened");
+    expect((await call(manager, "PUT", `/opens/${today}`, { startingCashCents: 25000 })).json().open.startingCashCents).toBe(25000);
 
-    expect((await call(staff, "PUT", `/closes/${today}`, { countedCashCents: roundCents })).json().error.code).toBe("already_closed");
-    const redo = (await call(manager, "PUT", `/closes/${today}`, { countedCashCents: roundCents })).json();
+    // The final count is the whole drawer, starting cash included.
+    const short = await call(staff, "PUT", `/closes/${today}`, { countedCashCents: 25000 + roundCents - 500 });
+    expect(short.json().error.code).toBe("note_required");
+    const closed = (await call(staff, "PUT", `/closes/${today}`, { countedCashCents: 25000 + roundCents - 500, note: "Gave change twice" })).json();
+    expect(closed.close).toMatchObject({ startingCashCents: 25000, cashTakenCents: roundCents, expectedCashCents: 25000 + roundCents, overShortCents: -500, closedBy: "Jordan Price" });
+
+    expect((await call(staff, "PUT", `/closes/${today}`, { countedCashCents: 25000 + roundCents })).json().error.code).toBe("already_closed");
+    expect((await call(manager, "PUT", `/opens/${today}`, { startingCashCents: 1 })).json().error.code).toBe("already_closed");
+    const redo = (await call(manager, "PUT", `/closes/${today}`, { countedCashCents: 25000 + roundCents })).json();
     expect(redo.close).toMatchObject({ overShortCents: 0, closedBy: "Course Manager" });
   });
 });
