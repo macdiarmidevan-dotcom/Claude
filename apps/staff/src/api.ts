@@ -1,6 +1,6 @@
 // Typed client for the golf API. Staff sign in with their own email and password, which gives a
 // session token (st_…). A shared device key (sk_) still works for kiosks.
-import type { RateRule } from "@golf/core";
+import type { AddOnKey, AddOnSettings, RateRule } from "@golf/core";
 import { createDemoClient, demoSignIn, DEMO, DEMO_URL } from "./demo";
 
 export type Station = "proshop" | "starter";
@@ -1027,6 +1027,8 @@ function createHttpClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "ap
     sendSupport: (input: { topic: SupportTopic; subject: string; body: string; replyTo: string; page?: string | null }) =>
       request<SupportRequest>("/support", { method: "POST", body: input }),
     supportRequests: () => request<SupportRequest[]>("/support"),
+    addOnSettings: () => request<AddOnSettings>("/settings/add-ons"),
+    setAddOn: (key: AddOnKey, enabled: boolean) => request<AddOnSettings>("/settings/add-ons", { method: "PUT", body: { key, enabled } }),
     rates: () => request<PriceRate[]>("/pricing/rates"),
     addRate: (input: RateInput) => request<PriceRate>("/pricing/rates", { method: "POST", body: input }),
     updateRate: (id: string, patch: Partial<RateInput> & { active?: boolean }) => request<PriceRate>(`/pricing/rates/${id}`, { method: "PATCH", body: patch }),

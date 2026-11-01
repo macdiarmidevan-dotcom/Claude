@@ -9,6 +9,7 @@ import { CalendarPicker } from "./CalendarPicker";
 import { TeeTimePanel } from "./TeeTimePanel";
 import { Header } from "./Header";
 import { Icon, type IconName } from "./Icon";
+import { useAddOn } from "./AddOns";
 import { colors, type WebPress, formatTime, money, slotColor, slotLabel, slotMark, type SlotState } from "./theme";
 
 // Other devices' changes show up within this many seconds.
@@ -287,7 +288,12 @@ export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu,
     />
   );
 
-  const [showKey, setShowKey] = useState(false);
+  // Add-ons the course can switch: prices beside each time, the color key, and weather delays.
+  const showPrices = useAddOn("tee_sheet_prices");
+  const keyOpen = useAddOn("color_key_open");
+  const delaysOn = useAddOn("weather_delays");
+  const [showKey, setShowKey] = useState(keyOpen);
+  useEffect(() => setShowKey(keyOpen), [keyOpen]);
   const [delayRequest, setDelayRequest] = useState(0);
   const [addMenu, setAddMenu] = useState(false);
   const canDelay = !!sheet?.length && date >= today;
@@ -309,7 +315,7 @@ export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu,
       <Header title="Tee sheet" subtitle={compact ? stationName : undefined} onOpenMenu={onOpenMenu}>
         {!compact && <Text style={styles.stationText}>{stationName}</Text>}
         <ToolButton icon="swatches" label="Color key" on={showKey} onPress={() => setShowKey(!showKey)} />
-        <ToolButton icon="cloud" label="Weather delay" disabled={!canDelay} onPress={() => setDelayRequest(Date.now())} />
+        {delaysOn && <ToolButton icon="cloud" label="Weather delay" disabled={!canDelay} onPress={() => setDelayRequest(Date.now())} />}
         <View>
           <Pressable
             accessibilityRole="button"
@@ -325,15 +331,17 @@ export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu,
           {addMenu && (
             <View style={styles.addMenu} role="menu">
               <MenuRow label={nextOpen ? `Walk-in at ${formatTime(nextOpen.localTime)}` : "Walk-in"} icon="user" onPress={addWalkIn} />
-              <MenuRow
-                label="Weather delay"
-                icon="cloud"
-                disabled={!canDelay}
-                onPress={() => {
-                  setAddMenu(false);
-                  setDelayRequest(Date.now());
-                }}
-              />
+              {delaysOn && (
+                <MenuRow
+                  label="Weather delay"
+                  icon="cloud"
+                  disabled={!canDelay}
+                  onPress={() => {
+                    setAddMenu(false);
+                    setDelayRequest(Date.now());
+                  }}
+                />
+              )}
             </View>
           )}
         </View>
@@ -342,7 +350,7 @@ export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu,
       <View style={[styles.card, compact && { borderWidth: 0, borderRadius: 0 }]}>
       <SheetHeading date={date} today={today} compact={compact} error={error} loading={!sheet} totals={totals} onPick={setDate} />
       <WeekStrip date={date} today={today} compact={compact} onPick={setDate} />
-      <DelayBar client={client} date={date} today={today} nowLocal={nowIn(course.timeZone)} sheet={sheet} onChanged={load} openRequest={delayRequest} showButton={false} />
+      {delaysOn && <DelayBar client={client} date={date} today={today} nowLocal={nowIn(course.timeZone)} sheet={sheet} onChanged={load} openRequest={delayRequest} showButton={false} />}
       {showKey && <Legend />}
       {notice && (
         <View key={notice.key} style={styles.notice} accessibilityLiveRegion="polite" role="status">
@@ -389,7 +397,7 @@ export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu,
                 ) : (
                   <TeeTimeRow
                     teeTime={item.teeTime}
-                    priceCents={compact ? undefined : priceAt(item.teeTime)}
+                    priceCents={compact || !showPrices ? undefined : priceAt(item.teeTime)}
                     compact={compact}
                     selected={item.teeTime.id === selectedId}
                     isNext={item.index === nextIndex}

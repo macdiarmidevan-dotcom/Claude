@@ -3,7 +3,7 @@ import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-
 import type { Client, PriceAddOn, PriceRate, RateInput } from "./api";
 import { colors, formatTime, money, type WebPress } from "./theme";
 
-// Pricing (green fee rates) and Add-ons (carts, rentals and other extras). Everyone can look;
+// Pricing: green fee rates, and the carts, rentals and other extras golfers add to a round. Everyone can look;
 // managers add, change and remove. The tee sheet, walk-ins and check-in all price from these.
 
 const dollars = (text: string) => {
@@ -110,6 +110,7 @@ export function PricingScreen({ client, isManager, onChanged }: { client: Client
         ))}
       {section("Green fees", "The price of one loop of the course.", rates?.filter((r) => !r.isReplay))}
       {section("Replay rates", "Charged for each extra loop in the same round, such as holes 10–18 on a 9-hole course.", rates?.filter((r) => r.isReplay))}
+      <Extras client={client} isManager={isManager} onChanged={onChanged} />
       {!isManager && <Text style={styles.help}>Only a manager can change prices.</Text>}
     </ScrollView>
   );
@@ -185,7 +186,8 @@ function RateForm({ rate, onSave, onClose }: { rate?: PriceRate; onSave: (input:
   );
 }
 
-export function AddOnsScreen({ client, isManager, onChanged }: { client: Client; isManager: boolean; onChanged?: () => void }) {
+/** Carts, rentals and other extras a golfer can add to a round, shown on the Pricing page. */
+function Extras({ client, isManager, onChanged }: { client: Client; isManager: boolean; onChanged?: () => void }) {
   const [addOns, setAddOns] = useState<PriceAddOn[]>();
   const [editing, setEditing] = useState<string>();
   const load = () => {
@@ -194,10 +196,9 @@ export function AddOnsScreen({ client, isManager, onChanged }: { client: Client;
   const { error, setError, run } = useRun(load, onChanged);
   useEffect(load, [client]);
   return (
-    <ScrollView contentContainerStyle={styles.page}>
-      {error && <Text role="alert" style={styles.error}>{error}</Text>}
       <View style={styles.card}>
-        <Text role="heading" aria-level={2} style={styles.title}>Add-ons</Text>
+        {error && <Text role="alert" style={styles.error}>{error}</Text>}
+        <Text role="heading" aria-level={2} style={styles.title}>Carts and rentals</Text>
         <Text style={styles.help}>Extras a golfer can add to a round, priced per person. The gas cart is what riding golfers pay, so it can be repriced but not removed.</Text>
         {addOns?.length === 0 && <Text style={[styles.help, { marginTop: 8 }]}>None set up.</Text>}
         {addOns?.map((a) =>
@@ -224,12 +225,10 @@ export function AddOnsScreen({ client, isManager, onChanged }: { client: Client;
             <AddOnForm onSave={(input) => run(() => client.addAddOn(input)).then((ok) => ok && setEditing(undefined))} onClose={() => setEditing(undefined)} />
           ) : (
             <View style={{ flexDirection: "row", marginTop: 12 }}>
-              <Button label="Add an add-on" primary onPress={() => setEditing("new")} />
+              <Button label="Add an extra" primary onPress={() => setEditing("new")} />
             </View>
           ))}
-        {!isManager && <Text style={[styles.help, { marginTop: 10 }]}>Only a manager can change add-ons.</Text>}
       </View>
-    </ScrollView>
   );
 }
 

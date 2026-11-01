@@ -1,6 +1,6 @@
 // A pretend course that runs entirely in the browser, for showing the app without a server.
 // Only built in when EXPO_PUBLIC_DEMO=1. Nothing is saved: reloading the page starts over.
-import type { RateRule } from "@golf/core";
+import { addOnSettings, type AddOnKey, type RateRule } from "@golf/core";
 import { answerFromArticles, generateTeeTimes, parseTeeSheetCsv, quotePlayer, riverBend, riverBendAddOns, riverBendRates, riverBendTeeSheet } from "@golf/core";
 import {
   ApiError,
@@ -150,6 +150,8 @@ const priceRates: PriceRate[] = riverBendRates.map((r, i) => ({
   active: true,
 }));
 const priceAddOns: PriceAddOn[] = riverBendAddOns.map((a, i) => ({ id: `addon-${i}`, ...a, active: true, locked: a.code === "gas_cart" }));
+// Add-ons start like a new course; the demo keeps changes until the page reloads.
+const addOns = addOnSettings();
 const liveRates = (): RateRule[] =>
   priceRates.filter((r) => r.active).map((r) => ({ id: r.code, name: r.name, priceCents: r.priceCents, days: r.days, startTime: r.startTime, endTime: r.endTime, residency: r.residency, ageGroups: r.ageGroups, isReplay: r.isReplay }));
 const liveAddOns = () => priceAddOns.filter((a) => a.active).map(({ code, name, priceCents }) => ({ code, name, priceCents }));
@@ -1604,6 +1606,14 @@ export function createDemoClient(apiKey: string): Client {
 
   return {
     course: () => reply(() => ({ ...riverBend, addOns: liveAddOns(), rates: liveRates() })),
+    addOnSettings: () => reply(() => ({ ...addOns })),
+    setAddOn: (key: AddOnKey, enabled: boolean) =>
+      reply(() => {
+        managerOnly();
+        addOns[key] = enabled;
+        log("Turned an add-on on or off");
+        return { ...addOns };
+      }),
     rates: () => reply(() => priceRates.filter((r) => r.active)),
     addRate: (input: RateInput) =>
       reply(() => {

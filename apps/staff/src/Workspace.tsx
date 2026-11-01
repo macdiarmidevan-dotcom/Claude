@@ -1,5 +1,7 @@
 import { Icon, type IconName } from "./Icon";
-import { AddOnsScreen, PricingScreen } from "./PricingScreen";
+import { PricingScreen } from "./PricingScreen";
+import { AddOnsProvider, AddOnsScreen, useAddOn } from "./AddOns";
+import { addOnSettings, type AddOnKey, type AddOnSettings } from "@golf/core";
 import { RadarScreen } from "./RadarScreen";
 import { useEffect, useMemo, useState } from "react";
 import { Modal, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
@@ -17,7 +19,6 @@ import { CardPaymentSettings, CardReaderProvider } from "./CardReader";
 import { GiftCards, HouseAccounts } from "./AccountsScreen";
 import { EventsScreen } from "./EventsScreen";
 import { FoodBarScreen } from "./FoodBarScreen";
-import { FOOD_BAR, PRO_SHOP } from "./features";
 import { StationPicker } from "./SetupScreen";
 import { FleetScreen } from "./FleetScreen";
 import { MessagesScreen } from "./MessagesScreen";
@@ -70,7 +71,22 @@ const ALL_SECTIONS: { id: Section; label: string; soon?: string; managers?: bool
   { id: "settings", label: "Settings", inMenu: false },
   { id: "help", label: "Help center", inMenu: false },
 ];
-const SECTIONS = ALL_SECTIONS.filter((s) => (FOOD_BAR || s.id !== "food") && (PRO_SHOP || s.id !== "inventory"));
+const SECTIONS = ALL_SECTIONS;
+
+// Sections that belong to an add-on show only while the course has it switched on.
+const SECTION_ADD_ON: Partial<Record<Section, AddOnKey>> = {
+  radar: "radar",
+  import: "tee_sheet_sync",
+  messages: "messages",
+  events: "leagues",
+  schedule: "staff_schedule",
+  inventory: "pro_shop",
+  food: "food_bar",
+};
+const sectionOn = (id: Section, addOns: AddOnSettings) => {
+  const key = SECTION_ADD_ON[id];
+  return !key || addOns[key];
+};
 
 // Below this width the menu folds away behind a button, as on phones and iPads held upright.
 const RAIL_BREAKPOINT = 1024;
@@ -84,6 +100,8 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
 
   const [section, setSection] = useState<Section>("tee-sheet");
   const [menuOpen, setMenuOpen] = useState(false);
+  // The add-ons the course has switched on; the menu and screens follow them.
+  const [addOns, setAddOns] = useState<AddOnSettings>(() => addOnSettings());
   const [course, setCourse] = useState<Course>();
   // Prices on the tee sheet come with the course, so it reloads when Pricing or Add-ons change.
   const refreshCourse = () => client.course().then(setCourse).catch((e) => setError(e.message));
@@ -130,6 +148,7 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
 
   useEffect(() => {
     refreshCourse();
+    client.addOnSettings().then(setAddOns).catch(() => undefined);
     client
       .me()
       .then(setMe)
@@ -138,6 +157,11 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
         if (e instanceof ApiError && e.status === 401) onSignOut();
       });
   }, [client]);
+
+  // A section whose add-on was just switched off goes back to the tee sheet.
+  useEffect(() => {
+    if (!sectionOn(section, addOns)) setSection("tee-sheet");
+  }, [section, addOns]);
 
   // Ends the session on the server too, so the token can't be used again.
   const signOut = () => {
@@ -160,6 +184,7 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
       settings={settings}
       onChangeSettings={onChangeSettings}
       isManager={isManager}
+      addOns={addOns}
       me={me}
       onSignOut={signOut}
       onClose={rail ? undefined : () => setMenuOpen(false)}
@@ -185,6 +210,7 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
   const current = SECTIONS.find((s) => s.id === section)!;
 
   return (
+    <AddOnsProvider value={addOns}>
     <CardReaderProvider client={client} terminalId={settings.terminalId}>
     <View style={styles.page}>
       {rail && menu}
@@ -263,13 +289,13 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
           </>
         ) : section === "pricing" ? (
           <>
-            <Header title="Pricing" onOpenMenu={openMenu} subtitle="Green fee and replay rates" />
+            <Header title="Pricing" onOpenMenu={openMenu} subtitle="Green fees, replays, carts and rentals" />
             <PricingScreen client={client} isManager={isManager} onChanged={refreshCourse} />
           </>
         ) : section === "add-ons" ? (
           <>
-            <Header title="Add-ons" onOpenMenu={openMenu} subtitle="Carts, rentals and extras" />
-            <AddOnsScreen client={client} isManager={isManager} onChanged={refreshCourse} />
+            <Header title="Add-ons" onOpenMenu={openMenu} subtitle="Turn features on or off for your course" />
+            <AddOnsScreen client={client} isManager={isManager} settings={addOns} onChange={setAddOns} />
           </>
         ) : section === "help" ? (
           <>
@@ -352,6 +378,7 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
       {editingWaiver && <WaiverEditor client={client} onClose={() => setEditingWaiver(false)} />}
     </View>
     </CardReaderProvider>
+    </AddOnsProvider>
   );
 }
 
@@ -362,6 +389,7 @@ function SideMenu(props: {
   settings: Settings;
   onChangeSettings: (s: Settings) => void;
   isManager: boolean;
+  addOns: AddOnSettings;
   me?: Me;
   onSignOut: () => void;
   onClose?: () => void;
@@ -375,7 +403,7 @@ function SideMenu(props: {
   useEffect(() => {
     if (currentGroup) setOpenGroup(currentGroup);
   }, [currentGroup]);
-  const visible = SECTIONS.filter((s) => (!s.managers || isManager) && (s.starters !== false || isManager || settings.station !== "starter") && s.inMenu !== false);
+  const visible = SECTIONS.filter((s) => sectionOn(s.id, props.addOns) && (!s.managers || isManager) && (s.starters !== false || isManager || settings.station !== "starter") && s.inMenu !== false);
   const item = (s: (typeof SECTIONS)[number], nested?: boolean) => {
     const on = s.id === section;
     return (
@@ -456,6 +484,8 @@ function SideMenu(props: {
 /** Customers: golfer accounts, with gift cards and house accounts in tabs beside them. */
 function CustomersArea({ client, isManager, customers }: { client: Client; isManager: boolean; customers: React.ReactNode }) {
   const [part, setPart] = useState<"customers" | "gift" | "house">("customers");
+  const gift = useAddOn("gift_cards");
+  const house = useAddOn("house_accounts");
   return (
     <View style={{ flex: 1 }}>
       <View role="tablist" style={styles.tabs}>
@@ -465,7 +495,7 @@ function CustomersArea({ client, isManager, customers }: { client: Client; isMan
             ["gift", "Gift cards"],
             ["house", "House accounts"],
           ] as const
-        ).map(([id, label]) => (
+        ).filter(([id]) => (id !== "gift" || gift) && (id !== "house" || house)).map(([id, label]) => (
           <Pressable
             key={id}
             role="tab"
@@ -477,7 +507,7 @@ function CustomersArea({ client, isManager, customers }: { client: Client; isMan
           </Pressable>
         ))}
       </View>
-      {part === "customers" ? customers : part === "gift" ? <GiftCards client={client} isManager={isManager} /> : <HouseAccounts client={client} isManager={isManager} />}
+      {part === "customers" || (part === "gift" && !gift) || (part === "house" && !house) ? customers : part === "gift" ? <GiftCards client={client} isManager={isManager} /> : <HouseAccounts client={client} isManager={isManager} />}
     </View>
   );
 }
