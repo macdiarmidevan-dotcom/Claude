@@ -41,6 +41,7 @@ import {
   updateProduct,
 } from "./pos.ts";
 import { closeDay, getDayClose, openDay, report } from "./reports.ts";
+import { managerOverview } from "./analytics.ts";
 import {
   cancelCardPayment,
   createTerminal,
@@ -778,6 +779,12 @@ export function buildApp(
     const course = await managedCourseFor(req);
     const { from, to } = rangeQuery.parse(req.query);
     return report(db, course, from, to);
+  });
+  // Manager reports: revenue, rounds and utilization, revenue per round and rate mix, up to a year at a time.
+  app.get("/v1/courses/:slug/reports/overview", async (req) => {
+    const course = await managedCourseFor(req);
+    const q = z.object({ from: z.iso.date(), to: z.iso.date(), compare: z.enum(["previous", "last_year", "none"]).default("previous") }).parse(req.query);
+    return managerOverview(db, course, q.from, q.to, q.compare);
   });
   const dateParams = z.object({ date: z.iso.date() });
   app.get("/v1/courses/:slug/closes/:date", async (req) => getDayClose(db, await courseFor(req), dateParams.parse(req.params).date));

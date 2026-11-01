@@ -96,11 +96,11 @@ export async function findGolfer(db: DbClient, course: Course, name: string) {
 }
 
 /** Money per day between two local dates (inclusive): what was booked and what was collected, by type. */
-export async function revenue(db: DbClient, course: Course, from: string, to: string) {
+export async function revenue(db: DbClient, course: Course, from: string, to: string, maxDays = 92) {
   const start = dayRange(course, from).start;
   const end = dayRange(course, to).end;
   if (end <= start) throw badRequest("invalid_range", "from must be on or before to");
-  if (end.diff(start, "days").days > 92) throw badRequest("invalid_range", "Ask for 92 days or fewer at a time");
+  if (end.diff(start, "days").days > maxDays) throw badRequest("invalid_range", `Ask for ${maxDays} days or fewer at a time`);
   const range = [course.id, start.toUTC().toISO(), end.toUTC().toISO(), course.timeZone];
   // Booked revenue counts by the day of the round; no-shows and cancellations are left out.
   const { rows: booked } = await db.query(

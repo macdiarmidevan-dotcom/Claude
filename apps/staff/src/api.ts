@@ -829,6 +829,71 @@ export interface Report {
   days: { date: string; greenFeesCents: number; cartsAndExtrasCents: number; proShopCents: number; foodBevCents: number; eventsCents: number; taxCents: number; collectedCents: number; rounds: number }[];
 }
 
+export type ReportCompare = "previous" | "last_year" | "none";
+export interface Departments {
+  greenFeesCents: number;
+  cartsAndExtrasCents: number;
+  proShopCents: number;
+  foodBevCents: number;
+  eventsCents: number;
+  totalCents: number;
+}
+export interface RoundSplit {
+  rounds: number;
+  spots: number;
+  occupancy: number | null;
+}
+export interface RoundsSummary {
+  /** Players on tee times in the period who weren't no-shows. */
+  rounds: number;
+  /** Of those, the ones checked in or teed off. */
+  played: number;
+  noShows: number;
+  /** Open spots on the tee sheet; blocked times don't count. */
+  spots: number;
+  occupancy: number | null;
+  holes9: number;
+  holes18: number;
+  riding: number;
+  walking: number;
+  /** Monday to Thursday. */
+  weekday: RoundSplit;
+  /** Friday to Sunday. */
+  weekend: RoundSplit;
+  bySource: Record<string, number>;
+}
+export interface RoundYield {
+  avgGreenFeeCents: number | null;
+  revenuePerRoundCents: number | null;
+  /** Green fees over every open spot, played or not. */
+  revPattCents: number | null;
+}
+export interface RateMixRow {
+  code: string;
+  name: string;
+  isReplay: boolean;
+  rounds: number;
+  revenueCents: number;
+  avgCents: number | null;
+}
+/** The manager dashboard: revenue, rounds and utilization, revenue per round and the rate mix. */
+export interface Overview {
+  from: string;
+  to: string;
+  compare: { kind: ReportCompare; from: string; to: string } | null;
+  revenue: Departments;
+  days: (Omit<Departments, "totalCents"> & { date: string; totalCents: number })[];
+  rounds: RoundsSummary;
+  yield: RoundYield;
+  /** Booked players against open spots, by weekday (1 = Monday) and hour. */
+  heat: { weekday: number; hour: number; players: number; spots: number }[];
+  rateMix: RateMixRow[];
+  topRateCents: number | null;
+  /** How far below the top green fee the average first-loop round was, in percent. */
+  avgDiscountPct: number | null;
+  previous: { revenue: Departments; rounds: RoundsSummary; yield: RoundYield; rateMix: RateMixRow[]; avgDiscountPct: number | null } | null;
+}
+
 export type AccountingFormat = "quickbooks" | "xero";
 export type AccountKey =
   | "cash"
@@ -1224,6 +1289,7 @@ function createHttpClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "ap
     posSettings: () => request<{ salesTaxBps: number }>("/settings/pos"),
     savePosSettings: (settings: { salesTaxBps: number }) => request<{ salesTaxBps: number }>("/settings/pos", { method: "PUT", body: settings }),
     report: (from: string, to: string) => request<Report>(`/reports?from=${from}&to=${to}`),
+    overview: (from: string, to: string, compare: ReportCompare = "previous") => request<Overview>(`/reports/overview?from=${from}&to=${to}&compare=${compare}`),
     dayClose: (date: string) => request<DayClose>(`/closes/${date}`),
     openDay: (date: string, open: { startingCashCents: number }) => request<DayClose>(`/opens/${date}`, { method: "PUT", body: open }),
     closeDay: (date: string, close: { countedCashCents: number; note?: string | null }) =>

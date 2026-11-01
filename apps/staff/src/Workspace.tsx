@@ -23,6 +23,7 @@ import { StationPicker } from "./SetupScreen";
 import { FleetScreen } from "./FleetScreen";
 import { MessagesScreen } from "./MessagesScreen";
 import { ReportsScreen, StartDayForm } from "./ReportsScreen";
+import { DEFAULT_RANGE, OverviewReport, type ReportRange } from "./ManagerReports";
 import { AccountMenu, FeedbackList } from "./AccountMenu";
 import { HelpCenter } from "./HelpCenter";
 import { colors, type WebPress } from "./theme";
@@ -514,12 +515,19 @@ function CustomersArea({ client, isManager, customers }: { client: Client; isMan
 
 /** Reports: the money side (cash drawer and sales) and maintenance (carts, equipment, work orders). */
 function ReportsArea({ client, me, isManager, timeZone }: { client: Client; me: Me | undefined; isManager: boolean; timeZone: string }) {
-  const [part, setPart] = useState<"sales" | "maintenance">("sales");
+  const [part, setPart] = useState<"revenue" | "rounds" | "sales" | "maintenance">(isManager ? "revenue" : "sales");
+  const [range, setRange] = useState<ReportRange>(DEFAULT_RANGE);
   return (
     <View style={{ flex: 1 }}>
       <View role="tablist" style={styles.tabs}>
         {(
           [
+            ...(isManager
+              ? ([
+                  ["revenue", "Revenue"],
+                  ["rounds", "Rounds & tee sheet"],
+                ] as const)
+              : []),
             ["sales", "Cash & sales"],
             ["maintenance", "Maintenance"],
           ] as const
@@ -535,7 +543,9 @@ function ReportsArea({ client, me, isManager, timeZone }: { client: Client; me: 
           </Pressable>
         ))}
       </View>
-      {part === "sales" ? <ReportsScreen client={client} me={me} timeZone={timeZone} /> : <FleetScreen client={client} isManager={isManager} meId={me?.user?.id} />}
+      {part === "revenue" || part === "rounds" ? (
+        <OverviewReport client={client} timeZone={timeZone} view={part} range={range} onRange={setRange} />
+      ) : part === "sales" ? <ReportsScreen client={client} me={me} timeZone={timeZone} /> : <FleetScreen client={client} isManager={isManager} meId={me?.user?.id} />}
     </View>
   );
 }
@@ -545,7 +555,7 @@ const STATION_LABEL: Record<Settings["station"], string> = { proshop: "Pro shop"
 const styles = StyleSheet.create({
   stationTag: { color: "#fff", backgroundColor: colors.primary, borderRadius: 3, paddingVertical: 8, fontSize: 14, fontWeight: "600", textAlign: "center" },
   page: { flex: 1, flexDirection: "row", backgroundColor: colors.bg },
-  tabs: { flexDirection: "row", borderBottomWidth: 1, borderColor: colors.border, paddingHorizontal: 16, backgroundColor: colors.card },
+  tabs: { flexDirection: "row", flexWrap: "wrap", borderBottomWidth: 1, borderColor: colors.border, paddingHorizontal: 16, backgroundColor: colors.card },
   tab: { paddingHorizontal: 14, paddingVertical: 9, borderBottomWidth: 2, borderColor: "transparent", marginBottom: -1 },
   tabOn: { borderColor: colors.primary },
   tabText: { fontSize: 14, color: colors.muted, fontWeight: "600" },

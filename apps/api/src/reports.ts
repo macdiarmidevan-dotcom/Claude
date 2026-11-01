@@ -16,8 +16,8 @@ const emptyMethods = () => Object.fromEntries(METHODS.map((m) => [m, 0])) as Rec
  * revenue by source and category, money taken by payment type, sales tax, rounds and
  * occupancy, and hours worked.
  */
-export async function report(db: DbClient, course: Course, from: string, to: string) {
-  const tee = await revenue(db, course, from, to);
+export async function report(db: DbClient, course: Course, from: string, to: string, maxDays = 92) {
+  const tee = await revenue(db, course, from, to, maxDays);
   const start = dayRange(course, from).start;
   const end = dayRange(course, to).end;
   const range = [course.id, start.toUTC().toISO(), end.toUTC().toISO(), course.timeZone];
