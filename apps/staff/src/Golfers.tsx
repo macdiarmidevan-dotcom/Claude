@@ -142,9 +142,9 @@ export function GolferForm(props: {
 
   return (
     <View>
-      <Field label="Full name" value={name} onChangeText={setName} autoCapitalize="words" autoComplete="name" />
+      <Field label="Full name" value={name} onChangeText={setName} autoCapitalize="words" autoComplete="name" placeholder="Jane Smith" />
       <Field label="Mobile phone" value={phone} onChangeText={setPhone} keyboardType="phone-pad" autoComplete="tel" placeholder="(630) 555-0100" />
-      <Field label="Email" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" autoComplete="email" />
+      <Field label="Email" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" autoComplete="email" placeholder="jane@example.com" />
       <Text style={styles.help}>Each phone number and email can only belong to one golfer.</Text>
       {error && <Text role="alert" style={styles.error}>{error}</Text>}
       <View style={styles.actions}>
@@ -373,7 +373,8 @@ function Field(props: { label: string } & React.ComponentProps<typeof TextInput>
   return (
     <View style={{ marginBottom: 10 }}>
       <Text style={styles.label}>{label}</Text>
-      <TextInput accessibilityLabel={label} autoCorrect={false} style={styles.input} {...input} />
+      {/* Example text is light gray so it reads as a hint, not something already filled in. */}
+      <TextInput accessibilityLabel={label} autoCorrect={false} style={styles.input} placeholderTextColor={colors.placeholder} {...input} />
     </View>
   );
 }

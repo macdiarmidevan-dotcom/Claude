@@ -10,6 +10,8 @@ export const colors = {
   border: "#d8dbe0",
   text: "#1f2328",
   muted: "#5f6670",
+  /** Example text inside an empty input. */
+  placeholder: "#a3a9b1",
   blocked: "#eceef1",
   checkedIn: "#2e7d4f",
   confirmed: "#2b5f9e",

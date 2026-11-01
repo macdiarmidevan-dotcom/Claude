@@ -42,7 +42,6 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, course, stat
   const [cancelling, setCancelling] = useState<string>();
   // Carts waiting on their drivers' waiver signatures before they're saved.
   const [signing, setSigning] = useState<{ booking: SheetBooking; carts: string[]; unsigned: string[]; sendOff: boolean; waiver: Waiver }>();
-  const [note, setNote] = useState(teeTime.note ?? "");
   const [guestsFor, setGuestsFor] = useState<{ id: string; count: number }>();
   // Weather cut the round short: credit for later (a rain check) or money back (a refund).
   const [creditFor, setCreditFor] = useState<{ id: string; kind: "rain_check" | "refund" }>();
@@ -384,17 +383,9 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, course, stat
 
       {!focused && (
         <>
-          <Text style={styles.section}>Tee time</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="Note, e.g. Ladies league"
-            value={note}
-            onChangeText={setNote}
-            onBlur={() => note !== (teeTime.note ?? "") && run(() => client.setTeeTime(teeTime.id, { note: note || null }))}
-          />
           <View style={styles.actions}>
             {teeTime.status === "open" ? (
-              <Action label="Block this time" onPress={() => run(() => client.setTeeTime(teeTime.id, { status: "blocked", note: note || null }))} />
+              <Action label="Block this time" onPress={() => run(() => client.setTeeTime(teeTime.id, { status: "blocked" }))} />
             ) : (
               <Action label="Reopen this time" primary onPress={() => run(() => client.setTeeTime(teeTime.id, { status: "open" }))} />
             )}
