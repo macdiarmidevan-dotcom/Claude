@@ -12,7 +12,7 @@ export const colors = {
   muted: "#5f6670",
   /** Example text inside an empty input. */
   placeholder: "#a3a9b1",
-  blocked: "#eceef1",
+  blocked: "#d6dade",
   checkedIn: "#2e7d4f",
   confirmed: "#2b5f9e",
   noShow: "#b3261e",
@@ -33,11 +33,11 @@ export const radius = 3;
  * white text, and every state also has its own mark and words, so color is never the only cue.
  */
 export const slotColor = {
-  booked: "#2f6db5",
-  prepaid: "#1e3f6e",
-  checked_in: "#b25a00",
-  teed_off: "#2d7a45",
-  no_show: "#b3261e",
+  booked: "#1d5aa6",
+  prepaid: "#132d52",
+  checked_in: "#8f4700",
+  teed_off: "#1d5e33",
+  no_show: "#961c17",
 } as const;
 
 export type SlotState = keyof typeof slotColor;

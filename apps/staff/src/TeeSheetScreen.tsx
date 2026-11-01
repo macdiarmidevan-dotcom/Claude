@@ -671,14 +671,14 @@ function TeeTimeRow({ teeTime, priceCents, compact, selected, isNext, past, onPr
         styles.row,
         hovered && { backgroundColor: "#f7f8fa" },
         selected && styles.rowSelected,
-        past && { opacity: 0.6 },
         moveTarget === "ok" && styles.rowDropOk,
         moveTarget === "full" && styles.rowDropFull,
         focused && styles.focusRing,
       ]}
     >
       <View style={[styles.timeCol, compact && { width: 46 }]}>
-        <Text style={[styles.rowTime, compact && { fontSize: 14 }]}>{clock(teeTime.localTime)}</Text>
+        {/* Earlier tee times today: the time goes grey, the players keep their full colors. */}
+        <Text style={[styles.rowTime, compact && { fontSize: 14 }, past && { color: colors.muted }]}>{clock(teeTime.localTime)}</Text>
         {isNext && <Text style={styles.next}>NEXT</Text>}
       </View>
       {priceCents !== undefined && (
@@ -709,7 +709,7 @@ function TeeTimeRow({ teeTime, priceCents, compact, selected, isNext, past, onPr
                   .map((x, i) =>
                     x.booking ? null : (
                       <View key={`open${i}`} style={[styles.slot, styles.slotOpen, ghost(i) && styles.slotGhost]}>
-                        {!ghost(i) && <Icon name="plusCircle" size={14} color="#a3a9b1" />}
+                        {!ghost(i) && <Icon name="plusCircle" size={14} color="#8a919a" />}
                       </View>
                     ),
                   )
@@ -736,7 +736,7 @@ function TeeTimeRow({ teeTime, priceCents, compact, selected, isNext, past, onPr
               </View>
             ) : (
               <View key={i} style={[styles.slot, styles.slotOpen]} accessibilityLabel="Open">
-                {i === firstOpen && teeTime.note ? <Text style={styles.openText} numberOfLines={1}>{teeTime.note}</Text> : <Icon name="plusCircle" size={15} color="#a3a9b1" />}
+                {i === firstOpen && teeTime.note ? <Text style={styles.openText} numberOfLines={1}>{teeTime.note}</Text> : <Icon name="plusCircle" size={15} color="#8a919a" />}
               </View>
             ),
           )}
@@ -880,7 +880,7 @@ const styles = StyleSheet.create({
   legendMark: { color: "#fff", fontSize: 10, fontWeight: "700" },
   legendText: { fontSize: 12, color: colors.text },
   hour: { height: HOUR_HEIGHT, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12 },
-  hourPill: { backgroundColor: "#e4e7eb", borderRadius: 3, paddingHorizontal: 8, paddingVertical: 3 },
+  hourPill: { backgroundColor: "#d9dde2", borderRadius: 3, paddingHorizontal: 8, paddingVertical: 3 },
   hourText: { fontSize: 11, fontWeight: "700", color: colors.muted, letterSpacing: 0.5 },
   hourLine: { flex: 1, height: 1, backgroundColor: colors.border },
   row: { height: ROW_HEIGHT, flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 12, backgroundColor: colors.card },
@@ -888,11 +888,11 @@ const styles = StyleSheet.create({
   timeCol: { width: 52 },
   rowTime: { fontSize: 15, fontWeight: "700", color: colors.text, fontVariant: ["tabular-nums"] },
   next: { fontSize: 9, fontWeight: "800", color: colors.primary, letterSpacing: 1 },
-  price: { width: 64, height: 24, borderRadius: 3, backgroundColor: "#eef0f2", alignItems: "center", justifyContent: "center" },
+  price: { width: 64, height: 24, borderRadius: 3, backgroundColor: "#e2e5e9", alignItems: "center", justifyContent: "center" },
   priceText: { fontSize: 12, fontWeight: "600", color: colors.text, fontVariant: ["tabular-nums"] },
   slots: { flex: 1, flexDirection: "row", gap: 4, minWidth: 0 },
   slot: { flex: 1, height: 28, borderRadius: 3, justifyContent: "center", paddingHorizontal: 8, minWidth: 0 },
-  slotOpen: { backgroundColor: "#eef0f2", alignItems: "center" },
+  slotOpen: { backgroundColor: "#e2e5e9", alignItems: "center" },
   slotText: { color: "#fff", fontSize: 13, fontWeight: "600" },
   openText: { color: colors.muted, fontSize: 12 },
   blockedBar: { flex: 1, height: 28, borderRadius: 3, backgroundColor: colors.blocked, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 10 },
