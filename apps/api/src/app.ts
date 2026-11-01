@@ -86,6 +86,23 @@ import {
 } from "./events.ts";
 import { ACCOUNT_KEYS, exportJournal, getAccountingSettings, journal, saveAccountingSettings } from "./accounting.ts";
 import {
+  addCarts,
+  addWorkOrderNote,
+  cartsIn,
+  createAsset,
+  createWorkOrder,
+  getAsset,
+  getWorkOrder,
+  listAssets,
+  listWorkOrders,
+  logService,
+  setAssetStatus,
+  setHours,
+  setWorkOrderStatus,
+  updateAsset,
+  updateWorkOrder,
+} from "./fleet.ts";
+import {
   adjustAccount,
   adjustGiftCard,
   findGiftCard,
@@ -229,6 +246,15 @@ const ACTIONS: Record<string, string> = {
   "POST /v1/courses/:slug/house-accounts/statements": "Made house account statements",
   "PUT /v1/courses/:slug/settings/accounting": "Changed accounting settings",
   "POST /v1/courses/:slug/accounting/export": "Exported to accounting",
+  "POST /v1/courses/:slug/fleet": "Added a cart or machine",
+  "POST /v1/courses/:slug/fleet/carts": "Added carts to the fleet",
+  "PATCH /v1/courses/:slug/fleet/:id": "Changed a cart or machine",
+  "POST /v1/courses/:slug/fleet/:id/status": "Changed whether a cart or machine is in service",
+  "POST /v1/courses/:slug/fleet/:id/service": "Logged a service or repair",
+  "POST /v1/courses/:slug/bookings/:id/carts-in": "Marked carts back in",
+  "POST /v1/courses/:slug/work-orders": "Reported a problem",
+  "PATCH /v1/courses/:slug/work-orders/:id": "Changed a work order",
+  "POST /v1/courses/:slug/work-orders/:id/status": "Moved a work order along",
 };
 
 const player = z.object({
@@ -1211,6 +1237,116 @@ export function buildApp(db: Db, opts: { fetchReport?: FetchReport; paymentsFetc
     const { id } = idParams.parse(req.params);
     const { amountCents, method } = paymentBody.parse(req.body);
     return reply.status(201).send(await recordPayment(db, course, id, amountCents, method));
+  });
+
+  // The cart fleet, equipment and work orders. Anyone on staff can report a problem, take a cart
+  // out of service, log a service and move work along; managers set up the fleet and cancel work.
+  const power = z.enum(["gas", "electric", "diesel", "other"]).nullish();
+  const assetFields = {
+    number: z.string().trim().min(1).max(40),
+    model: z.string().trim().max(100).nullish(),
+    power,
+    serial: z.string().trim().max(100).nullish(),
+    serviceEvery: z.number().int().min(1).max(100_000).nullish(),
+    hours: z.number().min(0).max(1_000_000).nullish(),
+    notes: z.string().max(1000).nullish(),
+  };
+  const priority = z.enum(["low", "normal", "high", "urgent"]);
+  const area = z.enum(["carts", "equipment", "course", "clubhouse", "other"]);
+  const dateString = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+  app.get("/v1/courses/:slug/fleet", async (req) => {
+    const q = z.object({ kind: z.enum(["cart", "equipment"]).optional(), retired: z.coerce.boolean().optional() }).parse(req.query);
+    return listAssets(db, await courseFor(req), q);
+  });
+  app.post("/v1/courses/:slug/fleet", async (req, reply) => {
+    const course = await managedCourseFor(req);
+    const body = z.object({ kind: z.enum(["cart", "equipment"]), ...assetFields }).parse(req.body);
+    return reply.status(201).send(await createAsset(db, course, body));
+  });
+  app.post("/v1/courses/:slug/fleet/carts", async (req) => {
+    const course = await managedCourseFor(req);
+    const body = z
+      .object({ from: z.number().int().min(0).max(9999), to: z.number().int().min(0).max(9999), model: assetFields.model, power, serviceEvery: assetFields.serviceEvery })
+      .parse(req.body);
+    return addCarts(db, course, body);
+  });
+  app.get("/v1/courses/:slug/fleet/:id", async (req) => getAsset(db, await courseFor(req), idParams.parse(req.params).id));
+  app.patch("/v1/courses/:slug/fleet/:id", async (req) => {
+    const course = await managedCourseFor(req);
+    const body = z.object({ ...assetFields, number: assetFields.number.optional(), retired: z.boolean().optional() }).parse(req.body);
+    return updateAsset(db, course, idParams.parse(req.params).id, body);
+  });
+  app.post("/v1/courses/:slug/fleet/:id/status", async (req) => {
+    const body = z.object({ status: z.enum(["in_service", "out_of_service"]), note: z.string().max(300).nullish() }).parse(req.body);
+    return setAssetStatus(db, await courseFor(req), idParams.parse(req.params).id, body);
+  });
+  app.post("/v1/courses/:slug/fleet/:id/service", async (req) => {
+    const body = z
+      .object({
+        kind: z.enum(["service", "repair", "inspection"]),
+        note: z.string().max(1000).nullish(),
+        costCents: z.number().int().min(0).max(10_000_000).optional(),
+        hours: assetFields.hours,
+      })
+      .parse(req.body);
+    return logService(db, await courseFor(req), req.staff?.user.id, idParams.parse(req.params).id, body);
+  });
+  app.put("/v1/courses/:slug/fleet/:id/hours", async (req) =>
+    setHours(db, await courseFor(req), idParams.parse(req.params).id, z.object({ hours: z.number().min(0).max(1_000_000) }).parse(req.body).hours),
+  );
+  app.post("/v1/courses/:slug/bookings/:id/carts-in", async (req) => cartsIn(db, await courseFor(req), idParams.parse(req.params).id));
+
+  app.get("/v1/courses/:slug/work-orders", async (req) => {
+    const q = z
+      .object({ status: z.enum(["open", "closed", "all"]).optional(), assetId: z.uuid().optional(), assignedTo: z.uuid().optional(), area: area.optional() })
+      .parse(req.query);
+    return listWorkOrders(db, await courseFor(req), q);
+  });
+  app.post("/v1/courses/:slug/work-orders", async (req, reply) => {
+    const body = z
+      .object({
+        title: z.string().trim().min(1).max(200),
+        details: z.string().max(4000).nullish(),
+        area: area.default("other"),
+        location: z.string().max(200).nullish(),
+        assetId: z.uuid().nullish(),
+        priority: priority.optional(),
+        assignedTo: z.uuid().nullish(),
+        dueDate: dateString.nullish(),
+        outOfService: z.boolean().optional(),
+      })
+      .parse(req.body);
+    return reply.status(201).send(await createWorkOrder(db, await courseFor(req), req.staff?.user.id, body));
+  });
+  app.get("/v1/courses/:slug/work-orders/:id", async (req) => getWorkOrder(db, await courseFor(req), idParams.parse(req.params).id));
+  app.patch("/v1/courses/:slug/work-orders/:id", async (req) => {
+    const body = z
+      .object({
+        title: z.string().trim().min(1).max(200).optional(),
+        details: z.string().max(4000).nullish(),
+        location: z.string().max(200).nullish(),
+        priority: priority.optional(),
+        assignedTo: z.uuid().nullish(),
+        dueDate: dateString.nullish(),
+        costCents: z.number().int().min(0).max(10_000_000).optional(),
+      })
+      .parse(req.body);
+    return updateWorkOrder(db, await courseFor(req), idParams.parse(req.params).id, body);
+  });
+  app.post("/v1/courses/:slug/work-orders/:id/status", async (req) => {
+    const body = z
+      .object({
+        status: z.enum(["open", "in_progress", "on_hold", "done", "cancelled"]),
+        note: z.string().max(2000).nullish(),
+        backInService: z.boolean().optional(),
+        costCents: z.number().int().min(0).max(10_000_000).optional(),
+      })
+      .parse(req.body);
+    return setWorkOrderStatus(db, await courseFor(req), req.staff?.user.id, idParams.parse(req.params).id, body, req.apiKey!.role === "manager");
+  });
+  app.post("/v1/courses/:slug/work-orders/:id/notes", async (req) => {
+    const { note } = z.object({ note: z.string().trim().min(1).max(2000) }).parse(req.body);
+    return addWorkOrderNote(db, await courseFor(req), req.staff?.user.id, idParams.parse(req.params).id, note);
   });
 
   app.put("/v1/courses/:slug/bookings/:id/carts", async (req) => {
