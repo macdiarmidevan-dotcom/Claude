@@ -23,11 +23,15 @@ interface Props {
   onClose: () => void;
   /** The group whose name was tapped on the tee sheet: shown highlighted and scrolled to. */
   focusBookingId?: string;
+  /** The player tapped in that group: 0 is the golfer who booked, then their guests. */
+  focusPlayer?: number;
+  /** Back from one group to the whole tee time (every group, walk-ins and the time's note). */
+  onShowAll?: () => void;
   /** Guests dragged onto a group on the tee sheet, waiting for staff to confirm. */
   guestRequest?: { bookingId: string; count: number; key: number };
 }
 
-export function TeeTimePanel({ client, teeTime, sheet, courseHoles, course, station, isManager = false, onOpenGolfer, onChanged, onClose, focusBookingId, guestRequest }: Props) {
+export function TeeTimePanel({ client, teeTime, sheet, courseHoles, course, station, isManager = false, onOpenGolfer, onChanged, onClose, focusBookingId, focusPlayer, onShowAll, guestRequest }: Props) {
   const price = (p: { players: number; holes: number; resident: boolean; riding: boolean }) => priceRound(course, teeTime.startsAt, p);
   const [error, setError] = useState<string>();
   const [moving, setMoving] = useState<SheetBooking>();
@@ -57,6 +61,27 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, course, stat
   }, [focusBookingId]);
   const spotsLeft = teeTime.maxPlayers - teeTime.bookedPlayers;
   const active = teeTime.bookings.filter((b) => b.status !== "cancelled");
+  // Tapping a name opens just that group; tapping an open spot opens the whole time, walk-ins and all.
+  const focused = focusBookingId ? active.find((b) => b.id === focusBookingId) : undefined;
+  const shown = focused ? [focused] : active;
+  // Players picked in a group, starting with the one whose name was tapped.
+  const [picked, setPicked] = useState<{ id: string; players: number[] }>();
+  useEffect(() => {
+    setPicked(focusBookingId ? { id: focusBookingId, players: [focusPlayer ?? 0] } : undefined);
+  }, [focusBookingId, focusPlayer]);
+  const togglePlayer = (b: SheetBooking, i: number) => {
+    const now = picked?.id === b.id ? picked.players : [];
+    setPicked({ id: b.id, players: now.includes(i) ? now.filter((x) => x !== i) : [...now, i].sort((x, y) => x - y) });
+  };
+  async function removePicked(b: SheetBooking, players: number[]) {
+    // Guests aren't named, so taking some off just lowers the count; the golfer who booked goes with the whole group.
+    if (players.length < b.players && players.includes(0)) {
+      setError(`${b.customerName} booked this group, so they can only come off with everyone. Remove the whole group, or pick just guests.`);
+      return;
+    }
+    setPicked(undefined);
+    await run(() => (players.length >= b.players ? client.cancel(b.id) : client.removePlayers(b.id, players.length)));
+  }
 
   async function run(fn: () => Promise<unknown>) {
     setError(undefined);
@@ -84,9 +109,9 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, course, stat
 
       {error && <Text style={styles.error} accessibilityLiveRegion="assertive" role="alert">{error}</Text>}
 
-      <Text style={styles.section}>Groups</Text>
+      <Text style={styles.section}>{focused ? "Group" : "Groups"}</Text>
       {active.length === 0 && <Text style={styles.muted}>No one booked yet.</Text>}
-      {active.map((b) => (
+      {shown.map((b) => (
         <View
           key={b.id}
           style={[styles.booking, b.id === focusBookingId && styles.bookingFocus]}
@@ -113,6 +138,27 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, course, stat
             {b.players} {b.players === 1 ? "player" : "players"} · {b.holes} holes · {money(b.totalCents)}
             {b.customerPhone ? ` · ${b.customerPhone}` : ""}
           </Text>
+          {b.players > 1 && (
+            <View style={[styles.players, { marginTop: 6 }]} accessibilityLabel="Players in this group">
+              {Array.from({ length: b.players }, (_, i) => {
+                const on = picked?.id === b.id && picked.players.includes(i);
+                return (
+                  <Pressable
+                    key={i}
+                    accessibilityRole="checkbox"
+                    accessibilityState={{ checked: on }}
+                    onPress={() => togglePlayer(b, i)}
+                    style={({ focused: f }: WebPress) => [styles.player, on && styles.playerOn, f && { outlineColor: colors.focus, outlineWidth: 2, outlineStyle: "solid" } as object]}
+                  >
+                    <Text style={[styles.playerText, on && { color: "#fff" }]} numberOfLines={1}>
+                      {on ? "✓ " : ""}
+                      {i === 0 ? b.customerName : `Guest ${i}`}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          )}
           <PaymentLine booking={b} />
           {station === "proshop" && (
             <Text style={[styles.account, !b.golferId && { color: colors.warn }]}>
@@ -163,9 +209,16 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, course, stat
               {b.status === "confirmed" && <Action label="No-show" onPress={() => run(() => client.noShow(b.id))} />}
               {b.status === "no_show" && <Action label="Undo no-show" onPress={() => run(() => client.undoNoShow(b.id))} />}
               {(b.status === "confirmed" || b.status === "checked_in") && <Action label="Move" onPress={() => setMoving(b)} />}
-              {(b.status === "confirmed" || b.status === "no_show") && (
-                <Action label="Remove" danger onPress={() => setCancelling(b.id)} />
-              )}
+              {(b.status === "confirmed" || b.status === "no_show") &&
+                (picked?.id === b.id && picked.players.length > 0 && b.players > 1 ? (
+                  <Action
+                    label={picked.players.length >= b.players ? "Remove whole group" : `Remove ${picked.players.length === 1 ? "this player" : `${picked.players.length} players`}`}
+                    danger
+                    onPress={() => removePicked(b, picked.players)}
+                  />
+                ) : (
+                  <Action label="Remove" danger onPress={() => setCancelling(b.id)} />
+                ))}
             </View>
           )}
           {guestsFor?.id === b.id && (
@@ -306,7 +359,15 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, course, stat
         />
       )}
 
-      {teeTime.status === "open" && spotsLeft > 0 && (
+      {focused && (
+        <Pressable accessibilityRole="button" onPress={onShowAll} hitSlop={6} style={{ marginTop: 4, alignSelf: "flex-start" }}>
+          <Text style={styles.link}>
+            {active.length > 1 ? `Show everyone at ${formatTime(teeTime.localTime)}` : `Show the whole ${formatTime(teeTime.localTime)} tee time`}
+          </Text>
+        </Pressable>
+      )}
+
+      {!focused && teeTime.status === "open" && spotsLeft > 0 && (
         <WalkInForm
           maxPlayers={spotsLeft}
           courseHoles={courseHoles}
@@ -332,21 +393,25 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, course, stat
         />
       )}
 
-      <Text style={styles.section}>Tee time</Text>
-      <TextInput
-        style={styles.input}
-        placeholder="Note, e.g. Ladies league"
-        value={note}
-        onChangeText={setNote}
-        onBlur={() => note !== (teeTime.note ?? "") && run(() => client.setTeeTime(teeTime.id, { note: note || null }))}
-      />
-      <View style={styles.actions}>
-        {teeTime.status === "open" ? (
-          <Action label="Block this time" onPress={() => run(() => client.setTeeTime(teeTime.id, { status: "blocked", note: note || null }))} />
-        ) : (
-          <Action label="Reopen this time" primary onPress={() => run(() => client.setTeeTime(teeTime.id, { status: "open" }))} />
-        )}
-      </View>
+      {!focused && (
+        <>
+          <Text style={styles.section}>Tee time</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="Note, e.g. Ladies league"
+            value={note}
+            onChangeText={setNote}
+            onBlur={() => note !== (teeTime.note ?? "") && run(() => client.setTeeTime(teeTime.id, { note: note || null }))}
+          />
+          <View style={styles.actions}>
+            {teeTime.status === "open" ? (
+              <Action label="Block this time" onPress={() => run(() => client.setTeeTime(teeTime.id, { status: "blocked", note: note || null }))} />
+            ) : (
+              <Action label="Reopen this time" primary onPress={() => run(() => client.setTeeTime(teeTime.id, { status: "open" }))} />
+            )}
+          </View>
+        </>
+      )}
     </ScrollView>
   );
 }
@@ -1267,6 +1332,11 @@ const styles = StyleSheet.create({
   billRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8, paddingVertical: 6, borderBottomWidth: 1, borderColor: colors.border },
   itemChip: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, paddingHorizontal: 10, paddingVertical: 6, backgroundColor: colors.card },
   input: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, padding: 12, fontSize: 14, marginBottom: 10, color: colors.text },
+  players: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  player: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, paddingHorizontal: 10, minHeight: 30, justifyContent: "center", backgroundColor: "#fff", maxWidth: 180 },
+  playerOn: { backgroundColor: colors.primary, borderColor: colors.primary },
+  playerText: { fontSize: 13, color: colors.text, fontWeight: "600" },
+  link: { color: colors.primaryText, fontSize: 14, fontWeight: "600", textDecorationLine: "underline" },
   toggle: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, minWidth: 44, minHeight: 34, paddingHorizontal: 12, alignItems: "center", justifyContent: "center", marginRight: 6, marginBottom: 4 },
   toggleOn: { backgroundColor: colors.primary, borderColor: colors.primary },
 });

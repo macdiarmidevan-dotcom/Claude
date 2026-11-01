@@ -43,6 +43,8 @@ export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu,
   const [guestRequest, setGuestRequest] = useState<{ bookingId: string; count: number; key: number }>();
   // The group whose name was tapped, so the panel can bring it to the top of the eye line.
   const [focusId, setFocusId] = useState<string>();
+  // Which player in that group was tapped: 0 is the golfer who booked, then their guests.
+  const [focusPlayer, setFocusPlayer] = useState<number>();
   // A group being dragged up or down to another tee time, and the time it's over right now.
   const [moveDrag, setMoveDrag] = useState<{ booking: SheetBooking; targetId?: string; ok: boolean }>();
   const [notice, setNotice] = useState<{ text: string; undo?: () => void; key: number }>();
@@ -272,6 +274,8 @@ export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu,
       onChanged={load}
       onClose={() => setSelectedId(undefined)}
       focusBookingId={focusId}
+      focusPlayer={focusPlayer}
+      onShowAll={() => (setFocusId(undefined), setFocusPlayer(undefined))}
       guestRequest={guestRequest && selected.bookings.some((b) => b.id === guestRequest.bookingId) ? guestRequest : undefined}
     />
   );
@@ -331,9 +335,10 @@ export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu,
                     selected={item.teeTime.id === selectedId}
                     isNext={item.index === nextIndex}
                     past={isToday && nextIndex !== -1 && item.index < nextIndex}
-                    onPress={(bookingId) => {
+                    onPress={(bookingId, player) => {
                       setSelectedId(item.teeTime.id);
                       setFocusId(bookingId);
+                      setFocusPlayer(player);
                     }}
                     onAddGuests={(bookingId, count) => {
                       setSelectedId(item.teeTime.id);
@@ -449,7 +454,7 @@ interface RowProps {
   isNext: boolean;
   past: boolean;
   /** With the booking whose name was tapped, if it was a name rather than the row. */
-  onPress: (bookingId?: string) => void;
+  onPress: (bookingId?: string, player?: number) => void;
   /** The group being dragged to another time, if it's from this row. */
   movingId?: string;
   /** This row is under a group being dragged: "ok" if it has room for them. */
@@ -466,6 +471,8 @@ function TeeTimeRow({ teeTime, priceCents, compact, selected, isNext, past, onPr
   const [slotsWidth, setSlotsWidth] = useState(0);
   // While a name is being dragged: whose group, and how many open spots it covers so far.
   const [drag, setDrag] = useState<{ bookingId: string; count: number }>();
+  // A tap on a name also reaches the row behind it; the row shouldn't then open the whole time instead.
+  const nameTapped = useRef(0);
   const groups = teeTime.bookings.filter((b) => b.status !== "cancelled");
   const blocked = teeTime.status === "blocked";
   // No-shows aren't expected to pay, so they don't count toward what's owed.
@@ -473,9 +480,9 @@ function TeeTimeRow({ teeTime, priceCents, compact, selected, isNext, past, onPr
   const carts = groups.flatMap((b) => b.cartNumbers);
 
   // One slot per player: each group fills as many slots as it has players, in booking order.
-  const slots: { booking?: SheetBooking; first: boolean }[] = [];
-  for (const b of groups) for (let i = 0; i < b.players && slots.length < teeTime.maxPlayers; i++) slots.push({ booking: b, first: i === 0 });
-  while (slots.length < teeTime.maxPlayers) slots.push({ first: false });
+  const slots: { booking?: SheetBooking; first: boolean; player: number }[] = [];
+  for (const b of groups) for (let i = 0; i < b.players && slots.length < teeTime.maxPlayers; i++) slots.push({ booking: b, first: i === 0, player: i });
+  while (slots.length < teeTime.maxPlayers) slots.push({ first: false, player: 0 });
   const open = teeTime.maxPlayers - teeTime.bookedPlayers;
   const firstOpen = slots.findIndex((x) => !x.booking);
   const slotWidth = slotsWidth / teeTime.maxPlayers;
@@ -483,12 +490,15 @@ function TeeTimeRow({ teeTime, priceCents, compact, selected, isNext, past, onPr
   const canGuest = (b: SheetBooking) => !blocked && open > 0 && slotWidth > 0 && b.status !== "no_show" && b.status !== "cancelled";
   // Groups that haven't teed off yet can be dragged up or down to another time.
   const canMove = (b: SheetBooking) => b.status === "confirmed" || b.status === "checked_in";
-  const dragProps = (b: SheetBooking) => ({
+  const dragProps = (b: SheetBooking, player = 0) => ({
     canGuest: canGuest(b),
     canMove: canMove(b),
     maxGuests: open,
     slotWidth,
-    onTap: () => onPress(b.id),
+    onTap: () => {
+      nameTapped.current = Date.now();
+      onPress(b.id, player);
+    },
     onGuestDrag: (count: number) => setDrag(count ? { bookingId: b.id, count } : undefined),
     onGuestDrop: (count: number) => {
       setDrag(undefined);
@@ -517,7 +527,7 @@ function TeeTimeRow({ teeTime, priceCents, compact, selected, isNext, past, onPr
       accessibilityRole="button"
       accessibilityLabel={`${formatTime(teeTime.localTime)}${isNext ? ", next tee time" : ""}: ${spoken}`}
       accessibilityState={{ selected }}
-      onPress={() => onPress()}
+      onPress={() => Date.now() - nameTapped.current > 400 && onPress()}
       style={({ hovered, focused }: WebPress) => [
         styles.row,
         hovered && { backgroundColor: "#f7f8f4" },
@@ -559,7 +569,7 @@ function TeeTimeRow({ teeTime, priceCents, compact, selected, isNext, past, onPr
             s.booking ? (
               <DragName
                 key={i}
-                {...dragProps(s.booking)}
+                {...dragProps(s.booking, s.player)}
                 // Only the group's name slides; the guest spots behind it just open the group.
                 canGuest={s.first && canGuest(s.booking)}
                 canMove={s.first && canMove(s.booking)}
