@@ -96,11 +96,22 @@ export const HELP_ARTICLES: HelpArticle[] = [
     title: "Frost and weather delays",
     summary: "Push the tee sheet back and let golfers know.",
     body: [
-      "Tap Weather delay… above the tee sheet. Pick the reason (frost, fog, rain, lightning, heat, course or other), the time the delay starts from, and how many minutes to push back.",
+      "Tap the cloud button at the top of the tee sheet, or Add, then Weather delay. Pick the reason (frost, fog, rain, lightning, heat, course or other), the time the delay starts from, and how many minutes to push back.",
       "You can text or email every golfer whose time moved. The delay can be undone from the same place.",
       "The delay moves times in this tee sheet only. Don't also move them in your booking provider (for example TeeItUp), or they'll be pushed back twice.",
     ],
     keywords: ["frost", "rain", "fog", "lightning", "delay", "push back", "weather"],
+  },
+  {
+    id: "radar",
+    category: "tee-sheet",
+    title: "Weather radar",
+    summary: "See rain and storms coming before you call a delay.",
+    body: [
+      "Open Radar in the menu to see the last hour of rain and storms around the course from the National Weather Service. It refreshes every few minutes, or tap Refresh.",
+      "Open live map shows the full, zoomable radar. Each device can pick its own radar station under Radar station; River Bend uses KLOT.",
+    ],
+    keywords: ["radar", "weather", "storm", "rain", "lightning", "map"],
   },
   {
     id: "sync",
@@ -229,6 +240,29 @@ export const HELP_ARTICLES: HelpArticle[] = [
       "Golfers earn points on what they spend. Managers set how many points equal a dollar off.",
     ],
     keywords: ["punch card", "loyalty", "points", "rewards", "prepaid"],
+  },
+  {
+    id: "pricing",
+    category: "shop",
+    title: "Green fee rates",
+    summary: "Set what each round costs by day, time, residency and age.",
+    body: [
+      "Pricing in the menu lists every green fee and replay rate. Managers can add, edit and remove rates; everyone else can only look. It isn't shown on the starter station.",
+      "Each rate covers some days (Mon–Thu, Fri–Sun and holidays, or any mix), optional hours, residents, nonresidents or everyone, and all ages or only adults, seniors or juniors. A replay rate is charged for each extra loop in the same round.",
+      "A player pays the most specific rate that fits: a senior rate beats an everyone rate, and a rate with hours beats an all-day one. Bookings already made keep their price.",
+    ],
+    keywords: ["pricing", "price", "rates", "green fee", "twilight", "senior", "resident", "replay"],
+  },
+  {
+    id: "add-ons",
+    category: "shop",
+    title: "Add-ons: carts and rentals",
+    summary: "Price the extras golfers add to a round.",
+    body: [
+      "Add-ons in the menu lists extras such as the gas cart, pull carts and club rental, each priced per person. Managers can add, reprice and remove them.",
+      "The gas cart is what riding golfers pay, so it can be repriced but not removed.",
+    ],
+    keywords: ["add-ons", "addons", "cart fee", "gas cart", "pull cart", "rental", "clubs", "extras"],
   },
   // Events
   {

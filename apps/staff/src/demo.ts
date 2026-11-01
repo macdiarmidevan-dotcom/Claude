@@ -1,5 +1,6 @@
 // A pretend course that runs entirely in the browser, for showing the app without a server.
 // Only built in when EXPO_PUBLIC_DEMO=1. Nothing is saved: reloading the page starts over.
+import type { RateRule } from "@golf/core";
 import { answerFromArticles, generateTeeTimes, parseTeeSheetCsv, quotePlayer, riverBend, riverBendAddOns, riverBendRates, riverBendTeeSheet } from "@golf/core";
 import {
   ApiError,
@@ -95,6 +96,9 @@ import {
   type Waiver,
   type WaiverSignature,
   type WalkIn,
+  type PriceAddOn,
+  type PriceRate,
+  type RateInput,
 } from "./api";
 import { addDays, todayIn, weekStart } from "./dates";
 import { formatTime, money } from "./theme";
@@ -131,6 +135,32 @@ const typeRef = (id: string) => {
   const t = employeeTypes.find((x) => x.id === id)!;
   return { id: t.id, name: t.name };
 };
+// Pricing the demo's managers can change; quotes and the tee sheet read it.
+const priceRates: PriceRate[] = riverBendRates.map((r, i) => ({
+  id: `rate-${i}`,
+  code: r.id,
+  name: r.name,
+  priceCents: r.priceCents,
+  days: r.days,
+  startTime: r.startTime ?? null,
+  endTime: r.endTime ?? null,
+  residency: r.residency ?? null,
+  ageGroups: r.ageGroups ?? null,
+  isReplay: r.isReplay ?? false,
+  active: true,
+}));
+const priceAddOns: PriceAddOn[] = riverBendAddOns.map((a, i) => ({ id: `addon-${i}`, ...a, active: true, locked: a.code === "gas_cart" }));
+const liveRates = (): RateRule[] =>
+  priceRates.filter((r) => r.active).map((r) => ({ id: r.code, name: r.name, priceCents: r.priceCents, days: r.days, startTime: r.startTime, endTime: r.endTime, residency: r.residency, ageGroups: r.ageGroups, isReplay: r.isReplay }));
+const liveAddOns = () => priceAddOns.filter((a) => a.active).map(({ code, name, priceCents }) => ({ code, name, priceCents }));
+const cartPrice = () => priceAddOns.find((x) => x.code === "gas_cart")!.priceCents;
+const slugOf = (name: string, taken: string[], sep: string) => {
+  const base = name.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().replace(/ /g, sep).slice(0, 40) || "item";
+  let code = base;
+  for (let i = 2; taken.includes(code); i++) code = `${base}${sep}${i}`;
+  return code;
+};
+
 const accounts: (StaffUser & { password: string })[] = [
   { id: "u-1", name: "Morgan Ellis", email: "manager@riverbend.example", role: "manager", employeeType: null, active: true, lastLoginAt: null, password: DEMO_PASSWORD },
   { id: "u-2", name: "Jordan Price", email: "proshop@riverbend.example", role: "staff", employeeType: typeRef("et-1"), active: true, lastLoginAt: null, password: DEMO_PASSWORD },
@@ -436,10 +466,9 @@ export function createDemoClient(apiKey: string): Client {
     };
   }
 
-  const cartPrice = riverBendAddOns.find((x) => x.code === "gas_cart")!.priceCents;
   // The demo keeps one total per booking; carts are one per rider, the rest is green fees.
   function fees(b: Pick<DemoBooking, "totalCents" | "riding" | "players">) {
-    const cartCents = b.riding ? Math.min(b.totalCents, b.players * cartPrice) : 0;
+    const cartCents = b.riding ? Math.min(b.totalCents, b.players * cartPrice()) : 0;
     return { greenFeeCents: b.totalCents - cartCents, cartCents };
   }
 
@@ -683,8 +712,8 @@ export function createDemoClient(apiKey: string): Client {
     if (walkIn.players.length > left) throw conflict("not_enough_spots", `Only ${left} spot${left === 1 ? "" : "s"} left`);
     const loops = Math.max(1, Math.round(walkIn.holes / riverBend.holes));
     let total = 0;
-    for (const p of walkIn.players) total += quotePlayer(riverBendRates, p, { startsAt: t.startsAt, timeZone: riverBend.timeZone }, loops).totalCents;
-    for (const a of walkIn.addOns) total += (riverBendAddOns.find((x) => x.code === a.code)?.priceCents ?? 0) * a.quantity;
+    for (const p of walkIn.players) total += quotePlayer(liveRates(), p, { startsAt: t.startsAt, timeZone: riverBend.timeZone }, loops).totalCents;
+    for (const a of walkIn.addOns) total += (liveAddOns().find((x) => x.code === a.code)?.priceCents ?? 0) * a.quantity;
     const b: DemoBooking = {
       id: id(),
       teeTimeId: t.id,
@@ -1002,7 +1031,7 @@ export function createDemoClient(apiKey: string): Client {
       const loops = Math.max(1, Math.round(holes / riverBend.holes));
       const total =
         row.totalCents ??
-        row.players * quotePlayer(riverBendRates, { residency: "nonresident", ageGroup: "adult" }, { startsAt: t.startsAt, timeZone: riverBend.timeZone }, loops).totalCents;
+        row.players * quotePlayer(liveRates(), { residency: "nonresident", ageGroup: "adult" }, { startsAt: t.startsAt, timeZone: riverBend.timeZone }, loops).totalCents;
       if (!existing) {
         bookings.push({
           id: id(), teeTimeId: t.id, customerName: row.name, customerPhone: row.phone ?? null, golferId: null, players: row.players, holes,
@@ -1574,7 +1603,50 @@ export function createDemoClient(apiKey: string): Client {
   }, 120));
 
   return {
-    course: () => reply(() => ({ ...riverBend, addOns: riverBendAddOns, rates: riverBendRates })),
+    course: () => reply(() => ({ ...riverBend, addOns: liveAddOns(), rates: liveRates() })),
+    rates: () => reply(() => priceRates.filter((r) => r.active)),
+    addRate: (input: RateInput) =>
+      reply(() => {
+        managerOnly();
+        if (!input.name.trim()) throw new ApiError(400, "invalid_request", "Give the rate a name");
+        if (!input.days.length) throw new ApiError(400, "invalid_request", "Pick at least one day");
+        if (input.startTime && input.endTime && input.startTime >= input.endTime) throw new ApiError(400, "bad_window", "The start time must be before the end time");
+        const r: PriceRate = { ...input, name: input.name.trim(), ageGroups: input.ageGroups?.length ? input.ageGroups : null, id: id(), code: slugOf(input.name, priceRates.map((x) => x.code), "-"), active: true };
+        priceRates.push(r);
+        log("Added a rate");
+        return r;
+      }),
+    updateRate: (rateId: string, patch: Partial<RateInput> & { active?: boolean }) =>
+      reply(() => {
+        managerOnly();
+        const r = priceRates.find((x) => x.id === rateId);
+        if (!r) throw new ApiError(404, "not_found", "Rate not found");
+        const next = { ...r, ...patch };
+        if (next.startTime && next.endTime && next.startTime >= next.endTime) throw new ApiError(400, "bad_window", "The start time must be before the end time");
+        Object.assign(r, next, { ageGroups: next.ageGroups?.length ? next.ageGroups : null });
+        log("Changed a rate");
+        return { ...r };
+      }),
+    addOns: () => reply(() => priceAddOns.filter((a) => a.active)),
+    addAddOn: (input: { name: string; priceCents: number }) =>
+      reply(() => {
+        managerOnly();
+        if (!input.name.trim()) throw new ApiError(400, "invalid_request", "Give the add-on a name");
+        const a: PriceAddOn = { id: id(), code: slugOf(input.name, priceAddOns.map((x) => x.code), "_"), name: input.name.trim(), priceCents: input.priceCents, active: true, locked: false };
+        priceAddOns.push(a);
+        log("Added an add-on");
+        return a;
+      }),
+    updateAddOn: (addOnId: string, patch: { name?: string; priceCents?: number; active?: boolean }) =>
+      reply(() => {
+        managerOnly();
+        const a = priceAddOns.find((x) => x.id === addOnId);
+        if (!a) throw new ApiError(404, "not_found", "Add-on not found");
+        if (patch.active === false && a.locked) throw new ApiError(409, "add_on_in_use", "The gas cart prices riding golfers, so it can't be removed. Change its price instead.");
+        Object.assign(a, patch);
+        log("Changed an add-on");
+        return { ...a };
+      }),
     teeSheet: (date: string) =>
       reply(() => {
         seedEvents();
@@ -1617,8 +1689,8 @@ export function createDemoClient(apiKey: string): Client {
           if (payment(b).paidCents > 0) throw conflict("already_paid", "This group has already paid, so its price can't change here");
           const t = teeTimes.get(b.teeTimeId)!;
           const loops = Math.max(1, Math.round(b.holes / riverBend.holes));
-          const fee = quotePlayer(riverBendRates, { residency: round.residency, ageGroup: "adult" }, { startsAt: t.startsAt, timeZone: riverBend.timeZone }, loops).totalCents;
-          const cart = round.riding ? riverBendAddOns.find((x) => x.code === "gas_cart")!.priceCents : 0;
+          const fee = quotePlayer(liveRates(), { residency: round.residency, ageGroup: "adult" }, { startsAt: t.startsAt, timeZone: riverBend.timeZone }, loops).totalCents;
+          const cart = round.riding ? cartPrice() : 0;
           b.totalCents = (fee + cart) * b.players;
           b.resident = round.residency === "resident";
           b.riding = round.riding;
@@ -2653,7 +2725,7 @@ export function createDemoClient(apiKey: string): Client {
         if (g.count > left) throw conflict("not_enough_spots", `Only ${left} spot${left === 1 ? "" : "s"} left`);
         const loops = Math.max(1, Math.round(b.holes / riverBend.holes));
         const player = { residency: g.residency ?? "nonresident", ageGroup: "adult" } as const;
-        const each = quotePlayer(riverBendRates, player, { startsAt: t.startsAt, timeZone: riverBend.timeZone }, loops).totalCents + (g.riding ? riverBendAddOns.find((x) => x.code === "gas_cart")!.priceCents : 0);
+        const each = quotePlayer(liveRates(), player, { startsAt: t.startsAt, timeZone: riverBend.timeZone }, loops).totalCents + (g.riding ? cartPrice() : 0);
         b.players += g.count;
         b.totalCents += each * g.count;
         if (g.riding) b.riding = true;

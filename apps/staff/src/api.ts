@@ -14,6 +14,8 @@ export interface Settings {
   station: Station;
   /** The card reader next to this device, when the course has connected a processor. */
   terminalId?: string;
+  /** The weather radar station this device shows, e.g. KLOT. */
+  radarStation?: string;
 }
 
 export interface Course {
@@ -23,6 +25,33 @@ export interface Course {
   holes: number;
   addOns: { code: string; name: string; priceCents: number }[];
   rates: RateRule[];
+}
+
+/** A green fee rate as managers set it on the Pricing page. */
+export interface PriceRate {
+  id: string;
+  code: string;
+  name: string;
+  priceCents: number;
+  /** 1-7 are Monday to Sunday; 8 is holidays. */
+  days: number[];
+  startTime: string | null;
+  endTime: string | null;
+  residency: "resident" | "nonresident" | null;
+  ageGroups: ("adult" | "senior" | "junior")[] | null;
+  isReplay: boolean;
+  active: boolean;
+}
+export type RateInput = Pick<PriceRate, "name" | "priceCents" | "days" | "startTime" | "endTime" | "residency" | "ageGroups" | "isReplay">;
+
+export interface PriceAddOn {
+  id: string;
+  code: string;
+  name: string;
+  priceCents: number;
+  active: boolean;
+  /** Prices riding, so it can't be removed. */
+  locked: boolean;
 }
 
 export type BookingStatus = "confirmed" | "checked_in" | "teed_off" | "cancelled" | "no_show";
@@ -998,6 +1027,12 @@ function createHttpClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "ap
     sendSupport: (input: { topic: SupportTopic; subject: string; body: string; replyTo: string; page?: string | null }) =>
       request<SupportRequest>("/support", { method: "POST", body: input }),
     supportRequests: () => request<SupportRequest[]>("/support"),
+    rates: () => request<PriceRate[]>("/pricing/rates"),
+    addRate: (input: RateInput) => request<PriceRate>("/pricing/rates", { method: "POST", body: input }),
+    updateRate: (id: string, patch: Partial<RateInput> & { active?: boolean }) => request<PriceRate>(`/pricing/rates/${id}`, { method: "PATCH", body: patch }),
+    addOns: () => request<PriceAddOn[]>("/pricing/add-ons"),
+    addAddOn: (input: { name: string; priceCents: number }) => request<PriceAddOn>("/pricing/add-ons", { method: "POST", body: input }),
+    updateAddOn: (id: string, patch: { name?: string; priceCents?: number; active?: boolean }) => request<PriceAddOn>(`/pricing/add-ons/${id}`, { method: "PATCH", body: patch }),
     setTeeTime: (id: string, patch: { status?: "open" | "blocked"; note?: string | null }) =>
       request(`/tee-times/${id}`, { method: "PATCH", body: patch }),
     book: (walkIn: WalkIn) => request(`/bookings`, { method: "POST", body: { ...walkIn, source: "staff" } }),
