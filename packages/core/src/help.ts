@@ -327,6 +327,20 @@ export const HELP_ARTICLES: HelpArticle[] = [
     managersOnly: true,
   },
   {
+    id: "labor-report",
+    category: "reports",
+    title: "Labor cost and staff pay",
+    summary: "What staff hours cost against the revenue they brought in.",
+    body: [
+      "Set each person's pay first: Staff accounts › Pay, then choose Hourly (dollars an hour) or Salary (dollars a year). Only managers see pay.",
+      "Reports › Labor shows labor cost, hours worked, revenue per labor hour and rounds per labor hour for the dates you pick, with labor cost as a share of revenue over time, cost by job and cost by person.",
+      "Hourly pay counts the hours on the time clock. Hours past 40 in a Monday to Sunday week are overtime at time and a half. Salaries are spread evenly over every day. Hours count on the day the punch started, and someone still clocked in counts once they clock out.",
+      "Anyone with hours but no pay set is flagged, because their hours cost nothing in the report until you set it.",
+    ],
+    keywords: ["labor", "payroll", "wages", "pay rate", "hourly", "salary", "overtime", "labor percent", "cost"],
+    managersOnly: true,
+  },
+  {
     id: "maintenance",
     category: "reports",
     title: "Carts, equipment and work orders",
