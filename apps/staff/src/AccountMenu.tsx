@@ -1,0 +1,294 @@
+import { useEffect, useState } from "react";
+import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import type { Client, Course, Me, StaffFeedback, Station } from "./api";
+import { colors, type WebPress } from "./theme";
+
+// The account menu: tapping your name at the foot of the sidebar opens settings, help, your
+// schedule, feedback, the course you're signed in to, and log out.
+
+export type AccountAction = "settings" | "help" | "schedule";
+
+export function AccountMenu({
+  client,
+  course,
+  me,
+  isManager,
+  station,
+  page,
+  onGo,
+  onSignOut,
+}: {
+  client: Client;
+  course?: Course;
+  me?: Me;
+  isManager: boolean;
+  station: Station;
+  /** Where they are in the app, sent along with feedback. */
+  page: string;
+  onGo: (to: AccountAction) => void;
+  onSignOut: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [dialog, setDialog] = useState<"feedback" | "location">();
+  const pick = (fn: () => void) => () => {
+    setOpen(false);
+    fn();
+  };
+  const items: { label: string; onPress: () => void }[] = [
+    { label: "Settings", onPress: pick(() => onGo("settings")) },
+    { label: "Help", onPress: pick(() => onGo("help")) },
+    { label: "My schedule", onPress: pick(() => onGo("schedule")) },
+    { label: "Send feedback", onPress: pick(() => setDialog("feedback")) },
+    { label: "Location", onPress: pick(() => setDialog("location")) },
+    { label: "Log out", onPress: pick(onSignOut) },
+  ];
+
+  return (
+    <>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Account menu for ${me?.user?.name ?? "this device"}`}
+        accessibilityState={{ expanded: open }}
+        onPress={() => setOpen(!open)}
+        style={({ hovered, focused }: WebPress) => [styles.foot, (hovered || open) && { backgroundColor: "#26292d" }, focused && styles.focus]}
+      >
+        <View style={styles.avatar}>
+          <Text style={styles.avatarText}>{initials(me?.user?.name)}</Text>
+        </View>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={styles.name} numberOfLines={1}>{me?.user?.name ?? "Shared device"}</Text>
+          <Text style={styles.muted}>{isManager ? "Manager" : "Staff"}</Text>
+        </View>
+        <Text style={styles.caret}>{open ? "▾" : "▴"}</Text>
+      </Pressable>
+
+      <Modal transparent visible={open} animationType="fade" onRequestClose={() => setOpen(false)}>
+        <Pressable accessibilityLabel="Close account menu" style={StyleSheet.absoluteFill} onPress={() => setOpen(false)} />
+        <View role="menu" style={styles.popup}>
+          <View style={styles.popupHead}>
+            <Text style={styles.popupName} numberOfLines={1}>{me?.user?.name ?? "Shared device"}</Text>
+            {me?.user?.email ? <Text style={styles.popupSub} numberOfLines={1}>{me.user.email}</Text> : null}
+          </View>
+          {items.map((item, i) => (
+            <Pressable
+              key={item.label}
+              role="menuitem"
+              onPress={item.onPress}
+              style={({ hovered, focused }: WebPress) => [
+                styles.item,
+                i === items.length - 1 && styles.itemLast,
+                (hovered || focused) && { backgroundColor: colors.primaryLight },
+              ]}
+            >
+              <Text style={[styles.itemText, i === items.length - 1 && { color: colors.noShow }]}>{item.label}</Text>
+            </Pressable>
+          ))}
+        </View>
+      </Modal>
+
+      <Modal transparent visible={!!dialog} animationType="fade" onRequestClose={() => setDialog(undefined)}>
+        <View style={styles.backdrop}>
+          <View style={styles.dialog} role="dialog">
+            {dialog === "feedback" ? (
+              <FeedbackForm client={client} page={page} onClose={() => setDialog(undefined)} />
+            ) : (
+              <LocationInfo course={course} station={station} onClose={() => setDialog(undefined)} onSignOut={() => (setDialog(undefined), onSignOut())} />
+            )}
+          </View>
+        </View>
+      </Modal>
+    </>
+  );
+}
+
+const initials = (name?: string) =>
+  (name ?? "?")
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0]!.toUpperCase())
+    .join("");
+
+function FeedbackForm({ client, page, onClose }: { client: Client; page: string; onClose: () => void }) {
+  const [body, setBody] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState<string>();
+
+  async function send() {
+    setBusy(true);
+    setError(undefined);
+    try {
+      await client.sendFeedback({ body: body.trim(), page });
+      setSent(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't send it");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (sent) {
+    return (
+      <>
+        <Text style={styles.title}>Thanks</Text>
+        <Text style={styles.help}>Your feedback is in. Managers see it under Settings.</Text>
+        <View style={styles.actions}>
+          <Button label="Done" primary onPress={onClose} />
+        </View>
+      </>
+    );
+  }
+  return (
+    <>
+      <Text style={styles.title}>Send feedback</Text>
+      <Text style={styles.help}>What's confusing, broken or missing? Your manager reads these.</Text>
+      <TextInput
+        accessibilityLabel="Your feedback"
+        value={body}
+        onChangeText={setBody}
+        multiline
+        autoFocus
+        placeholder="e.g. The waiver screen is hard to read in the sun"
+        style={[styles.input, { minHeight: 110, textAlignVertical: "top" }]}
+      />
+      {error && <Text role="alert" style={styles.error}>{error}</Text>}
+      <View style={styles.actions}>
+        <Button label={busy ? "Sending…" : "Send"} primary disabled={busy || !body.trim()} onPress={send} />
+        <Button label="Cancel" onPress={onClose} />
+      </View>
+    </>
+  );
+}
+
+// "Central Daylight Time" rather than "America/Chicago".
+const zoneName = (timeZone: string) =>
+  new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: "long" }).formatToParts(new Date()).find((p) => p.type === "timeZoneName")?.value ?? timeZone;
+
+function LocationInfo({ course, station, onClose, onSignOut }: { course?: Course; station: Station; onClose: () => void; onSignOut: () => void }) {
+  return (
+    <>
+      <Text style={styles.title}>Location</Text>
+      <Text style={styles.locationName}>{course?.name ?? "Loading…"}</Text>
+      {course && (
+        <Text style={styles.help}>
+          {course.holes} holes · {zoneName(course.timeZone)} · this device is the {station === "proshop" ? "pro shop" : "starter"}
+        </Text>
+      )}
+      <Text style={[styles.help, { marginTop: 10 }]}>Your sign-in is for this course. To work at another location, log out and sign in there.</Text>
+      <View style={styles.actions}>
+        <Button label="Done" primary onPress={onClose} />
+        <Button label="Log out" onPress={onSignOut} />
+      </View>
+    </>
+  );
+}
+
+/** Managers read what staff sent from the account menu, newest first. */
+export function FeedbackList({ client }: { client: Client }) {
+  const [items, setItems] = useState<StaffFeedback[]>();
+  const [error, setError] = useState<string>();
+  useEffect(() => {
+    client.feedback().then(setItems).catch((e) => setError(e.message));
+  }, [client]);
+  if (error) return <Text role="alert" style={styles.error}>{error}</Text>;
+  if (!items) return <ActivityIndicator color={colors.primary} style={{ alignSelf: "flex-start" }} />;
+  if (!items.length) return <Text style={styles.help}>Nothing yet. Staff send feedback from the menu under their name.</Text>;
+  return (
+    <View>
+      {items.map((f) => (
+        <View key={f.id} style={styles.feedback}>
+          <Text style={styles.feedbackBody}>{f.body}</Text>
+          <Text style={styles.meta}>
+            {f.staff ?? "Shared device"}
+            {f.page ? ` · from ${f.page}` : ""} · {new Date(f.at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+          </Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+const HELP: { title: string; body: string }[] = [
+  { title: "Checking a group in", body: "Tap their tee time, then Check in. Every golfer needs an account: search their name, or create one on their first visit. Take payment, add any items, and the group shows as checked in at the shop." },
+  { title: "Starting them off the tee", body: "On the starter station, tap a checked-in group and choose Check in at the tee. Pick their carts; riders sign the cart waiver, then send them off." },
+  { title: "Walk-ins and guests", body: "Tap an open tee time and use Add a walk-in. To add guests to a group, slide the golfer's name to the right across the open spots." },
+  { title: "Moving or removing a group", body: "Drag a group to another time to move it. Tap the tee time and use Remove to take off the whole group or some players. A no-show can be undone if they turn up late." },
+  { title: "Weather", body: "Weather delay… above the tee sheet pushes tee times back and can text or email the golfers. Rain checks and refunds are on a checked-in group's tee time." },
+  { title: "Carts and problems", body: "Reports › Maintenance shows every cart and machine. Report a problem there to take a cart out of service until it's fixed." },
+  { title: "Your shifts", body: "My schedule shows your week. Ask a coworker to swap from a shift; a manager approves it." },
+];
+
+export function HelpScreen() {
+  return (
+    <ScrollView contentContainerStyle={{ padding: 16, maxWidth: 720 }}>
+      {HELP.map((h) => (
+        <View key={h.title} style={styles.helpCard}>
+          <Text role="heading" aria-level={2} style={styles.helpTitle}>{h.title}</Text>
+          <Text style={styles.help}>{h.body}</Text>
+        </View>
+      ))}
+      <Text style={[styles.help, { marginTop: 8 }]}>Still stuck? Use Send feedback in the menu under your name, and a manager will see it.</Text>
+    </ScrollView>
+  );
+}
+
+function Button({ label, onPress, primary, disabled }: { label: string; onPress: () => void; primary?: boolean; disabled?: boolean }) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      disabled={disabled}
+      onPress={onPress}
+      style={({ focused }: WebPress) => [styles.button, primary && styles.buttonPrimary, disabled && { opacity: 0.5 }, focused && styles.focus]}
+    >
+      <Text style={[styles.buttonText, primary && { color: "#fff" }]}>{label}</Text>
+    </Pressable>
+  );
+}
+
+const styles = StyleSheet.create({
+  foot: { flexDirection: "row", alignItems: "center", gap: 10, borderTopWidth: 1, borderColor: "#2e3236", paddingHorizontal: 14, paddingVertical: 12 },
+  avatar: { width: 32, height: 32, borderRadius: 16, backgroundColor: colors.primary, alignItems: "center", justifyContent: "center" },
+  avatarText: { color: "#fff", fontSize: 13, fontWeight: "700" },
+  name: { color: colors.railText, fontSize: 13, fontWeight: "700" },
+  muted: { color: colors.railMuted, fontSize: 12 },
+  caret: { color: colors.railMuted, fontSize: 12 },
+  popup: {
+    position: "absolute",
+    left: 8,
+    bottom: 64,
+    width: 224,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 3,
+    paddingVertical: 4,
+    shadowColor: "#000",
+    shadowOpacity: 0.18,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+  },
+  popupHead: { paddingHorizontal: 14, paddingVertical: 8, borderBottomWidth: 1, borderColor: colors.border, marginBottom: 4 },
+  popupName: { fontSize: 14, fontWeight: "700", color: colors.text },
+  popupSub: { fontSize: 12, color: colors.muted, marginTop: 1 },
+  item: { paddingHorizontal: 14, minHeight: 36, justifyContent: "center" },
+  itemLast: { borderTopWidth: 1, borderColor: colors.border, marginTop: 4 },
+  itemText: { fontSize: 14, color: colors.text },
+  backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)", alignItems: "center", justifyContent: "center", padding: 16 },
+  dialog: { width: "100%", maxWidth: 440, backgroundColor: colors.card, borderRadius: 3, padding: 18 },
+  title: { fontSize: 17, fontWeight: "700", color: colors.text, marginBottom: 6 },
+  locationName: { fontSize: 15, fontWeight: "700", color: colors.text, marginBottom: 2 },
+  help: { color: colors.muted, fontSize: 14, lineHeight: 21 },
+  input: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, padding: 10, fontSize: 14, color: colors.text, backgroundColor: "#fff", marginTop: 10 },
+  error: { color: colors.noShow, marginTop: 8 },
+  actions: { flexDirection: "row", gap: 8, marginTop: 14 },
+  button: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, paddingHorizontal: 14, minHeight: 36, justifyContent: "center", backgroundColor: "#fff" },
+  buttonPrimary: { backgroundColor: colors.primary, borderColor: colors.primary },
+  buttonText: { color: colors.text, fontWeight: "600", fontSize: 14 },
+  focus: { outlineColor: colors.focus, outlineWidth: 2, outlineStyle: "solid" } as object,
+  feedback: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, padding: 10, backgroundColor: colors.card, marginBottom: 8 },
+  meta: { color: colors.muted, fontSize: 12 },
+  feedbackBody: { color: colors.text, fontSize: 14, lineHeight: 20, marginBottom: 4 },
+  helpCard: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, padding: 14, backgroundColor: colors.card, marginBottom: 10 },
+  helpTitle: { fontSize: 15, fontWeight: "700", color: colors.text, marginBottom: 4 },
+});
