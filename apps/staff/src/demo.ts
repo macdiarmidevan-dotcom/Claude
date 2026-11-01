@@ -1,6 +1,6 @@
 // A pretend course that runs entirely in the browser, for showing the app without a server.
 // Only built in when EXPO_PUBLIC_DEMO=1. Nothing is saved: reloading the page starts over.
-import { generateTeeTimes, parseTeeSheetCsv, quotePlayer, riverBend, riverBendAddOns, riverBendRates, riverBendTeeSheet } from "@golf/core";
+import { answerFromArticles, generateTeeTimes, parseTeeSheetCsv, quotePlayer, riverBend, riverBendAddOns, riverBendRates, riverBendTeeSheet } from "@golf/core";
 import {
   ApiError,
   type ActivityEntry,
@@ -14,6 +14,9 @@ import {
   type DelayReason,
   type TeeSheetDelay,
   type StaffFeedback,
+  type HelpTurn,
+  type SupportRequest,
+  type SupportTopic,
   type AudiencePreview,
   type Campaign,
   type CampaignDetail,
@@ -920,6 +923,7 @@ export function createDemoClient(apiKey: string): Client {
   // Weather delays: tee times from a point in the day move later, groups and all.
   const delays: (TeeSheetDelay & { fromAt: string })[] = [];
   const feedback: StaffFeedback[] = [];
+  const support: (SupportRequest & { staffId: string | null })[] = [];
   const DELAY_LABEL: Record<DelayReason, string> = { frost: "Frost", fog: "Fog", rain: "Rain", lightning: "Lightning", heat: "Heat", course: "Course conditions", other: "Weather" };
   function shiftTimes(date: string, fromAt: string, minutes: number) {
     const moved = [...teeTimes.values()].filter((t) => t.date === date && t.startsAt >= fromAt);
@@ -2046,6 +2050,35 @@ export function createDemoClient(apiKey: string): Client {
         return f;
       }),
     feedback: () => reply(() => (managerOnly(), [...feedback])),
+    // The demo has no AI: like the server without an API key, it answers with the closest articles.
+    askHelp: (input: { question: string; history: HelpTurn[]; page?: string | null }) =>
+      reply(() => {
+        if (!input.question.trim()) throw new ApiError(400, "empty_question", "Type a question");
+        return { ...answerFromArticles(input.question), via: "search" as const };
+      }),
+    sendSupport: (input: { topic: SupportTopic; subject: string; body: string; replyTo: string; page?: string | null }) =>
+      reply(() => {
+        if (!input.subject.trim() || !input.body.trim()) throw new ApiError(400, "invalid_request", "Add a subject and a message");
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.replyTo.trim())) throw new ApiError(400, "invalid_request", "Enter an email we can reply to");
+        const r = {
+          id: id(),
+          reference: `SR-${String(10231 + support.length).padStart(5, "0")}`,
+          topic: input.topic,
+          subject: input.subject.trim(),
+          body: input.body.trim(),
+          replyTo: input.replyTo.trim(),
+          page: input.page ?? null,
+          status: "sent" as const,
+          staff: account()?.name ?? null,
+          staffId: account()?.id ?? null,
+          at: new Date().toISOString(),
+        };
+        support.unshift(r);
+        log("Emailed support");
+        return r;
+      }),
+    supportRequests: () =>
+      reply(() => support.filter((r) => role() === "manager" || r.staffId === (account()?.id ?? null)).map(({ staffId: _, ...r }) => r)),
     delayTeeSheet: (input: { date: string; from: string; minutes: number; reason: DelayReason; note?: string | null; notify?: { channels: MessageChannel[]; body?: string | null } | null }) =>
       reply(() => {
         ensureDay(input.date);

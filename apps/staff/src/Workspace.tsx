@@ -19,7 +19,8 @@ import { StationPicker } from "./SetupScreen";
 import { FleetScreen } from "./FleetScreen";
 import { MessagesScreen } from "./MessagesScreen";
 import { ReportsScreen, StartDayForm } from "./ReportsScreen";
-import { AccountMenu, FeedbackList, HelpScreen } from "./AccountMenu";
+import { AccountMenu, FeedbackList } from "./AccountMenu";
+import { HelpCenter } from "./HelpCenter";
 import { colors, type WebPress } from "./theme";
 
 type Section = "tee-sheet" | "import" | "staff" | "customers" | "events" | "food" | "accounts" | "messages" | "reports" | "schedule" | "inventory" | "settings" | "help";
@@ -89,6 +90,8 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
   const [golferId, setGolferId] = useState<string>();
   // "My schedule" in the account menu opens the schedule showing only your own shifts.
   const [onlyMine, setOnlyMine] = useState(false);
+  // The page they opened the help center from, sent along with questions and support requests.
+  const [helpFrom, setHelpFrom] = useState<string | null>(null);
   const openGolfer = (id: string) => {
     setGolferId(id);
     setSection("customers");
@@ -144,6 +147,7 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
           page={SECTIONS.find((s) => s.id === section)?.label ?? section}
           onGo={(to) => {
             setOnlyMine(to === "schedule");
+            if (to === "help" && section !== "help") setHelpFrom(SECTIONS.find((s) => s.id === section)?.label ?? null);
             go(to);
           }}
           onSignOut={signOut}
@@ -229,7 +233,7 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
         ) : section === "help" ? (
           <>
             <Header title="Help center" onOpenMenu={openMenu} />
-            <HelpScreen />
+            <HelpCenter client={client} me={me} isManager={isManager} page={helpFrom} />
           </>
         ) : section === "settings" ? (
           <>
