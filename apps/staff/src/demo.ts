@@ -2449,10 +2449,9 @@ export function createDemoClient(apiKey: string): Client {
         log("Voided a rain check");
         return rcView(r);
       }),
-    refundRound: (bookingId: string, input: { amountCents: number; method: "cash" | "card"; reason: string }) =>
+    refundRound: (bookingId: string, input: { amountCents: number; method: "cash" | "card"; reason?: string }) =>
       reply(() => {
         managerOnly();
-        if (!input.reason.trim()) throw new ApiError(400, "reason_required", "Say why the round is being refunded");
         const b = find(bookingId);
         const m = roundMoney(b);
         const inMethod = b.paid.filter((p) => p.method === input.method).reduce((t, p) => t + p.amountCents, 0);

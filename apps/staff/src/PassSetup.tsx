@@ -87,7 +87,7 @@ export function PassSetup({ client, isManager }: { client: Client; isManager: bo
           Rain checks
         </Text>
         <Text style={styles.help}>
-          When weather cuts a round short, the pro shop gives a rain check from the group's tee time for the holes they didn't play. It's a code they use on a later round.
+          When weather cuts a round short, the pro shop issues a rain check from the group's tee time, worth what they paid.
         </Text>
         {rainDays !== undefined && (isManager ? <RainDaysForm days={rainDays} onSave={(d) => run(() => client.saveRainCheckSettings({ rainCheckDays: d }))} /> : <Text style={styles.text}>Rain checks are good for {rainDays} days.</Text>)}
       </View>
@@ -111,7 +111,7 @@ function LoyaltyText({ s }: { s: LoyaltySettings }) {
     <Text style={styles.text}>
       {s.pointsPerDollar === 0
         ? "Loyalty points are off."
-        : `Golfers earn ${s.pointsPerDollar} ${s.pointsPerDollar === 1 ? "point" : "points"} per dollar on rounds and pro shop sales. ${s.rewardPoints} points take ${money(s.rewardCents)} off a round.`}
+        : `Golfers earn ${s.pointsPerDollar} ${s.pointsPerDollar === 1 ? "point" : "points"} per dollar on rounds and pro shop sales. ${s.rewardPoints} points = ${money(s.rewardCents)} off a round.`}
     </Text>
   );
 }

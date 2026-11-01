@@ -206,7 +206,7 @@ function SellGiftCard({ client, isManager, onClose, onSold }: { client: Client; 
       {error && <Text role="alert" style={styles.error}>{error}</Text>}
       <View style={[styles.row, { marginTop: 8 }]}>
         <Button
-          label={busy ? "Saving…" : cents ? `${method === "comp" ? "Give" : "Take"} ${money(cents)}` : "Sell"}
+          label={busy ? "Saving…" : cents ? `Sell · ${money(cents)}` : "Sell"}
           primary
           disabled={busy || !valid}
           onPress={() => (method === "card" && reader.terminal ? setCharging(true) : sell())}
@@ -507,7 +507,7 @@ function AccountView({ client, id, isManager, onBack }: { client: Client; id: st
             style={[styles.input, { width: 200 }]}
           />
           <TextInput accessibilityLabel="Note" placeholder={method === "check" ? "Check number" : "Note"} value={note} onChangeText={setNote} style={[styles.input, { flex: 1, minWidth: 140 }]} />
-          <Button label={cents && cents > 0 ? `Take ${money(cents)}` : "Take payment"} primary disabled={!cents || cents <= 0} onPress={() => (method === "card" && reader.terminal ? setCharging(true) : pay())} />
+          <Button label={cents && cents > 0 ? `Payment · ${money(cents)}` : "Take payment"} primary disabled={!cents || cents <= 0} onPress={() => (method === "card" && reader.terminal ? setCharging(true) : pay())} />
         </View>
       </View>
 

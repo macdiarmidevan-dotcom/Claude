@@ -847,7 +847,7 @@ export function buildApp(db: Db, opts: { fetchReport?: FetchReport; paymentsFetc
   app.post("/v1/courses/:slug/rain-checks/:id/void", async (req) => voidRainCheck(db, await managedCourseFor(req), idParams.parse(req.params).id));
   app.post("/v1/courses/:slug/bookings/:id/refund", async (req) => {
     const course = await managedCourseFor(req);
-    const body = z.object({ amountCents: z.number().int().positive().max(10_000_000), method: z.enum(["cash", "card"]), reason: z.string().max(300) }).parse(req.body);
+    const body = z.object({ amountCents: z.number().int().positive().max(10_000_000), method: z.enum(["cash", "card"]), reason: z.string().max(300).optional() }).parse(req.body);
     return refundRound(db, course, req.staff?.user.id, idParams.parse(req.params).id, body, (client, cardPaymentId, cents) =>
       refundCardPayment(client, course, processors, cardPaymentId, cents),
     );

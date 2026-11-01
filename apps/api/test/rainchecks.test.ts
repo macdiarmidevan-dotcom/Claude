@@ -106,11 +106,11 @@ describe("rain checks and refunds", () => {
     const cashBefore = (await call(staff, "GET", `/closes/${today}`)).json().expected.cash;
 
     expect((await call(staff, "POST", `/bookings/${b.id}/refund`, { amountCents: 1000, method: "cash", reason: "Frost" })).statusCode).toBe(403);
-    expect((await call(manager, "POST", `/bookings/${b.id}/refund`, { amountCents: 1000, method: "cash", reason: " " })).json().error.code).toBe("reason_required");
     expect((await call(manager, "POST", `/bookings/${b.id}/refund`, { amountCents: 1000, method: "card", reason: "Frost" })).json().error.code).toBe("too_much");
-    const after = (await call(manager, "POST", `/bookings/${b.id}/refund`, { amountCents: 1000, method: "cash", reason: "Frost delay, left after 3" })).json();
+    // No reason needed.
+    const after = (await call(manager, "POST", `/bookings/${b.id}/refund`, { amountCents: 1000, method: "cash" })).json();
     expect(after).toMatchObject({ totalCents: b.totalCents - 1000, payment: { status: "paid", paidCents: b.totalCents - 1000 } });
-    expect(after.lines.some((l: { description: string; totalCents: number }) => l.description.startsWith("Refund:") && l.totalCents < 0)).toBe(true);
+    expect(after.lines.some((l: { description: string; totalCents: number }) => l.description === "Refund" && l.totalCents < 0)).toBe(true);
     expect((await call(staff, "GET", `/closes/${today}`)).json().expected.cash).toBe(cashBefore - 1000);
     expect((await payments(b.id)).find((p: { amount_cents: number }) => p.amount_cents === -1000)).toMatchObject({ method: "cash" });
   });

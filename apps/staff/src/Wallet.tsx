@@ -160,7 +160,7 @@ function SellPass({ client, golferId, types, onSold, onClose }: { client: Client
       {method === "card" && reader.needsReader && <Text style={styles.warn}>Pick this device's card reader in Settings, or run the card on another terminal.</Text>}
       {error && <Text role="alert" style={styles.error}>{error}</Text>}
       <View style={[styles.chips, { marginTop: 10 }]}>
-        <SmallButton label={type ? `Take ${money(type.priceCents)}` : "Pick a pass"} primary disabled={!type} onPress={() => (method === "card" && reader.terminal && type!.priceCents > 0 ? setCharging(true) : sell())} />
+        <SmallButton label={type ? `Sell · ${money(type.priceCents)}` : "Pick a pass"} primary disabled={!type} onPress={() => (method === "card" && reader.terminal && type!.priceCents > 0 ? setCharging(true) : sell())} />
         <SmallButton label="Back" onPress={onClose} />
       </View>
       {charging && reader.terminal && type && (
