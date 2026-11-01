@@ -1,3 +1,4 @@
+import { useAddOn } from "./AddOns";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import type { Client, Course, Me, StaffFeedback, Station } from "./api";
@@ -30,6 +31,7 @@ export function AccountMenu({
   onSignOut: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const schedule = useAddOn("staff_schedule");
   const [dialog, setDialog] = useState<"feedback" | "account">();
   const pick = (fn: () => void) => () => {
     setOpen(false);
@@ -37,7 +39,7 @@ export function AccountMenu({
   };
   const items: { label: string; onPress: () => void }[] = [
     { label: "Settings", onPress: pick(() => onGo("settings")) },
-    { label: "My schedule", onPress: pick(() => onGo("schedule")) },
+    ...(schedule ? [{ label: "My schedule", onPress: pick(() => onGo("schedule")) }] : []),
     { label: "My account", onPress: pick(() => setDialog("account")) },
     { label: "Send feedback", onPress: pick(() => setDialog("feedback")) },
     { label: "Help center", onPress: pick(() => onGo("help")) },

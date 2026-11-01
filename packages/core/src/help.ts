@@ -254,15 +254,27 @@ export const HELP_ARTICLES: HelpArticle[] = [
     keywords: ["pricing", "price", "rates", "green fee", "twilight", "senior", "resident", "replay"],
   },
   {
-    id: "add-ons",
+    id: "carts-rentals",
     category: "shop",
-    title: "Add-ons: carts and rentals",
+    title: "Cart and rental prices",
     summary: "Price the extras golfers add to a round.",
     body: [
-      "Add-ons in the menu lists extras such as the gas cart, pull carts and club rental, each priced per person. Managers can add, reprice and remove them.",
+      "The Carts and rentals section at the bottom of Pricing lists extras such as the gas cart, pull carts and club rental, each priced per person. Managers can add, reprice and remove them.",
       "The gas cart is what riding golfers pay, so it can be repriced but not removed.",
     ],
-    keywords: ["add-ons", "addons", "cart fee", "gas cart", "pull cart", "rental", "clubs", "extras"],
+    keywords: ["cart fee", "gas cart", "pull cart", "rental", "clubs", "extras", "price"],
+  },
+  {
+    id: "add-ons",
+    category: "account",
+    title: "Add-ons: turn features on or off",
+    summary: "Show only the parts of the software your course uses.",
+    body: [
+      "Open Add-ons in the menu to see every optional part of the software, grouped as Tee sheet, Customers, Operations, and Shop and food. A manager flips the switch to turn one on or off; everyone else can only look.",
+      "Turning an add-on off hides it straight away: its menu item, tab or button goes, but nothing is deleted. Turning it back on brings everything back as it was.",
+      "Tee sheet add-ons also change how the tee sheet looks: prices beside each time, the color key always showing, and the weather delay button.",
+    ],
+    keywords: ["add-ons", "addons", "features", "turn on", "turn off", "hide", "customize", "settings", "pro shop", "food", "bar"],
   },
   // Events
   {

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { PassSetup } from "./PassSetup";
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, useWindowDimensions, View } from "react-native";
 import type { Client, GolferAccount, Me, PrepStation, Product, ProductInput, Sale, SalePaymentMethod, SalesDay, StockMovement } from "./api";
-import { FOOD_BAR } from "./features";
+import { useAddOn } from "./AddOns";
 import { addDays, dayParts, todayIn } from "./dates";
 import { useSearch } from "./Golfers";
 import { CardChargeModal, useCardReader } from "./CardReader";
@@ -457,6 +457,7 @@ function Inventory({ client, products, isManager, onChanged }: { client: Client;
 }
 
 function ProductEditor(props: { client: Client; product?: Product; categories: string[]; onClose: () => void; onSaved: () => void }) {
+  const foodBar = useAddOn("food_bar");
   const { client, product, categories, onClose, onSaved } = props;
   const [name, setName] = useState(product?.name ?? "");
   const [sku, setSku] = useState(product?.sku ?? "");
@@ -550,7 +551,7 @@ function ProductEditor(props: { client: Client; product?: Product; categories: s
       </View>
       {(foodBev || !!station) && (
         <>
-          {FOOD_BAR && (
+          {foodBar && (
             <View style={[styles.choices, { marginTop: 6 }]}>
               <Chip label="Handed over (cooler, counter)" on={!station} onPress={() => setStation(null)} />
               <Chip label="Made in the kitchen" on={station === "kitchen"} onPress={() => setStation("kitchen")} />
@@ -558,7 +559,7 @@ function ProductEditor(props: { client: Client; product?: Product; categories: s
             </View>
           )}
           <Text style={styles.muted}>
-            {FOOD_BAR
+            {foodBar
               ? "Shows on the Food & bar menu and is reported apart from the pro shop. Items made in the kitchen or at the bar go to that screen when ordered."
               : "Reported as food and drink, apart from the pro shop."}
           </Text>

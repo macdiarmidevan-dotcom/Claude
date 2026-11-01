@@ -3,6 +3,8 @@ import cors from "@fastify/cors";
 import { z, ZodError } from "zod";
 import type { Db } from "./db.ts";
 import { AppError, badRequest, notFound } from "./errors.ts";
+import { getAddOnSettings, setAddOn } from "./addons.ts";
+import { ADD_ON_KEYS, type AddOnKey } from "@golf/core";
 import { createAddOn, createRate, listAddOns, listRates, updateAddOn, updateRate } from "./pricing.ts";
 import { lookupApiKey, type ApiKeyContext } from "./keys.ts";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -269,8 +271,9 @@ const ACTIONS: Record<string, string> = {
   "POST /v1/courses/:slug/support": "Emailed support",
   "POST /v1/courses/:slug/pricing/rates": "Added a rate",
   "PATCH /v1/courses/:slug/pricing/rates/:id": "Changed a rate",
-  "POST /v1/courses/:slug/pricing/add-ons": "Added an add-on",
-  "PATCH /v1/courses/:slug/pricing/add-ons/:id": "Changed an add-on",
+  "POST /v1/courses/:slug/pricing/add-ons": "Added an extra",
+  "PATCH /v1/courses/:slug/pricing/add-ons/:id": "Changed an extra's price",
+  "PUT /v1/courses/:slug/settings/add-ons": "Turned an add-on on or off",
 };
 
 const player = z.object({
@@ -662,6 +665,13 @@ export function buildApp(
     return rows.map((r) => ({ id: r.id, name: r.name, employeeType: r.type }));
   });
 
+  // Add-ons: features each course switches on or off. Everyone reads them; managers change them.
+  app.get("/v1/courses/:slug/settings/add-ons", async (req) => getAddOnSettings(db, await courseFor(req)));
+  app.put("/v1/courses/:slug/settings/add-ons", async (req) => {
+    const course = await managedCourseFor(req);
+    const body = z.object({ key: z.enum(ADD_ON_KEYS as [AddOnKey, ...AddOnKey[]]), enabled: z.boolean() }).parse(req.body);
+    return setAddOn(db, course, body.key, body.enabled);
+  });
   app.get("/v1/courses/:slug/settings/scheduling", async (req) => getSchedulingSettings(db, await courseFor(req)));
   app.put("/v1/courses/:slug/settings/scheduling", async (req) => {
     const course = await managedCourseFor(req);
