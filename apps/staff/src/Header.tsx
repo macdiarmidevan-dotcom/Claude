@@ -20,7 +20,8 @@ export function Header({ title, subtitle, onOpenMenu, children }: { title: strin
 }
 
 const styles = StyleSheet.create({
-  header: { flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: colors.card, borderBottomWidth: 1, borderColor: colors.border, paddingHorizontal: 12, minHeight: 48, paddingVertical: 8 },
+  // zIndex: menus that drop down from the bar sit over the page below it.
+  header: { zIndex: 10, flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: colors.card, borderBottomWidth: 1, borderColor: colors.border, paddingHorizontal: 12, minHeight: 48, paddingVertical: 8 },
   menuButton: { width: 44, height: 44, alignItems: "center", justifyContent: "center", borderRadius: 3 },
   menuIcon: { fontSize: 18, color: colors.text },
   headerTitle: { fontSize: 17, fontWeight: "700", color: colors.text },

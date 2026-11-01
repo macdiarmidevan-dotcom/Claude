@@ -26,7 +26,27 @@ const plus = (hhmm: string, minutes: number) => {
   return `${String(Math.floor(t / 60) % 24).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`;
 };
 
-export function DelayBar({ client, date, today, nowLocal, sheet, onChanged }: { client: Client; date: string; today: string; nowLocal: string; sheet?: SheetTeeTime[]; onChanged: () => void }) {
+export function DelayBar({
+  client,
+  date,
+  today,
+  nowLocal,
+  sheet,
+  onChanged,
+  openRequest,
+  showButton = true,
+}: {
+  client: Client;
+  date: string;
+  today: string;
+  nowLocal: string;
+  sheet?: SheetTeeTime[];
+  onChanged: () => void;
+  /** Changes each time a button elsewhere asks to open the delay form. */
+  openRequest?: number;
+  /** Shows the bar's own Weather delay button. */
+  showButton?: boolean;
+}) {
   const isToday = date === today;
   const [delays, setDelays] = useState<TeeSheetDelay[]>([]);
   const [open, setOpen] = useState(false);
@@ -40,6 +60,9 @@ export function DelayBar({ client, date, today, nowLocal, sheet, onChanged }: { 
     setOpen(false);
     load();
   }, [client, date]);
+  useEffect(() => {
+    if (openRequest) setOpen(true);
+  }, [openRequest]);
   const active = delays.filter((d) => !d.undoneAt);
   const latest = active.at(-1);
   // Only today and days ahead can be delayed.
@@ -81,7 +104,8 @@ export function DelayBar({ client, date, today, nowLocal, sheet, onChanged }: { 
           onDone={() => (setOpen(false), load(), onChanged())}
         />
       ) : (
-        canDelay && (
+        canDelay &&
+        showButton && (
           <View style={styles.barRow}>
             <Pressable accessibilityRole="button" onPress={() => setOpen(true)} style={({ focused }: WebPress) => [styles.smallButton, focused && styles.focus]}>
               <Text style={styles.smallButtonText}>Weather delay…</Text>
