@@ -186,7 +186,7 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, course, stat
             <View style={styles.issued} accessibilityLiveRegion="polite">
               <Text style={styles.name}>Rain check {issued.code}</Text>
               <Text style={styles.muted}>
-                {money(issued.amountCents)} for {issued.players} {issued.players === 1 ? "player" : "players"}, {issued.holesUnplayed} holes
+                {money(issued.amountCents)} for {issued.players} {issued.players === 1 ? "player" : "players"}
                 {issued.expiresAt ? `, good until ${new Date(issued.expiresAt).toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" })}` : ""}. Write the code on their receipt
                 {issued.golferId ? "; it's also on their golfer account" : ""}.
               </Text>
@@ -889,7 +889,7 @@ function CheckoutForm({
       )}
       <View style={styles.actions}>
         <Action
-          label={total > 0 ? `Take ${money(total)} & check in` : "Check in"}
+          label={total > 0 ? `Check in · ${money(total)}` : "Check in"}
           primary
           onPress={() => (cardCents > 0 && reader.terminal ? setCharging(true) : pay())}
         />
@@ -1034,8 +1034,8 @@ const parseCents = (text: string) => {
 };
 
 /**
- * A rain check for a round cut short: credit for the holes some or all of the group didn't play,
- * worked out from what they paid. Managers can set a different amount, e.g. a flat course policy.
+ * A rain check: credit for some or all of the group's round, worked out from what they paid.
+ * Managers can set a different amount, e.g. a flat course policy.
  */
 function RainCheckForm({
   booking,
@@ -1049,11 +1049,9 @@ function RainCheckForm({
   onCancel: () => void;
 }) {
   const [players, setPlayers] = useState(booking.players);
-  const [holesPlayed, setHolesPlayed] = useState(Math.floor(booking.holes / 2));
   const [includeCart, setIncludeCart] = useState(true);
   const [custom, setCustom] = useState("");
-  const [note, setNote] = useState("");
-  const share = (players / booking.players) * ((booking.holes - holesPlayed) / booking.holes);
+  const share = players / booking.players;
   const worked = Math.round(booking.greenFeeCents * share) + (includeCart ? Math.round(booking.cartCents * share) : 0);
   const customCents = parseCents(custom);
   const amount = customCents ?? worked;
@@ -1067,11 +1065,6 @@ function RainCheckForm({
           ))}
         </Row>
       )}
-      <Row label="Holes played">
-        {Array.from({ length: booking.holes }, (_, i) => i).map((n) => (
-          <Toggle key={n} label={String(n)} on={holesPlayed === n} onPress={() => setHolesPlayed(n)} />
-        ))}
-      </Row>
       {booking.cartCents > 0 && (
         <Row label="Cart">
           <Toggle label="Include cart" on={includeCart} onPress={() => setIncludeCart(true)} />
@@ -1082,20 +1075,18 @@ function RainCheckForm({
         <TextInput
           style={[styles.input, { marginBottom: 6 }]}
           accessibilityLabel="Set a different amount"
-          placeholder={`Different amount (worked out: ${money(worked)})`}
+          placeholder="Amount"
           value={custom}
           onChangeText={setCustom}
           keyboardType="decimal-pad"
         />
       )}
-      <TextInput style={[styles.input, { marginBottom: 6 }]} accessibilityLabel="Note" placeholder="Note, e.g. lightning, course closed" value={note} onChangeText={setNote} />
-      <PriceLine cents={amount} what={`${players} ${players === 1 ? "player" : "players"}, ${booking.holes - holesPlayed} of ${booking.holes} holes not played`} />
-      <Text style={styles.muted}>They get a code to use on a later round. The amount comes off this round, so it isn't counted twice.</Text>
+      <PriceLine cents={amount} what={`${players} ${players === 1 ? "player" : "players"}`} />
       <View style={styles.actions}>
         <Action
-          label={`Give ${money(amount)} rain check`}
+          label={`${money(amount)} rain check`}
           primary
-          onPress={() => onIssue({ players, holesPlayed, includeCart, ...(customCents !== undefined ? { amountCents: customCents } : {}), note: note.trim() || null })}
+          onPress={() => onIssue({ players, holesPlayed: 0, includeCart, ...(customCents !== undefined ? { amountCents: customCents } : {}) })}
         />
         <Action label="Back" onPress={onCancel} />
       </View>
@@ -1104,10 +1095,9 @@ function RainCheckForm({
 }
 
 /** Money back on a round, by cash from the drawer or back to the card. Managers only. */
-function RefundForm({ booking, onRefund, onCancel }: { booking: SheetBooking; onRefund: (input: { amountCents: number; method: "cash" | "card"; reason: string }) => void; onCancel: () => void }) {
+function RefundForm({ booking, onRefund, onCancel }: { booking: SheetBooking; onRefund: (input: { amountCents: number; method: "cash" | "card" }) => void; onCancel: () => void }) {
   const [method, setMethod] = useState<"cash" | "card">(booking.payment.methods.includes("card") ? "card" : "cash");
   const [amount, setAmount] = useState("");
-  const [reason, setReason] = useState("");
   const cents = parseCents(amount);
   return (
     <View style={{ marginTop: 10 }} accessibilityLiveRegion="polite">
@@ -1124,14 +1114,13 @@ function RefundForm({ booking, onRefund, onCancel }: { booking: SheetBooking; on
         onChangeText={setAmount}
         keyboardType="decimal-pad"
       />
-      <TextInput style={[styles.input, { marginBottom: 6 }]} accessibilityLabel="Reason" placeholder="Reason (required), e.g. frost delay" value={reason} onChangeText={setReason} />
       <Text style={styles.muted}>
         {method === "card"
           ? "Goes back to the card on the reader it was paid with. If it was run on another terminal, refund it there too."
           : "Take it from the drawer; the day's cash count expects it."}
       </Text>
       <View style={styles.actions}>
-        <Action label={cents ? `Refund ${money(cents)}` : "Refund"} danger onPress={() => cents && reason.trim() && onRefund({ amountCents: cents, method, reason: reason.trim() })} />
+        <Action label={cents ? `Refund ${money(cents)}` : "Refund"} danger onPress={() => cents && onRefund({ amountCents: cents, method })} />
         <Action label="Back" onPress={onCancel} />
       </View>
     </View>

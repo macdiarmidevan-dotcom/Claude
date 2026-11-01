@@ -418,7 +418,7 @@ function Billing({ client, ev, isManager, onChanged }: { client: Client; ev: Eve
         />
         <TextInput accessibilityLabel="Note" placeholder={method === "check" ? "Check number" : "Note"} value={note} onChangeText={setNote} style={[styles.input, { flex: 1, minWidth: 160 }]} />
         <Button
-          label={cents ? (cents < 0 ? `Refund ${money(-cents)}` : `Take ${money(cents)}`) : "Take payment"}
+          label={cents ? (cents < 0 ? `Refund ${money(-cents)}` : `Payment · ${money(cents)}`) : "Take payment"}
           primary
           disabled={!cents || (cents < 0 && !isManager)}
           onPress={() => (method === "card" && cents! > 0 && reader.terminal ? setCharging(true) : pay())}

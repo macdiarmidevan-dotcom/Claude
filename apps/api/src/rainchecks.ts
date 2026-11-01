@@ -194,10 +194,10 @@ export async function refundRound(
   course: Course,
   staffId: string | undefined,
   bookingId: string,
-  input: { amountCents: number; method: "cash" | "card"; reason: string },
+  input: { amountCents: number; method: "cash" | "card"; reason?: string | undefined },
   refundCard: (client: DbClient, cardPaymentId: string, cents: number) => Promise<unknown>,
 ) {
-  if (!input.reason.trim()) throw badRequest("reason_required", "Say why the round is being refunded");
+  const reason = input.reason?.trim() || null;
   await withTransaction(db, async (client) => {
     await client.query("SELECT 1 FROM bookings WHERE id = $1 AND course_id = $2 FOR UPDATE", [bookingId, course.id]);
     const m = await roundMoney(client, course, bookingId);
@@ -221,10 +221,10 @@ export async function refundRound(
     }
     await client.query(
       "INSERT INTO booking_payments (booking_id, amount_cents, method, card_payment_id, note, staff_user_id) VALUES ($1, $2, $3, $4, $5, $6)",
-      [bookingId, -input.amountCents, input.method, cardPaymentId, input.reason.trim(), staffId ?? null],
+      [bookingId, -input.amountCents, input.method, cardPaymentId, reason, staffId ?? null],
     );
     const cartShare = m.green + m.carts ? Math.round((input.amountCents * m.carts) / (m.green + m.carts)) : 0;
-    await creditRound(client, bookingId, `Refund: ${input.reason.trim()}`, input.amountCents - cartShare, cartShare);
+    await creditRound(client, bookingId, reason ? `Refund: ${reason}` : "Refund", input.amountCents - cartShare, cartShare);
   });
   return getBooking(db, course, bookingId);
 }

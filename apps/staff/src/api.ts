@@ -1113,7 +1113,7 @@ function createHttpClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "ap
     bookingRainChecks: (bookingId: string) => request<RainCheck[]>(`/bookings/${bookingId}/rain-checks`),
     findRainCheck: (code: string) => request<RainCheck>(`/rain-checks/${encodeURIComponent(code.trim().toUpperCase())}`),
     voidRainCheck: (id: string) => request<RainCheck>(`/rain-checks/${id}/void`, { method: "POST" }),
-    refundRound: (bookingId: string, input: { amountCents: number; method: "cash" | "card"; reason: string }) =>
+    refundRound: (bookingId: string, input: { amountCents: number; method: "cash" | "card"; reason?: string }) =>
       request(`/bookings/${bookingId}/refund`, { method: "POST", body: input }),
     rainCheckSettings: () => request<{ rainCheckDays: number }>("/settings/rain-checks"),
     saveRainCheckSettings: (s: { rainCheckDays: number }) => request<{ rainCheckDays: number }>("/settings/rain-checks", { method: "PUT", body: s }),
