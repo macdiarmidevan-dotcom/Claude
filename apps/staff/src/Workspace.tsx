@@ -1,3 +1,4 @@
+import { Icon, type IconName } from "./Icon";
 import { useEffect, useMemo, useState } from "react";
 import { Modal, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 import { ApiError, createClient, type Client, type Course, type DayClose, type Me, type Settings } from "./api";
@@ -28,6 +29,23 @@ type Section = "tee-sheet" | "import" | "staff" | "customers" | "events" | "food
 // Sections with a group fold under one menu item, so the menu stays short.
 type Group = "shop";
 const GROUP_LABEL: Record<Group, string> = { shop: "Golfers & shop" };
+const GROUP_ICON: Record<Group, IconName> = { shop: "users" };
+
+const SECTION_ICON: Record<Section, IconName> = {
+  "tee-sheet": "clock",
+  import: "sync",
+  staff: "user",
+  customers: "users",
+  messages: "message",
+  accounts: "gift",
+  inventory: "bag",
+  events: "flag",
+  food: "coffee",
+  reports: "chart",
+  schedule: "calendar",
+  settings: "sliders",
+  help: "help",
+};
 
 // starters: false hides a section on the starter station (managers still see it).
 // inMenu: false keeps a section out of the sidebar; it opens from the account menu instead.
@@ -346,12 +364,13 @@ function SideMenu(props: {
         onPress={() => onGo(s.id)}
         style={({ hovered, focused }: WebPress) => [
           styles.navItem,
-          nested && { paddingLeft: 28 },
+          nested && { paddingLeft: 41 },
           on && styles.navItemOn,
           hovered && !on && { backgroundColor: "#1d3826" },
           focused && styles.focusRing,
         ]}
       >
+        {!nested && <Icon name={SECTION_ICON[s.id]} size={17} color={on ? "#fff" : colors.railMuted} />}
         <Text style={[styles.navText, on && { fontWeight: "700", color: "#fff" }]}>{s.label}</Text>
         {s.soon && <Text style={styles.soonTag}>Soon</Text>}
       </Pressable>
@@ -360,9 +379,12 @@ function SideMenu(props: {
   return (
     <View role="navigation" aria-label="Main menu" style={styles.rail}>
       <View style={styles.railTop}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.brand}>Tee Sheet</Text>
-          <Text style={styles.course} numberOfLines={2}>{courseName}</Text>
+        <View style={styles.courseBox}>
+          <Icon name="flag" size={16} color={colors.railMuted} />
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={styles.brand}>Course</Text>
+            <Text style={styles.course} numberOfLines={2}>{courseName}</Text>
+          </View>
         </View>
         {onClose && (
           <Pressable accessibilityRole="button" accessibilityLabel="Close menu" onPress={onClose} style={styles.menuButton}>
@@ -394,6 +416,7 @@ function SideMenu(props: {
                 onPress={() => setOpenGroup(open ? undefined : group)}
                 style={({ hovered, focused }: WebPress) => [styles.navItem, hovered && { backgroundColor: "#1d3826" }, focused && styles.focusRing]}
               >
+                <Icon name={GROUP_ICON[group]} size={17} color={holdsCurrent && !open ? "#fff" : colors.railMuted} />
                 <Text style={[styles.navText, holdsCurrent && !open && { fontWeight: "700", color: "#fff" }]}>{GROUP_LABEL[group]}</Text>
                 <Text style={styles.groupArrow}>{open ? "▾" : "▸"}</Text>
               </Pressable>
@@ -448,8 +471,9 @@ const styles = StyleSheet.create({
   main: { flex: 1, minWidth: 0 },
   rail: { width: 240, backgroundColor: colors.rail, paddingTop: 16, height: "100%" },
   railTop: { flexDirection: "row", alignItems: "flex-start", paddingHorizontal: 12, marginBottom: 14 },
-  brand: { color: colors.railMuted, fontSize: 12, fontWeight: "700", letterSpacing: 1, textTransform: "uppercase" },
-  course: { color: colors.railText, fontSize: 15, fontWeight: "700", marginTop: 2 },
+  courseBox: { flex: 1, flexDirection: "row", alignItems: "center", gap: 10, borderWidth: 1, borderColor: "#3a3e44", borderRadius: 3, paddingHorizontal: 10, paddingVertical: 8 },
+  brand: { color: colors.railMuted, fontSize: 11, fontWeight: "700", letterSpacing: 1, textTransform: "uppercase" },
+  course: { color: colors.railText, fontSize: 14, fontWeight: "700", marginTop: 1 },
   navItem: { flexDirection: "row", alignItems: "center", gap: 12, minHeight: 36, paddingHorizontal: 12, marginHorizontal: 8, borderRadius: 3 },
   navItemOn: { backgroundColor: colors.railActive },
   navIcon: { color: colors.railText, fontSize: 14, width: 20, textAlign: "center" },

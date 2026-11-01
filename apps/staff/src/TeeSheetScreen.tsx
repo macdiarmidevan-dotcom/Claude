@@ -8,12 +8,19 @@ import { DelayBar } from "./DelayPanel";
 import { CalendarPicker } from "./CalendarPicker";
 import { TeeTimePanel } from "./TeeTimePanel";
 import { Header } from "./Header";
+import { Icon, type IconName } from "./Icon";
 import { colors, type WebPress, formatTime, money, slotColor, slotLabel, slotMark, type SlotState } from "./theme";
 
 // Other devices' changes show up within this many seconds.
 const REFRESH_MS = 5000;
-const ROW_HEIGHT = 32;
-const HOUR_HEIGHT = 24;
+const ROW_HEIGHT = 36;
+const HOUR_HEIGHT = 32;
+
+/** 7:02 as "07:02": the hour dividers carry AM and PM. */
+function clock(localTime: string) {
+  const h = Number(localTime.slice(0, 2));
+  return `${String(((h + 11) % 12) + 1).padStart(2, "0")}:${localTime.slice(3, 5)}`;
+}
 
 type Line = { kind: "hour"; key: string; label: string } | { kind: "time"; key: string; teeTime: SheetTeeTime; index: number };
 
@@ -94,7 +101,7 @@ export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu,
       const h = t.localTime.slice(0, 2);
       if (h !== hour) {
         hour = h;
-        out.push({ kind: "hour", key: `h${h}`, label: formatTime(`${h}:00`).replace(":00", ":00 ").toUpperCase() });
+        out.push({ kind: "hour", key: `h${h}`, label: `${clock(`${h}:00`)} ${Number(h) < 12 ? "AM" : "PM"}` });
       }
       out.push({ kind: "time", key: t.id, teeTime: t, index });
     });
@@ -134,7 +141,8 @@ export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu,
     const players = live.reduce((s, b) => s + b.players, 0);
     const capacity = sheet?.filter((t) => t.status === "open").reduce((s, t) => s + t.maxPlayers, 0) ?? 0;
     const owed = live.reduce((s, b) => s + b.payment.balanceCents, 0);
-    return { players, open: Math.max(0, capacity - players), owed };
+    const carts = live.reduce((s, b) => s + b.cartNumbers.length, 0);
+    return { players, open: Math.max(0, capacity - players), owed, carts };
   }, [sheet]);
 
   useEffect(() => {
@@ -279,14 +287,63 @@ export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu,
     />
   );
 
-  const summary = error ?? (sheet ? `${totals.players} golfers · ${totals.open} spots open${totals.owed ? ` · ${money(totals.owed)} owed` : ""}` : "Loading…");
+  const [showKey, setShowKey] = useState(false);
+  const [delayRequest, setDelayRequest] = useState(0);
+  const [addMenu, setAddMenu] = useState(false);
+  const canDelay = !!sheet?.length && date >= today;
+  // The walk-in goes on the next tee time with room: from now on today, from the first time on other days.
+  const nextOpen = sheet?.find((t, i) => t.status === "open" && t.bookedPlayers < t.maxPlayers && (!isToday || nextIndex === -1 || i >= nextIndex));
+  const addWalkIn = () => {
+    setAddMenu(false);
+    if (!nextOpen) return setNotice({ text: "No open tee times left on this day", key: Date.now() });
+    setSelectedId(nextOpen.id);
+    setFocusId(undefined);
+    setFocusPlayer(undefined);
+    const at = lines.findIndex((l) => l.kind === "time" && l.teeTime.id === nextOpen.id);
+    if (at > 1) listRef.current?.scrollToIndex({ index: at - 2, animated: true });
+  };
+  const stationName = station === "proshop" ? "Pro shop" : "Starter";
 
   return (
     <View style={{ flex: 1 }}>
-      <Header title="Tee sheet" subtitle={`${station === "proshop" ? "Pro shop" : "Starter"} · ${summary}`} onOpenMenu={onOpenMenu} />
+      <Header title="Tee sheet" subtitle={compact ? stationName : undefined} onOpenMenu={onOpenMenu}>
+        {!compact && <Text style={styles.stationText}>{stationName}</Text>}
+        <ToolButton icon="swatches" label="Color key" on={showKey} onPress={() => setShowKey(!showKey)} />
+        <ToolButton icon="cloud" label="Weather delay" disabled={!canDelay} onPress={() => setDelayRequest(Date.now())} />
+        <View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Add"
+            accessibilityState={{ expanded: addMenu }}
+            onPress={() => setAddMenu(!addMenu)}
+            style={({ hovered, focused }: WebPress) => [styles.addButton, hovered && { backgroundColor: colors.primaryText }, focused && styles.focusRing]}
+          >
+            <Icon name="plus" size={15} color="#fff" strokeWidth={2.5} />
+            {!compact && <Text style={styles.addText}>Add</Text>}
+            <Icon name="chevronDown" size={14} color="#fff" />
+          </Pressable>
+          {addMenu && (
+            <View style={styles.addMenu} role="menu">
+              <MenuRow label={nextOpen ? `Walk-in at ${formatTime(nextOpen.localTime)}` : "Walk-in"} icon="user" onPress={addWalkIn} />
+              <MenuRow
+                label="Weather delay"
+                icon="cloud"
+                disabled={!canDelay}
+                onPress={() => {
+                  setAddMenu(false);
+                  setDelayRequest(Date.now());
+                }}
+              />
+            </View>
+          )}
+        </View>
+      </Header>
+      <View style={[styles.page, compact && { padding: 0 }]}>
+      <View style={[styles.card, compact && { borderWidth: 0, borderRadius: 0 }]}>
+      <SheetHeading date={date} today={today} compact={compact} error={error} loading={!sheet} totals={totals} onPick={setDate} />
       <WeekStrip date={date} today={today} compact={compact} onPick={setDate} />
-      <DelayBar client={client} date={date} today={today} nowLocal={nowIn(course.timeZone)} sheet={sheet} onChanged={load} />
-      {!compact && <Legend />}
+      <DelayBar client={client} date={date} today={today} nowLocal={nowIn(course.timeZone)} sheet={sheet} onChanged={load} openRequest={delayRequest} showButton={false} />
+      {showKey && <Legend />}
       {notice && (
         <View key={notice.key} style={styles.notice} accessibilityLiveRegion="polite" role="status">
           <Text style={styles.noticeText}>{notice.text}</Text>
@@ -324,7 +381,10 @@ export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu,
               renderItem={({ item, index: lineIndex }) =>
                 item.kind === "hour" ? (
                   <View style={styles.hour} role="heading" aria-level={2}>
-                    <Text style={styles.hourText}>{item.label}</Text>
+                    <View style={styles.hourPill}>
+                      <Text style={styles.hourText}>{item.label}</Text>
+                    </View>
+                    <View style={styles.hourLine} />
                   </View>
                 ) : (
                   <TeeTimeRow
@@ -359,6 +419,8 @@ export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu,
         {/* The tee sheet runs to the right edge until a tee time is chosen; then its details open beside it. */}
         {sideBySide && panel && <View style={styles.side}>{panel}</View>}
       </View>
+      </View>
+      </View>
 
       {!sideBySide && (
         <Modal visible={!!panel} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setSelectedId(undefined)}>
@@ -372,10 +434,8 @@ export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu,
 function WeekStrip({ date, today, compact, onPick }: { date: string; today: string; compact: boolean; onPick: (d: string) => void }) {
   const monday = weekStart(date);
   const days = Array.from({ length: 7 }, (_, i) => addDays(monday, i));
-  const [calendar, setCalendar] = useState(false);
   return (
     <View style={styles.week}>
-      {calendar && <CalendarPicker date={date} today={today} onPick={onPick} onClose={() => setCalendar(false)} />}
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Go to today"
@@ -385,15 +445,7 @@ function WeekStrip({ date, today, compact, onPick }: { date: string; today: stri
       >
         <Text style={styles.todayText}>Today</Text>
       </Pressable>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`Pick a date from the calendar. Showing ${dayParts(date).long}`}
-        onPress={() => setCalendar(true)}
-        style={({ focused }: WebPress) => [styles.todayButton, { marginLeft: 6 }, focused && styles.focusRing]}
-      >
-        <Text style={styles.todayText}>{compact ? "Cal" : `Calendar · ${new Date(`${date}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", year: "numeric", timeZone: "UTC" })}`}</Text>
-      </Pressable>
-      <WeekArrow label="‹" name="Previous week" onPress={() => onPick(addDays(date, -7))} />
+      <WeekArrow icon="chevronLeft" name="Previous week" onPress={() => onPick(addDays(date, -7))} />
       <View style={styles.days}>
         {days.map((d) => {
           const on = d === date;
@@ -405,24 +457,110 @@ function WeekStrip({ date, today, compact, onPick }: { date: string; today: stri
               accessibilityLabel={`${long}${d === today ? ", today" : ""}`}
               accessibilityState={{ selected: on }}
               onPress={() => onPick(d)}
-              style={({ focused }: WebPress) => [styles.day, on && styles.dayOn, focused && styles.focusRing]}
+              style={({ hovered, focused }: WebPress) => [styles.day, hovered && !on && { backgroundColor: colors.bg }, on && styles.dayOn, focused && styles.focusRing]}
             >
-              <Text style={[styles.dayText, on && { color: "#fff" }, d === today && !on && { color: colors.primary }]}>
-                {compact ? `${weekday.slice(0, 2)}\n${day}` : `${weekday} ${day}`}
-              </Text>
+              <Text style={[styles.dayWeekday, on && { color: "#c9ccd1" }, d === today && !on && { color: colors.primary }]}>{compact ? weekday.slice(0, 2) : weekday}</Text>
+              <Text style={[styles.dayText, on && { color: "#fff" }, d === today && !on && { color: colors.primary }]}>{day}</Text>
             </Pressable>
           );
         })}
       </View>
-      <WeekArrow label="›" name="Next week" onPress={() => onPick(addDays(date, 7))} />
+      <WeekArrow icon="chevronRight" name="Next week" onPress={() => onPick(addDays(date, 7))} />
     </View>
   );
 }
 
-function WeekArrow({ label, name, onPress }: { label: string; name: string; onPress: () => void }) {
+function WeekArrow({ icon, name, onPress }: { icon: IconName; name: string; onPress: () => void }) {
   return (
-    <Pressable accessibilityRole="button" accessibilityLabel={name} onPress={onPress} style={({ focused }: WebPress) => [styles.arrow, focused && styles.focusRing]}>
-      <Text style={styles.arrowText}>{label}</Text>
+    <Pressable accessibilityRole="button" accessibilityLabel={name} onPress={onPress} style={({ hovered, focused }: WebPress) => [styles.arrow, hovered && { backgroundColor: colors.bg }, focused && styles.focusRing]}>
+      <Icon name={icon} size={18} color={colors.text} />
+    </Pressable>
+  );
+}
+
+/** The top of the tee sheet card: the day's numbers on the left and the date, which opens the calendar, in the middle. */
+function SheetHeading(props: {
+  date: string;
+  today: string;
+  compact: boolean;
+  error?: string;
+  loading: boolean;
+  totals: { players: number; open: number; owed: number; carts: number };
+  onPick: (d: string) => void;
+}) {
+  const { date, today, compact, error, loading, totals, onPick } = props;
+  const [calendar, setCalendar] = useState(false);
+  const d = new Date(`${date}T12:00:00Z`);
+  const part = (o: Intl.DateTimeFormatOptions) => d.toLocaleDateString("en-US", { ...o, timeZone: "UTC" });
+  const stat = (icon: IconName, value: string, label: string, color: string = colors.text) => (
+    <View style={styles.stat} accessibilityLabel={`${value} ${label}`}>
+      <Icon name={icon} size={15} color={colors.muted} />
+      <Text style={[styles.statValue, { color }]}>{value}</Text>
+      {!compact && <Text style={styles.statLabel}>{label}</Text>}
+    </View>
+  );
+  return (
+    <View style={[styles.heading, compact && { flexDirection: "column-reverse", alignItems: "stretch", gap: 6 }]}>
+      {calendar && <CalendarPicker date={date} today={today} onPick={onPick} onClose={() => setCalendar(false)} />}
+      <View style={[styles.stats, compact && { justifyContent: "center" }]}>
+        {error ? (
+          <Text style={styles.offline} numberOfLines={1}>{error}</Text>
+        ) : loading ? (
+          <Text style={styles.statLabel}>Loading…</Text>
+        ) : (
+          <>
+            {stat("users", String(totals.players), totals.players === 1 ? "golfer" : "golfers")}
+            {stat("plusCircle", String(totals.open), "open")}
+            {stat("cart", String(totals.carts), totals.carts === 1 ? "cart" : "carts")}
+            {totals.owed > 0 && stat("dollar", money(totals.owed), "owed", colors.noShow)}
+          </>
+        )}
+      </View>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Pick a date from the calendar. Showing ${dayParts(date).long}`}
+        onPress={() => setCalendar(true)}
+        style={({ hovered, focused }: WebPress) => [styles.bigDate, hovered && { backgroundColor: colors.bg }, focused && styles.focusRing]}
+      >
+        <Text style={styles.bigDay}>{part({ day: "numeric" })}</Text>
+        <View>
+          <Text style={styles.bigWeekday}>{part({ weekday: "long" })}</Text>
+          <Text style={styles.bigMonth}>{part({ month: "long", year: "numeric" })}</Text>
+        </View>
+        <Icon name="chevronDown" size={18} color={colors.muted} />
+      </Pressable>
+      {!compact && <View style={{ flex: 1 }} />}
+    </View>
+  );
+}
+
+function ToolButton({ icon, label, on, disabled, onPress }: { icon: IconName; label: string; on?: boolean; disabled?: boolean; onPress: () => void }) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ disabled, selected: on }}
+      aria-pressed={on}
+      disabled={disabled}
+      onPress={onPress}
+      {...({ title: label } as object)}
+      style={({ hovered, focused }: WebPress) => [styles.tool, on && styles.toolOn, hovered && !disabled && !on && { backgroundColor: colors.bg }, disabled && { opacity: 0.4 }, focused && styles.focusRing]}
+    >
+      <Icon name={icon} size={18} color={on ? colors.primary : colors.text} />
+    </Pressable>
+  );
+}
+
+function MenuRow({ label, icon, disabled, onPress }: { label: string; icon: IconName; disabled?: boolean; onPress: () => void }) {
+  return (
+    <Pressable
+      role="menuitem"
+      disabled={disabled}
+      onPress={onPress}
+      style={({ hovered, focused }: WebPress) => [styles.menuRow, hovered && !disabled && { backgroundColor: colors.bg }, disabled && { opacity: 0.45 }, focused && styles.focusRing]}
+    >
+      <Icon name={icon} size={16} color={colors.muted} />
+      <Text style={styles.menuRowText}>{label}</Text>
     </Pressable>
   );
 }
@@ -531,7 +669,7 @@ function TeeTimeRow({ teeTime, priceCents, compact, selected, isNext, past, onPr
       onPress={() => Date.now() - nameTapped.current > 400 && onPress()}
       style={({ hovered, focused }: WebPress) => [
         styles.row,
-        hovered && { backgroundColor: "#f7f8f4" },
+        hovered && { backgroundColor: "#f7f8fa" },
         selected && styles.rowSelected,
         past && { opacity: 0.6 },
         moveTarget === "ok" && styles.rowDropOk,
@@ -539,13 +677,18 @@ function TeeTimeRow({ teeTime, priceCents, compact, selected, isNext, past, onPr
         focused && styles.focusRing,
       ]}
     >
-      <View style={[styles.timeCol, compact && { width: 58 }]}>
-        <Text style={[styles.rowTime, compact && { fontSize: 13 }]}>{formatTime(teeTime.localTime)}</Text>
+      <View style={[styles.timeCol, compact && { width: 46 }]}>
+        <Text style={[styles.rowTime, compact && { fontSize: 14 }]}>{clock(teeTime.localTime)}</Text>
         {isNext && <Text style={styles.next}>NEXT</Text>}
       </View>
-      {priceCents !== undefined && <Text style={styles.price}>{money(priceCents)}</Text>}
+      {priceCents !== undefined && (
+        <View style={styles.price}>
+          <Text style={styles.priceText}>{money(priceCents)}</Text>
+        </View>
+      )}
       {blocked ? (
         <View style={styles.blockedBar}>
+          <Icon name="lock" size={14} color={colors.muted} />
           <Text style={styles.blockedText} numberOfLines={1}>Blocked{teeTime.note ? ` · ${teeTime.note}` : ""}</Text>
         </View>
       ) : (
@@ -563,7 +706,13 @@ function TeeTimeRow({ teeTime, priceCents, compact, selected, isNext, past, onPr
                   </DragName>
                 )),
                 ...slots
-                  .map((x, i) => (x.booking ? null : <View key={`open${i}`} style={[styles.slot, styles.slotOpen, ghost(i) && styles.slotGhost]} />))
+                  .map((x, i) =>
+                    x.booking ? null : (
+                      <View key={`open${i}`} style={[styles.slot, styles.slotOpen, ghost(i) && styles.slotGhost]}>
+                        {!ghost(i) && <Icon name="plusCircle" size={14} color="#a3a9b1" />}
+                      </View>
+                    ),
+                  )
                   .filter(Boolean),
               ]
             : slots.map((s, i) =>
@@ -586,8 +735,8 @@ function TeeTimeRow({ teeTime, priceCents, compact, selected, isNext, past, onPr
                 <Text style={styles.ghostText}>+ Guest</Text>
               </View>
             ) : (
-              <View key={i} style={[styles.slot, styles.slotOpen]}>
-                <Text style={styles.openText}>{i === firstOpen && teeTime.note ? teeTime.note : "Open"}</Text>
+              <View key={i} style={[styles.slot, styles.slotOpen]} accessibilityLabel="Open">
+                {i === firstOpen && teeTime.note ? <Text style={styles.openText} numberOfLines={1}>{teeTime.note}</Text> : <Icon name="plusCircle" size={15} color="#a3a9b1" />}
               </View>
             ),
           )}
@@ -607,10 +756,10 @@ function TeeTimeRow({ teeTime, priceCents, compact, selected, isNext, past, onPr
           </Text>
         )}
         {carts.length > 0 && (
-          <Text style={styles.cart} numberOfLines={1}>
-            {compact ? "" : carts.length === 1 ? "Cart " : "Carts "}
-            {carts.join(", ")}
-          </Text>
+          <View style={styles.cartRow} accessibilityLabel={`${carts.length === 1 ? "Cart" : "Carts"} ${carts.join(", ")}`}>
+            <Icon name="cart" size={13} color={colors.primaryText} />
+            <Text style={styles.cart} numberOfLines={1}>{carts.join(", ")}</Text>
+          </View>
         )}
           </>
         )}
@@ -696,37 +845,61 @@ const styles = StyleSheet.create({
   ghostText: { color: colors.primaryText, fontSize: 12, fontWeight: "700" },
   empty: { color: colors.muted, textAlign: "center", marginTop: 40, paddingHorizontal: 24, fontSize: 14, lineHeight: 22 },
   focusRing: { outlineColor: colors.focus, outlineWidth: 2, outlineStyle: "solid", outlineOffset: -2 } as object,
-  week: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: colors.card, borderBottomWidth: 1, borderColor: colors.border, paddingHorizontal: 12, paddingVertical: 8 },
-  todayButton: { borderWidth: 1, borderColor: colors.primary, borderRadius: 3, paddingHorizontal: 12, minHeight: 34, justifyContent: "center" },
-  todayText: { color: colors.primary, fontWeight: "700", fontSize: 13 },
-  arrow: { width: 32, minHeight: 34, alignItems: "center", justifyContent: "center", borderRadius: 3 },
-  arrowText: { fontSize: 20, color: colors.primary, lineHeight: 26 },
+  page: { flex: 1, backgroundColor: colors.bg, padding: 12 },
+  card: { flex: 1, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: 3, overflow: "hidden" },
+  stationText: { fontSize: 13, color: colors.muted, fontWeight: "600", marginRight: 4 },
+  tool: { width: 36, height: 36, borderRadius: 3, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card },
+  toolOn: { borderColor: colors.primary, backgroundColor: colors.primaryLight },
+  addButton: { flexDirection: "row", alignItems: "center", gap: 6, height: 36, paddingHorizontal: 12, borderRadius: 3, backgroundColor: colors.primary },
+  addText: { color: "#fff", fontWeight: "700", fontSize: 14 },
+  addMenu: { position: "absolute", top: 40, right: 0, zIndex: 20, minWidth: 220, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: 3, paddingVertical: 4, boxShadow: "0 4px 14px rgba(0,0,0,0.12)" } as object,
+  menuRow: { flexDirection: "row", alignItems: "center", gap: 10, minHeight: 38, paddingHorizontal: 12 },
+  menuRowText: { fontSize: 14, color: colors.text },
+  heading: { flexDirection: "row", alignItems: "center", paddingHorizontal: 14, paddingTop: 10, paddingBottom: 6 },
+  stats: { flex: 1, flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 16 },
+  stat: { flexDirection: "row", alignItems: "center", gap: 5 },
+  statValue: { fontSize: 14, fontWeight: "700", fontVariant: ["tabular-nums"] },
+  statLabel: { fontSize: 13, color: colors.muted },
+  offline: { fontSize: 13, color: colors.noShow, fontWeight: "600" },
+  bigDate: { flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 3, alignSelf: "center" },
+  bigDay: { fontSize: 34, fontWeight: "300", color: colors.text, fontVariant: ["tabular-nums"] },
+  bigWeekday: { fontSize: 15, fontWeight: "700", color: colors.text },
+  bigMonth: { fontSize: 13, color: colors.muted },
+  week: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 8, borderBottomWidth: 1, borderColor: colors.border },
+  todayButton: { borderWidth: 1, borderColor: colors.text, borderRadius: 3, paddingHorizontal: 14, minHeight: 40, justifyContent: "center" },
+  todayText: { color: colors.text, fontWeight: "700", fontSize: 13 },
+  arrow: { width: 32, minHeight: 40, alignItems: "center", justifyContent: "center", borderRadius: 3 },
   days: { flex: 1, flexDirection: "row", gap: 4 },
-  day: { flex: 1, minHeight: 34, borderRadius: 3, alignItems: "center", justifyContent: "center", paddingHorizontal: 2 },
+  day: { flex: 1, minHeight: 40, borderRadius: 3, alignItems: "center", justifyContent: "center", paddingHorizontal: 2 },
   dayOn: { backgroundColor: colors.text },
-  dayText: { fontSize: 12, fontWeight: "600", color: colors.text, textAlign: "center" },
+  dayWeekday: { fontSize: 11, fontWeight: "600", color: colors.muted, textAlign: "center" },
+  dayText: { fontSize: 14, fontWeight: "700", color: colors.text, textAlign: "center" },
   legend: { flexDirection: "row", flexWrap: "wrap", gap: 14, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: colors.bg, borderBottomWidth: 1, borderColor: colors.border },
   legendItem: { flexDirection: "row", alignItems: "center", gap: 6 },
   legendSwatch: { width: 16, height: 14, borderRadius: 2, alignItems: "center", justifyContent: "center" },
   legendMark: { color: "#fff", fontSize: 10, fontWeight: "700" },
   legendText: { fontSize: 12, color: colors.text },
-  hour: { height: HOUR_HEIGHT, justifyContent: "center", paddingHorizontal: 12, backgroundColor: colors.bg, borderBottomWidth: 1, borderColor: colors.border },
-  hourText: { fontSize: 12, fontWeight: "700", color: colors.muted, letterSpacing: 0.5 },
-  row: { height: ROW_HEIGHT, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12, backgroundColor: colors.card, borderBottomWidth: 1, borderColor: colors.border },
+  hour: { height: HOUR_HEIGHT, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12 },
+  hourPill: { backgroundColor: "#e4e7eb", borderRadius: 3, paddingHorizontal: 8, paddingVertical: 3 },
+  hourText: { fontSize: 11, fontWeight: "700", color: colors.muted, letterSpacing: 0.5 },
+  hourLine: { flex: 1, height: 1, backgroundColor: colors.border },
+  row: { height: ROW_HEIGHT, flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 12, backgroundColor: colors.card },
   rowSelected: { backgroundColor: colors.primaryLight },
-  timeCol: { width: 70 },
-  rowTime: { fontSize: 13, fontWeight: "600", color: colors.text, fontVariant: ["tabular-nums"] },
+  timeCol: { width: 52 },
+  rowTime: { fontSize: 15, fontWeight: "700", color: colors.text, fontVariant: ["tabular-nums"] },
   next: { fontSize: 9, fontWeight: "800", color: colors.primary, letterSpacing: 1 },
-  price: { width: 60, fontSize: 12, color: colors.muted, fontVariant: ["tabular-nums"] },
-  slots: { flex: 1, flexDirection: "row", gap: 3, minWidth: 0 },
-  slot: { flex: 1, height: 22, borderRadius: 2, justifyContent: "center", paddingHorizontal: 6, minWidth: 0 },
-  slotOpen: { borderWidth: 1, borderColor: colors.border, borderStyle: "dashed", alignItems: "center" },
-  slotText: { color: "#fff", fontSize: 12, fontWeight: "600" },
+  price: { width: 64, height: 24, borderRadius: 3, backgroundColor: "#eef0f2", alignItems: "center", justifyContent: "center" },
+  priceText: { fontSize: 12, fontWeight: "600", color: colors.text, fontVariant: ["tabular-nums"] },
+  slots: { flex: 1, flexDirection: "row", gap: 4, minWidth: 0 },
+  slot: { flex: 1, height: 28, borderRadius: 3, justifyContent: "center", paddingHorizontal: 8, minWidth: 0 },
+  slotOpen: { backgroundColor: "#eef0f2", alignItems: "center" },
+  slotText: { color: "#fff", fontSize: 13, fontWeight: "600" },
   openText: { color: colors.muted, fontSize: 12 },
-  blockedBar: { flex: 1, height: 22, borderRadius: 2, backgroundColor: colors.blocked, justifyContent: "center", paddingHorizontal: 10 },
-  blockedText: { color: colors.muted, fontStyle: "italic", fontSize: 12 },
-  endCol: { width: 104, alignItems: "flex-end" },
+  blockedBar: { flex: 1, height: 28, borderRadius: 3, backgroundColor: colors.blocked, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 10 },
+  blockedText: { color: colors.muted, fontStyle: "italic", fontSize: 12, flex: 1 },
+  endCol: { width: 96, alignItems: "flex-end" },
   pay: { fontWeight: "700", fontSize: 12 },
+  cartRow: { flexDirection: "row", alignItems: "center", gap: 4 },
   cart: { fontSize: 12, color: colors.primaryText, fontWeight: "600" },
   side: { width: 400, borderLeftWidth: 1, borderColor: colors.border, backgroundColor: colors.card },
 });
