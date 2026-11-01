@@ -4,6 +4,7 @@ import type { HostInstance } from "react-native";
 import { findRate } from "@golf/core";
 import { ApiError, type Client, type Course, type SheetBooking, type SheetTeeTime, type Station } from "./api";
 import { addDays, dayParts, nowIn, todayIn, weekStart } from "./dates";
+import { DelayBar } from "./DelayPanel";
 import { CalendarPicker } from "./CalendarPicker";
 import { TeeTimePanel } from "./TeeTimePanel";
 import { Header } from "./Header";
@@ -281,6 +282,7 @@ export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu,
     <View style={{ flex: 1 }}>
       <Header title="Tee sheet" subtitle={`${station === "proshop" ? "Pro shop" : "Starter"} · ${summary}`} onOpenMenu={onOpenMenu} />
       <WeekStrip date={date} today={today} compact={compact} onPick={setDate} />
+      <DelayBar client={client} date={date} today={today} nowLocal={nowIn(course.timeZone)} sheet={sheet} onChanged={load} />
       {!compact && <Legend />}
       {notice && (
         <View key={notice.key} style={styles.notice} accessibilityLiveRegion="polite" role="status">

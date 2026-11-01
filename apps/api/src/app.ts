@@ -85,6 +85,7 @@ import {
   updateEvent,
 } from "./events.ts";
 import { ACCOUNT_KEYS, exportJournal, getAccountingSettings, journal, saveAccountingSettings } from "./accounting.ts";
+import { delayTeeSheet, listDelays, undoDelay } from "./delays.ts";
 import { emailStatement, getCampaign, getMessageSettings, golferMessages, listCampaigns, previewAudience, saveMessageSettings, sendMessage } from "./messages.ts";
 import {
   addCarts,
@@ -259,6 +260,8 @@ const ACTIONS: Record<string, string> = {
   "POST /v1/courses/:slug/messages": "Sent a message to golfers",
   "POST /v1/courses/:slug/statements/:id/email": "Emailed a statement",
   "PUT /v1/courses/:slug/settings/messaging": "Changed messaging settings",
+  "POST /v1/courses/:slug/tee-sheet/delays": "Pushed the tee sheet back",
+  "POST /v1/courses/:slug/tee-sheet/delays/:id/undo": "Took back a tee sheet delay",
 };
 
 const player = z.object({
@@ -1386,6 +1389,23 @@ export function buildApp(db: Db, opts: { fetchReport?: FetchReport; paymentsFetc
     const body = z.object({ fromName: z.string().max(100).nullish(), replyTo: z.string().max(200).nullish(), signature: z.string().max(1000).nullish() }).parse(req.body);
     return saveMessageSettings(db, await managedCourseFor(req), body);
   });
+
+  // Weather delays: anyone at the pro shop can push the day's tee times back and tell the golfers.
+  app.get("/v1/courses/:slug/tee-sheet/delays", async (req) => listDelays(db, await courseFor(req), z.object({ date: dateString }).parse(req.query).date));
+  app.post("/v1/courses/:slug/tee-sheet/delays", async (req, reply) => {
+    const body = z
+      .object({
+        date: dateString,
+        from: hhmm,
+        minutes: z.number().int().min(5).max(300),
+        reason: z.enum(["frost", "fog", "rain", "lightning", "heat", "course", "other"]),
+        note: z.string().max(300).nullish(),
+        notify: z.object({ channels: z.array(z.enum(["email", "sms"])).max(2), body: z.string().max(1000).nullish() }).nullish(),
+      })
+      .parse(req.body);
+    return reply.status(201).send(await delayTeeSheet(db, await courseFor(req), req.staff?.user.id, body));
+  });
+  app.post("/v1/courses/:slug/tee-sheet/delays/:id/undo", async (req) => undoDelay(db, await courseFor(req), req.staff?.user.id, idParams.parse(req.params).id));
 
   app.put("/v1/courses/:slug/bookings/:id/carts", async (req) => {
     const course = await courseFor(req);

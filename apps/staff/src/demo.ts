@@ -11,6 +11,8 @@ import {
   type EmployeeType,
   type DayClose,
   type AccountingFormat,
+  type DelayReason,
+  type TeeSheetDelay,
   type AudiencePreview,
   type Campaign,
   type CampaignDetail,
@@ -912,6 +914,18 @@ export function createDemoClient(apiKey: string): Client {
     };
     campaigns.unshift(c);
     return c;
+  }
+  // Weather delays: tee times from a point in the day move later, groups and all.
+  const delays: (TeeSheetDelay & { fromAt: string })[] = [];
+  const DELAY_LABEL: Record<DelayReason, string> = { frost: "Frost", fog: "Fog", rain: "Rain", lightning: "Lightning", heat: "Heat", course: "Course conditions", other: "Weather" };
+  function shiftTimes(date: string, fromAt: string, minutes: number) {
+    const moved = [...teeTimes.values()].filter((t) => t.date === date && t.startsAt >= fromAt);
+    for (const t of moved) {
+      const d = new Date(Date.parse(t.startsAt) + minutes * 60_000);
+      t.startsAt = d.toISOString();
+      t.localTime = new Intl.DateTimeFormat("en-GB", { timeZone: riverBend.timeZone, hour: "2-digit", minute: "2-digit", hour12: false }).format(d);
+    }
+    return moved;
   }
   const managerAudience = (a: MessageAudience) => (a.type === "golfers" || a.type === "house_accounts") && managerOnly();
 
@@ -2019,6 +2033,44 @@ export function createDemoClient(apiKey: string): Client {
       }),
     report: (from: string, to: string) => reply(() => demoReport(from, to)),
     dayClose: (date: string) => reply(() => demoClose(date)),
+    delays: (date: string) => reply(() => delays.filter((d) => d.date === date).map(({ fromAt: _, ...d }) => d)),
+    delayTeeSheet: (input: { date: string; from: string; minutes: number; reason: DelayReason; note?: string | null; notify?: { channels: MessageChannel[]; body?: string | null } | null }) =>
+      reply(() => {
+        ensureDay(input.date);
+        const first = [...teeTimes.values()].find((t) => t.date === input.date && t.localTime === input.from);
+        if (!first) throw new ApiError(400, "no_tee_times", "There are no tee times from then on to push back");
+        const fromAt = first.startsAt;
+        const groups = bookings.filter((b) => teeTimes.get(b.teeTimeId)!.date === input.date && teeTimes.get(b.teeTimeId)!.startsAt >= fromAt && (b.status === "confirmed" || b.status === "checked_in"));
+        const moved = shiftTimes(input.date, fromAt, input.minutes);
+        const delay = {
+          id: id(), date: input.date, fromTime: input.from, fromAt, minutes: input.minutes, reason: input.reason, note: input.note?.trim() || null, teeTimes: moved.length,
+          groups: groups.length, campaignId: null as string | null, staff: account()?.name ?? null, at: new Date().toISOString(), undoneAt: null as string | null,
+        };
+        delays.push(delay);
+        log("Pushed the tee sheet back");
+        let campaign: CampaignDetail | null = null;
+        if (input.notify?.channels.length && groups.length) {
+          const { recipients } = resolveAudience({ type: "bookings", bookingIds: groups.map((b) => b.id) });
+          const reason = DELAY_LABEL[input.reason];
+          const body = (input.notify.body?.trim() || "Your tee time is now {tee_time}.").replace(/\{reason\}/g, reason).replace(/\{minutes\}/g, String(input.minutes));
+          campaign = deliver("operational", `${reason} delay, ${input.minutes} minutes`, input.notify.channels, `${reason} delay: your tee time at {course} is now {tee_time}`, body, recipients);
+          delay.campaignId = campaign.id;
+        }
+        const last = [...teeTimes.values()].filter((t) => t.date === input.date).sort((a, b) => a.startsAt.localeCompare(b.startsAt)).at(-1);
+        const { fromAt: _, ...out } = delay;
+        return { delay: out, campaign, lastTeeTime: last?.localTime ?? null };
+      }),
+    undoDelay: (delayId: string) =>
+      reply(() => {
+        const d = delays.find((x) => x.id === delayId);
+        if (!d) throw new ApiError(404, "not_found", "Delay not found");
+        if (d.undoneAt) throw conflict("already_undone", "This delay was already taken back");
+        if (delays.some((x) => x.date === d.date && !x.undoneAt && x.at > d.at)) throw conflict("not_latest", "Take back the later delay first");
+        shiftTimes(d.date, new Date(Date.parse(d.fromAt) + d.minutes * 60_000).toISOString(), -d.minutes);
+        d.undoneAt = new Date().toISOString();
+        log("Took back a tee sheet delay");
+        return delays.filter((x) => x.date === d.date).map(({ fromAt: _, ...x }) => x);
+      }),
     previewMessage: (audience: MessageAudience, channels: MessageChannel[]) =>
       reply((): AudiencePreview => {
         managerAudience(audience);

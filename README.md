@@ -195,6 +195,16 @@ API: `POST /messages/preview`, `POST /messages`, `GET /messages`, `GET /messages
 
 ![A sent message](docs/screenshots/messages.png)
 
+## Weather and frost delays
+
+**Weather delay…** on the tee sheet (today or a day ahead) is for frost, fog, lightning and other holds. Pick why, the first tee time to push back, and by how long. Every tee time from then on moves later by that much, groups and all, so the gaps between groups stay the same; the form says how many tee times and groups move and what the last tee time becomes. By default the golfers whose times moved get a text and an email with their own new tee time (the wording can be changed before sending, and **Messages › Sent** shows who couldn't be reached). The tee sheet shows a banner for the delay, and the latest delay on a day can be taken back.
+
+The booking system keeps its original times. Template tee times made for a delayed day, and bookings synced from TeeItUp or GolfNow, are moved through the day's delays so they land on the delayed sheet; so push the delay back here, not in the booking system as well.
+
+API: `GET /tee-sheet/delays?date`, `POST /tee-sheet/delays`, `POST /tee-sheet/delays/:id/undo`.
+
+![Pushing the tee sheet back for frost](docs/screenshots/weather-delay.png)
+
 ## AI assistant
 
 Managers can ask Claude, ChatGPT or another MCP client about the course: "how many rounds today?", "who still owes?", "is Mike Sullivan booked this week?", "what did we take last week?". Add a custom connector with the address `https://<your server>/v1/courses/<course>/mcp` and the manager key as a Bearer token.
