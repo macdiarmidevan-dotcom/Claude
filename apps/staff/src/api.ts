@@ -228,6 +228,70 @@ export interface GolferAccount {
   roundsPlayed: number;
   lastPlayed: string | null;
   createdAt: string;
+  /** Left off marketing email or texts. Messages about their own tee times still go. */
+  emailOptOut?: boolean;
+  smsOptOut?: boolean;
+}
+
+export type MessageChannel = "email" | "sms";
+export type MessageKind = "marketing" | "operational" | "statement";
+export type MessageAudience =
+  | { type: "date"; date: string; from?: string; to?: string }
+  | { type: "event"; eventId: string }
+  | { type: "golfers" }
+  | { type: "house_accounts" }
+  | { type: "golfer_list"; golferIds: string[] }
+  | { type: "bookings"; bookingIds: string[] };
+
+export interface AudiencePreview {
+  label: string;
+  kind: MessageKind;
+  golfers: number;
+  email: number;
+  sms: number;
+  unreachable: number;
+  sample: string[];
+}
+
+export interface SentMessage {
+  id: string;
+  golferId: string | null;
+  name: string;
+  channel: MessageChannel;
+  to: string | null;
+  subject: string | null;
+  body: string;
+  status: "sent" | "failed" | "skipped";
+  reason: string | null;
+  provider: string;
+  at: string;
+}
+
+export interface Campaign {
+  id: string;
+  kind: MessageKind;
+  audienceLabel: string;
+  channels: MessageChannel[];
+  subject: string | null;
+  body: string;
+  sentBy: string | null;
+  sentAt: string;
+  golfers: number;
+  sent: number;
+  skipped: number;
+  failed: number;
+}
+
+export interface CampaignDetail extends Campaign {
+  messages: SentMessage[];
+}
+
+export interface MessageSettings {
+  fromName: string;
+  replyTo: string | null;
+  signature: string | null;
+  /** "simulator" until a provider is set up: messages are recorded, not delivered. */
+  provider: string;
 }
 
 export interface GolferProfile extends GolferAccount {
@@ -960,6 +1024,16 @@ function createHttpClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "ap
     adjustHouseAccount: (id: string, input: { amountCents: number; description: string }) => request<HouseAccountDetail>(`/house-accounts/${id}/adjust`, { method: "POST", body: input }),
     runStatements: (month: string) => request<{ month: string; statements: number }>("/house-accounts/statements", { method: "POST", body: { month } }),
     statement: (id: string) => request<StatementDetail>(`/statements/${id}`),
+    emailStatement: (id: string) => request<CampaignDetail>(`/statements/${id}/email`, { method: "POST" }),
+    previewMessage: (audience: MessageAudience, channels: MessageChannel[]) => request<AudiencePreview>("/messages/preview", { method: "POST", body: { audience, channels } }),
+    sendMessage: (input: { audience: MessageAudience; channels: MessageChannel[]; subject?: string | null; body: string }) =>
+      request<CampaignDetail>("/messages", { method: "POST", body: input }),
+    campaigns: () => request<Campaign[]>("/messages"),
+    campaign: (id: string) => request<CampaignDetail>(`/messages/${id}`),
+    golferMessages: (golferId: string) => request<SentMessage[]>(`/golfers/${golferId}/messages`),
+    messageSettings: () => request<MessageSettings>("/settings/messaging"),
+    saveMessageSettings: (input: { fromName?: string | null; replyTo?: string | null; signature?: string | null }) =>
+      request<MessageSettings>("/settings/messaging", { method: "PUT", body: input }),
     accountingSettings: () => request<AccountingSettings>("/settings/accounting"),
     saveAccountingSettings: (input: { format?: AccountingFormat; accounts?: Partial<Record<AccountKey, string>> }) =>
       request<AccountingSettings>("/settings/accounting", { method: "PUT", body: input }),
@@ -1044,7 +1118,7 @@ function createHttpClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "ap
     /** Creates a golfer's account, usually at their first check-in, and links that booking. */
     createGolfer: (input: { name: string; email: string; phone: string; bookingId?: string }) =>
       request<GolferProfile>("/golfers", { method: "POST", body: input }),
-    updateGolfer: (id: string, patch: { name?: string; email?: string; phone?: string }) =>
+    updateGolfer: (id: string, patch: { name?: string; email?: string; phone?: string; emailOptOut?: boolean; smsOptOut?: boolean }) =>
       request<GolferProfile>(`/golfers/${id}`, { method: "PATCH", body: patch }),
     linkGolfer: (bookingId: string, golferId: string) =>
       request<GolferProfile>(`/bookings/${bookingId}/golfer`, { method: "PUT", body: { golferId } }),

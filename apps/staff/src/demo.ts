@@ -11,6 +11,14 @@ import {
   type EmployeeType,
   type DayClose,
   type AccountingFormat,
+  type AudiencePreview,
+  type Campaign,
+  type CampaignDetail,
+  type MessageAudience,
+  type MessageChannel,
+  type MessageKind,
+  type MessageSettings,
+  type SentMessage,
   type Asset,
   type AssetDetail,
   type AssetInput,
@@ -811,6 +819,101 @@ export function createDemoClient(apiKey: string): Client {
     if (down.length)
       throw conflict("cart_out_of_service", down.map((c) => `Cart ${c.number} is ${c.status === "retired" ? "retired" : `out of service${c.statusNote ? ` (${c.statusNote})` : ""}`}`).join(". "));
   }
+
+  // Golfer messaging through the simulator, the same rules as the server's.
+  type DemoRecipient = { golferId: string | null; name: string; email: string | null; phone: string | null; emailOptOut: boolean; smsOptOut: boolean; teeTime?: string; date?: string };
+  const campaigns: (CampaignDetail & { sentById: string | null })[] = [];
+  const messageSettings: MessageSettings = { fromName: riverBend.name, replyTo: null, signature: "See you on the course,\nRiver Bend Golf Club pro shop", provider: "simulator" };
+  const usableEmail = (e: string | null) => (e && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) && !e.endsWith(".invalid") ? e : null);
+  const usablePhone = (p: string | null) => {
+    const d = (p ?? "").replace(/\D/g, "");
+    return d.length === 10 ? `+1${d}` : d.length === 11 && d.startsWith("1") ? `+${d}` : null;
+  };
+  const fromGolfer = (g: DemoGolfer | undefined, name: string, phone: string | null): DemoRecipient => ({
+    golferId: g?.id ?? null, name: g?.name ?? name, email: g?.email ?? null, phone: g?.phone ?? phone, emailOptOut: !!g?.emailOptOut, smsOptOut: !!g?.smsOptOut,
+  });
+  function resolveAudience(audience: MessageAudience): { label: string; kind: MessageKind; recipients: DemoRecipient[] } {
+    const longDay = (iso: string) => new Date(iso).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: riverBend.timeZone });
+    if (audience.type === "date" || audience.type === "bookings") {
+      seedEvents();
+      const picked = bookings
+        .filter((b) => {
+          const t = teeTimes.get(b.teeTimeId)!;
+          if (audience.type === "bookings") return audience.bookingIds.includes(b.id);
+          return t.date === audience.date && (b.status === "confirmed" || b.status === "checked_in") && (!audience.from || t.localTime >= audience.from) && (!audience.to || t.localTime <= audience.to);
+        })
+        .sort((x, y) => teeTimes.get(x.teeTimeId)!.startsAt.localeCompare(teeTimes.get(y.teeTimeId)!.startsAt));
+      const seen = new Set<string>();
+      const recipients = picked
+        .filter((b) => !seen.has(b.golferId ?? b.customerName) && seen.add(b.golferId ?? b.customerName))
+        .map((b) => {
+          const t = teeTimes.get(b.teeTimeId)!;
+          return { ...fromGolfer(golfers.find((g) => g.id === b.golferId), b.customerName, b.customerPhone ?? null), teeTime: formatTime(t.localTime), date: longDay(t.startsAt) };
+        });
+      if (audience.type === "bookings") return { label: `${picked.length} ${picked.length === 1 ? "group" : "groups"} on the tee sheet`, kind: "operational", recipients };
+      const day = longDay(`${audience.date}T12:00:00Z`);
+      return { label: audience.from || audience.to ? `Booked ${day}, ${audience.from ?? "first tee time"} to ${audience.to ?? "last"}` : `Everyone booked ${day}`, kind: "operational", recipients };
+    }
+    if (audience.type === "event") {
+      seedEvents();
+      const ev = events.find((e) => e.id === audience.eventId);
+      if (!ev) throw new ApiError(404, "not_found", "League or outing not found");
+      return {
+        label: `Players in ${ev.name}`,
+        kind: "operational",
+        recipients: ev.players.map((p) => {
+          const g = golfers.find((x) => x.id === p.golferId);
+          return { ...fromGolfer(g, p.name, p.phone), email: p.email ?? g?.email ?? null };
+        }),
+      };
+    }
+    if (audience.type === "golfers") return { label: "All golfers with an account", kind: "marketing", recipients: golfers.map((g) => fromGolfer(g, g.name, null)) };
+    if (audience.type === "house_accounts")
+      return {
+        label: "House account holders",
+        kind: "marketing",
+        recipients: houseAccounts.filter((a) => a.status === "active").map((a) => ({ ...fromGolfer(golfers.find((g) => g.id === a.golferId), "Golfer", null), ...(a.billingEmail ? { email: a.billingEmail } : {}) })),
+      };
+    const list = golfers.filter((g) => audience.golferIds.includes(g.id));
+    if (!list.length) throw new ApiError(404, "not_found", "Golfer account not found");
+    return { label: list.length === 1 ? list[0].name : `${list.length} golfers`, kind: "operational", recipients: list.map((g) => fromGolfer(g, g.name, null)) };
+  }
+  function addressFor(r: DemoRecipient, channel: MessageChannel, kind: MessageKind): { to: string } | { skip: string } {
+    const to = channel === "email" ? usableEmail(r.email) : usablePhone(r.phone);
+    if (!to) return { skip: channel === "email" ? "No email address" : "No mobile number" };
+    if (kind === "marketing" && (channel === "email" ? r.emailOptOut : r.smsOptOut)) return { skip: channel === "email" ? "Opted out of email" : "Opted out of texts" };
+    return { to };
+  }
+  const fill = (template: string, r: DemoRecipient) =>
+    template
+      .replace(/\{first_name\}/g, r.name.split(/\s+/)[0] ?? r.name)
+      .replace(/\{name\}/g, r.name)
+      .replace(/\{tee_time\}/g, r.teeTime ?? "your tee time")
+      .replace(/\{date\}/g, r.date ?? "")
+      .replace(/\{course\}/g, riverBend.name);
+  function deliver(kind: MessageKind, label: string, channels: MessageChannel[], subject: string | null, body: string, recipients: DemoRecipient[]): CampaignDetail {
+    const at = new Date().toISOString();
+    const messages: SentMessage[] = [];
+    for (const r of recipients)
+      for (const channel of channels) {
+        const address = addressFor(r, channel, kind);
+        let text = fill(body, r);
+        if (channel === "email" && messageSettings.signature) text += `\n\n${messageSettings.signature}`;
+        messages.push({
+          id: id(), golferId: r.golferId, name: r.name, channel, to: "to" in address ? address.to : null, subject: channel === "email" ? fill(subject ?? riverBend.name, r) : null,
+          body: text, status: "to" in address ? "sent" : "skipped", reason: "skip" in address ? address.skip : null, provider: "simulator", at,
+        });
+      }
+    messages.sort((a, b) => a.name.localeCompare(b.name) || a.channel.localeCompare(b.channel));
+    const c = {
+      id: id(), kind, audienceLabel: label, channels, subject, body, sentBy: account()?.name ?? null, sentById: account()?.id ?? null, sentAt: at,
+      golfers: new Set(messages.map((m) => m.golferId ?? m.name)).size, sent: messages.filter((m) => m.status === "sent").length,
+      skipped: messages.filter((m) => m.status === "skipped").length, failed: 0, messages,
+    };
+    campaigns.unshift(c);
+    return c;
+  }
+  const managerAudience = (a: MessageAudience) => (a.type === "golfers" || a.type === "house_accounts") && managerOnly();
 
   function assignCarts(b: DemoBooking, carts: string[], signatures: WaiverSignature[]) {
     checkCarts(b, carts);
@@ -1637,13 +1740,15 @@ export function createDemoClient(apiKey: string): Client {
         log("Created a golfer account", g.name);
         return profile(g);
       }),
-    updateGolfer: (golferId: string, patch: { name?: string; email?: string; phone?: string }) =>
+    updateGolfer: (golferId: string, patch: { name?: string; email?: string; phone?: string; emailOptOut?: boolean; smsOptOut?: boolean }) =>
       reply(() => {
         const g = golfer(golferId);
         checkGolfer(patch, g.id);
         if (patch.name) g.name = patch.name.trim();
         if (patch.email) g.email = patch.email.trim().toLowerCase();
         if (patch.phone) g.phone = patch.phone.trim();
+        if (patch.emailOptOut !== undefined) g.emailOptOut = patch.emailOptOut;
+        if (patch.smsOptOut !== undefined) g.smsOptOut = patch.smsOptOut;
         log("Changed a golfer account", g.name);
         return profile(g);
       }),
@@ -1914,6 +2019,56 @@ export function createDemoClient(apiKey: string): Client {
       }),
     report: (from: string, to: string) => reply(() => demoReport(from, to)),
     dayClose: (date: string) => reply(() => demoClose(date)),
+    previewMessage: (audience: MessageAudience, channels: MessageChannel[]) =>
+      reply((): AudiencePreview => {
+        managerAudience(audience);
+        const { label, kind, recipients } = resolveAudience(audience);
+        const count = (c: MessageChannel) => (channels.includes(c) ? recipients.filter((r) => "to" in addressFor(r, c, kind)).length : 0);
+        const reached = recipients.filter((r) => channels.some((c) => "to" in addressFor(r, c, kind))).length;
+        return { label, kind, golfers: recipients.length, email: count("email"), sms: count("sms"), unreachable: recipients.length - reached, sample: recipients.slice(0, 8).map((r) => r.name) };
+      }),
+    sendMessage: (input: { audience: MessageAudience; channels: MessageChannel[]; subject?: string | null; body: string }) =>
+      reply(() => {
+        managerAudience(input.audience);
+        if (!input.channels.length) throw new ApiError(400, "no_channel", "Pick email, text or both");
+        if (input.channels.includes("email") && !input.subject?.trim()) throw new ApiError(400, "subject_required", "Add a subject for the email");
+        const { label, kind, recipients } = resolveAudience(input.audience);
+        if (!recipients.length) throw new ApiError(400, "no_recipients", "Nobody matches. Pick another day or group");
+        log("Sent a message to golfers");
+        return deliver(kind, label, input.channels, input.subject?.trim() || null, input.body.trim(), recipients);
+      }),
+    campaigns: () => reply((): Campaign[] => campaigns.map(({ messages: _, sentById: __, ...c }) => c)),
+    campaign: (campaignId: string) =>
+      reply((): CampaignDetail => {
+        const c = campaigns.find((x) => x.id === campaignId);
+        if (!c) throw new ApiError(404, "not_found", "Message not found");
+        return c;
+      }),
+    golferMessages: (golferId: string) => reply(() => campaigns.flatMap((c) => c.messages.filter((m) => m.golferId === golferId))),
+    messageSettings: () => reply(() => ({ ...messageSettings })),
+    saveMessageSettings: (input: { fromName?: string | null; replyTo?: string | null; signature?: string | null }) =>
+      reply(() => {
+        managerOnly();
+        if (input.replyTo && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.replyTo)) throw new ApiError(400, "invalid_email", "Enter a real reply-to email address");
+        if (input.fromName !== undefined) messageSettings.fromName = input.fromName?.trim() || riverBend.name;
+        if (input.replyTo !== undefined) messageSettings.replyTo = input.replyTo?.trim() || null;
+        if (input.signature !== undefined) messageSettings.signature = input.signature?.trim() || null;
+        log("Changed messaging settings");
+        return { ...messageSettings };
+      }),
+    emailStatement: (statementId: string) =>
+      reply(() => {
+        managerOnly();
+        const a = houseAccounts.find((x) => x.statements.some((st) => st.id === statementId));
+        if (!a) throw new ApiError(404, "not_found", "Statement not found");
+        const st = a.statements.find((x) => x.id === statementId)!;
+        const g = golfers.find((x) => x.id === a.golferId);
+        const month = new Date(`${st.periodStart}T12:00:00Z`).toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+        const body = [`Hi {first_name},`, ``, `Here is your ${riverBend.name} house account statement for ${month}.`, ``, `Amount due: ${money(st.closingCents)} by ${st.dueOn}`, ``, `You can pay at the pro shop by check, cash or card.`].join("\n");
+        const r = { ...fromGolfer(g, "Golfer", null), email: a.billingEmail ?? g?.email ?? null };
+        log("Emailed a statement", r.name);
+        return deliver("statement", `Statement for ${r.name}`, ["email"], `${riverBend.name} statement for ${month}`, body, [r]);
+      }),
     fleet: (kind?: AssetKind, retired = false) =>
       reply(() => {
         seedFleet();
