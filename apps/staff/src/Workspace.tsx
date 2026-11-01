@@ -20,17 +20,21 @@ import { colors, type WebPress } from "./theme";
 
 type Section = "tee-sheet" | "import" | "staff" | "customers" | "events" | "food" | "accounts" | "reports" | "schedule" | "inventory" | "settings";
 
-const ALL_SECTIONS: { id: Section; label: string; soon?: string; managers?: boolean }[] = [
+// Sections with a group fold under one menu item, so the menu stays short.
+type Group = "shop";
+const GROUP_LABEL: Record<Group, string> = { shop: "Golfers & shop" };
+
+const ALL_SECTIONS: { id: Section; label: string; soon?: string; managers?: boolean; group?: Group }[] = [
   { id: "tee-sheet", label: "Tee sheet" },
   { id: "import", label: "Sync tee sheet", managers: true },
   { id: "staff", label: "Staff accounts", managers: true },
-  { id: "customers", label: "Golfers" },
+  { id: "customers", label: "Golfers", group: "shop" },
+  { id: "accounts", label: "Gift cards & accounts", group: "shop" },
+  { id: "inventory", label: "Pro shop", group: "shop" },
   { id: "events", label: "Leagues & events" },
   { id: "food", label: "Food & bar" },
-  { id: "accounts", label: "Gift cards & accounts" },
   { id: "reports", label: "Reports" },
   { id: "schedule", label: "Staff schedule" },
-  { id: "inventory", label: "Pro shop" },
   { id: "settings", label: "Settings" },
 ];
 const SECTIONS = ALL_SECTIONS.filter((s) => FOOD_BAR || s.id !== "food");
@@ -254,6 +258,35 @@ function SideMenu(props: {
   onClose?: () => void;
 }) {
   const { courseName, section, onGo, settings, onChangeSettings, isManager, me, onSignOut, onClose } = props;
+  const currentGroup = SECTIONS.find((s) => s.id === section)?.group;
+  const [openGroup, setOpenGroup] = useState<Group | undefined>(currentGroup);
+  // Going to a section in a group (from a golfer link, say) opens that group.
+  useEffect(() => {
+    if (currentGroup) setOpenGroup(currentGroup);
+  }, [currentGroup]);
+  const visible = SECTIONS.filter((s) => !s.managers || isManager);
+  const item = (s: (typeof SECTIONS)[number], nested?: boolean) => {
+    const on = s.id === section;
+    return (
+      <Pressable
+        key={s.id}
+        accessibilityRole="link"
+        accessibilityState={{ selected: on }}
+        aria-current={on ? "page" : undefined}
+        onPress={() => onGo(s.id)}
+        style={({ hovered, focused }: WebPress) => [
+          styles.navItem,
+          nested && { paddingLeft: 28 },
+          on && styles.navItemOn,
+          hovered && !on && { backgroundColor: "#1d3826" },
+          focused && styles.focusRing,
+        ]}
+      >
+        <Text style={[styles.navText, on && { fontWeight: "700", color: "#fff" }]}>{s.label}</Text>
+        {s.soon && <Text style={styles.soonTag}>Soon</Text>}
+      </Pressable>
+    );
+  };
   return (
     <View role="navigation" aria-label="Main menu" style={styles.rail}>
       <View style={styles.railTop}>
@@ -276,25 +309,26 @@ function SideMenu(props: {
         )}
       </View>
       <ScrollView style={{ flex: 1 }}>
-        {SECTIONS.filter((s) => !s.managers || isManager).map((s) => {
-          const on = s.id === section;
+        {visible.map((s, i) => {
+          if (!s.group) return item(s);
+          // A group shows once, where its first section is.
+          if (visible[i - 1]?.group === s.group) return null;
+          const group = s.group;
+          const open = openGroup === group;
+          const holdsCurrent = currentGroup === group;
           return (
-            <Pressable
-              key={s.id}
-              accessibilityRole="link"
-              accessibilityState={{ selected: on }}
-              aria-current={on ? "page" : undefined}
-              onPress={() => onGo(s.id)}
-              style={({ hovered, focused }: WebPress) => [
-                styles.navItem,
-                on && styles.navItemOn,
-                hovered && !on && { backgroundColor: "#1d3826" },
-                focused && styles.focusRing,
-              ]}
-            >
-              <Text style={[styles.navText, on && { fontWeight: "700", color: "#fff" }]}>{s.label}</Text>
-              {s.soon && <Text style={styles.soonTag}>Soon</Text>}
-            </Pressable>
+            <View key={group}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ expanded: open }}
+                onPress={() => setOpenGroup(open ? undefined : group)}
+                style={({ hovered, focused }: WebPress) => [styles.navItem, hovered && { backgroundColor: "#1d3826" }, focused && styles.focusRing]}
+              >
+                <Text style={[styles.navText, holdsCurrent && !open && { fontWeight: "700", color: "#fff" }]}>{GROUP_LABEL[group]}</Text>
+                <Text style={styles.groupArrow}>{open ? "▾" : "▸"}</Text>
+              </Pressable>
+              {open && visible.filter((x) => x.group === group).map((x) => item(x, true))}
+            </View>
           );
         })}
       </ScrollView>
@@ -325,6 +359,7 @@ const styles = StyleSheet.create({
   navItemOn: { backgroundColor: colors.railActive },
   navIcon: { color: colors.railText, fontSize: 14, width: 20, textAlign: "center" },
   navText: { color: colors.railText, fontSize: 14, flex: 1 },
+  groupArrow: { color: colors.railMuted, fontSize: 12 },
   soonTag: { color: colors.railMuted, fontSize: 11, fontWeight: "600" },
   railFoot: { borderTopWidth: 1, borderColor: "#2a4433", padding: 16, flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   railMuted: { color: colors.railMuted, fontSize: 12 },
