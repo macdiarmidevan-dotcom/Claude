@@ -5,7 +5,7 @@ import type { ScrollViewInstance } from "react-native";
 import type { Asset, Client, Course, GiftCard, RoundChoice, GolferAccount, PaymentMethod, Product, SalePaymentMethod, SheetBooking, SheetTeeTime, Station, Waiver, Redemption, Wallet, RainCheck } from "./api";
 import { WaiverModal } from "./WaiverModal";
 import { CardChargeModal, useCardReader } from "./CardReader";
-import { GolferPicker, useSearch } from "./Golfers";
+import { GolferForm, GolferPicker, useSearch } from "./Golfers";
 import { colors, type WebPress, formatTime, money, paymentMethodLabel, statusColor, statusLabel } from "./theme";
 
 interface Props {
@@ -231,32 +231,18 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, course, stat
             />
           )}
           {accountFor?.id === b.id && (
-            <>
-              <GolferPicker
-                client={client}
-                booking={b}
-                onLinked={() => {
-                  const { checkIn } = accountFor;
-                  setAccountFor(undefined);
-                  onChanged();
-                  if (checkIn) setPayingFor(b);
-                }}
-                onCancel={() => setAccountFor(undefined)}
-              />
-              {accountFor.checkIn && (
-                <Pressable
-                  accessibilityRole="button"
-                  hitSlop={8}
-                  style={{ marginTop: 8 }}
-                  onPress={() => {
-                    setAccountFor(undefined);
-                    setPayingFor(b);
-                  }}
-                >
-                  <Text style={styles.skip}>Golfer won't give details? Check in without an account</Text>
-                </Pressable>
-              )}
-            </>
+            // Every check-in is on a golfer account: find theirs, or create it on their first visit.
+            <GolferPicker
+              client={client}
+              booking={b}
+              onLinked={() => {
+                const { checkIn } = accountFor;
+                setAccountFor(undefined);
+                onChanged();
+                if (checkIn) setPayingFor(b);
+              }}
+              onCancel={() => setAccountFor(undefined)}
+            />
           )}
           {payingFor?.id === b.id && (
             <CheckoutForm
@@ -328,21 +314,19 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, course, stat
           showRate={station === "proshop"}
           price={price}
           client={client}
-          onSubmit={(name, golfer, players, holes, cart, resident) =>
+          onSubmit={(golfer, players, holes, cart, resident) =>
             run(async () => {
               const booking = (await client.book({
                 teeTimeId: teeTime.id,
                 holes,
-                // A golfer found in the system books under their account; anyone else gets a
-                // placeholder email so the booking can still be made.
-                customer: golfer ? { name: golfer.name, email: golfer.email, phone: golfer.phone } : { name, email: `walkin+${Date.now()}@walkin.local` },
+                customer: { name: golfer.name, email: golfer.email, phone: golfer.phone },
                 players: Array.from({ length: players }, () => ({
                   residency: resident ? "resident" : "nonresident",
                   ageGroup: "adult",
                 })),
                 addOns: cart ? [{ code: "gas_cart", quantity: players }] : [],
               })) as { id: string };
-              if (golfer) await client.linkGolfer(booking.id, golfer.id);
+              await client.linkGolfer(booking.id, golfer.id);
             })
           }
         />
@@ -367,13 +351,16 @@ export function TeeTimePanel({ client, teeTime, sheet, courseHoles, course, stat
   );
 }
 
-function Action({ label, onPress, primary, danger }: { label: string; onPress: () => void; primary?: boolean; danger?: boolean }) {
+function Action({ label, onPress, primary, danger, disabled }: { label: string; onPress: () => void; primary?: boolean; danger?: boolean; disabled?: boolean }) {
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityState={{ disabled: !!disabled }}
+      disabled={disabled}
       onPress={onPress}
       style={({ pressed, focused }: WebPress) => [
         styles.action,
+        disabled && { opacity: 0.5 },
         focused && { outlineColor: colors.focus, outlineWidth: 2, outlineStyle: "solid" } as object,
         primary && { backgroundColor: colors.primary, borderColor: colors.primary },
         danger && { borderColor: colors.noShow },
@@ -931,12 +918,13 @@ function WalkInForm(props: {
   courseHoles: number;
   showRate: boolean;
   price: PriceFn;
-  onSubmit: (name: string, golfer: GolferAccount | null, players: number, holes: number, cart: boolean, resident: boolean) => void;
+  onSubmit: (golfer: GolferAccount, players: number, holes: number, cart: boolean, resident: boolean) => void;
 }) {
   const { client, maxPlayers, courseHoles, showRate, price, onSubmit } = props;
   const [name, setName] = useState("");
-  // The golfer account picked from the search, if the walk-in is already in the system.
+  // Every walk-in goes on a golfer account: picked from the search, or created here on their first visit.
   const [golfer, setGolfer] = useState<GolferAccount | null>(null);
+  const [creating, setCreating] = useState(false);
   const { results } = useSearch(client, golfer ? "" : name);
   const [chosenPlayers, setPlayers] = useState(1);
   // Spots can fill while the form is open; never offer more than are left.
@@ -957,7 +945,20 @@ function WalkInForm(props: {
           setGolfer(null);
         }}
       />
-      {golfer ? (
+      {creating ? (
+        <View style={[styles.suggestions, { padding: 10 }]}>
+          <GolferForm
+            client={client}
+            initialName={/@|\d{3}/.test(name) ? "" : name.trim()}
+            onSaved={(g) => {
+              setGolfer(g);
+              setName(g.name);
+              setCreating(false);
+            }}
+            onCancel={() => setCreating(false)}
+          />
+        </View>
+      ) : golfer ? (
         <Text style={[styles.account, { marginBottom: 10 }]}>
           ✓ {golfer.name} · {golfer.phone} · {golfer.roundsPlayed} {golfer.roundsPlayed === 1 ? "round" : "rounds"}
         </Text>
@@ -982,12 +983,14 @@ function WalkInForm(props: {
                 </Text>
               </Pressable>
             ))}
-            <Text style={[styles.muted, { padding: 8 }]}>
-              {results.length ? "Not them? Keep typing to add the name as a new walk-in." : "No golfer accounts match. The name will be added as a new walk-in."}
-            </Text>
+            <Text style={[styles.muted, { padding: 8, paddingBottom: 4 }]}>{results.length ? "Not them? First time here?" : "No golfer account matches. First time here?"}</Text>
+            <View style={{ paddingHorizontal: 8, paddingBottom: 8, alignItems: "flex-start" }}>
+              <Action label="New golfer: create account" onPress={() => setCreating(true)} />
+            </View>
           </View>
         )
       )}
+      {!golfer && !creating && <Text style={[styles.muted, { marginBottom: 8 }]}>Pick the golfer's account, or create one, before adding them to the tee sheet.</Text>}
       <Row label="Players">
         {Array.from({ length: maxPlayers }, (_, i) => i + 1).map((n) => (
           <Toggle key={n} label={String(n)} on={players === n} onPress={() => setPlayers(n)} />
@@ -1012,9 +1015,10 @@ function WalkInForm(props: {
       <Action
         label="Add to tee sheet"
         primary
+        disabled={!golfer}
         onPress={() => {
-          if (!name.trim()) return;
-          onSubmit(name.trim(), golfer, players, holes, cart, showRate && resident);
+          if (!golfer) return;
+          onSubmit(golfer, players, holes, cart, showRate && resident);
           setName("");
           setGolfer(null);
         }}
@@ -1269,7 +1273,6 @@ const styles = StyleSheet.create({
   warning: { color: colors.warn, fontSize: 13, marginTop: 4 },
   nameLink: { color: colors.primary, textDecorationLine: "underline" },
   account: { color: colors.primaryText, fontSize: 13, marginTop: 4, fontWeight: "600" },
-  skip: { color: colors.muted, fontSize: 13, textDecorationLine: "underline" },
   priceLine: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8, borderTopWidth: 1, borderColor: colors.border, paddingTop: 8, marginBottom: 10 },
   priceTotal: { fontSize: 16, fontWeight: "700", color: colors.text },
   billRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8, paddingVertical: 6, borderBottomWidth: 1, borderColor: colors.border },

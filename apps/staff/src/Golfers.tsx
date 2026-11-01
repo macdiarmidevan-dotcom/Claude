@@ -111,7 +111,7 @@ export function GolferPicker({ client, booking, onLinked, onCancel }: { client: 
 }
 
 /** Creates an account (linking the booking when given) or changes an existing one's details. */
-function GolferForm(props: {
+export function GolferForm(props: {
   client: Client;
   initialName?: string;
   initialPhone?: string;
