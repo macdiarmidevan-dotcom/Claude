@@ -180,6 +180,14 @@ API: `GET /reports/overview?from&to&compare=previous|last_year|none` (managers, 
 
 ![Labor report](docs/screenshots/reports-labor.png)
 
+**Reports › Inventory** is the pro shop view: sales and gross margin for the dates picked (cost is each product's cost today, and sales of products with no cost are left out of the margin and flagged), sales by category, best sellers, stock on hand at cost and at retail, a reorder list (at or below the reorder level), slow movers (on the shelf the whole period, nothing sold) and shrink (stock counts and adjustments, negative is missing). API: `GET /reports/inventory?from&to`.
+
+**Reports › Payments & balances** is for the accountant: money taken by tender, then what the course holds for golfers right now (gift card balances, open and expired rain checks, punch card rounds left valued at what each round cost, loyalty points valued at the reward rate) and what members owe on house accounts (charged and paid in the period, over limit, largest balances). API: `GET /reports/balances?from&to`. Both managers only, up to 366 days.
+
+![Inventory report](docs/screenshots/reports-inventory.png)
+
+![Payments and balances report](docs/screenshots/reports-balances.png)
+
 ![Revenue report](docs/screenshots/reports-revenue.png)
 
 ![Rounds and tee sheet report](docs/screenshots/reports-rounds.png)

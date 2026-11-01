@@ -43,6 +43,7 @@ import {
 import { closeDay, getDayClose, openDay, report } from "./reports.ts";
 import { managerOverview } from "./analytics.ts";
 import { laborReport } from "./labor.ts";
+import { balancesReport, inventoryReport } from "./shopreports.ts";
 import {
   cancelCardPayment,
   createTerminal,
@@ -798,6 +799,17 @@ export function buildApp(
     const course = await managedCourseFor(req);
     const { from, to } = rangeQuery.parse(req.query);
     return laborReport(db, course, from, to);
+  });
+  // Pro shop inventory, and payments and balances held or owed. Managers only.
+  app.get("/v1/courses/:slug/reports/inventory", async (req) => {
+    const course = await managedCourseFor(req);
+    const { from, to } = rangeQuery.parse(req.query);
+    return inventoryReport(db, course, from, to);
+  });
+  app.get("/v1/courses/:slug/reports/balances", async (req) => {
+    const course = await managedCourseFor(req);
+    const { from, to } = rangeQuery.parse(req.query);
+    return balancesReport(db, course, from, to);
   });
   const dateParams = z.object({ date: z.iso.date() });
   app.get("/v1/courses/:slug/closes/:date", async (req) => getDayClose(db, await courseFor(req), dateParams.parse(req.params).date));

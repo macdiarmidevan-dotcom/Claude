@@ -926,6 +926,44 @@ export interface LaborReport {
   openPunches: number;
 }
 
+/** Pro shop inventory: sales and margin, stock on hand, what to reorder, slow movers and shrink. */
+export interface InventoryReport {
+  from: string;
+  to: string;
+  sales: { revenueCents: number; units: number; costCents: number; marginCents: number; marginPct: number | null; uncostedRevenueCents: number };
+  categories: { category: string; foodBev: boolean; units: number; revenueCents: number; marginPct: number | null }[];
+  items: { productId: string | null; name: string; category: string; foodBev: boolean; units: number; revenueCents: number; costCents: number | null; marginCents: number | null; marginPct: number | null }[];
+  stock: { products: number; units: number; costCents: number; retailCents: number; missingCost: number };
+  reorder: { id: string; name: string; sku: string | null; category: string; stock: number; reorderLevel: number; soldInPeriod: number }[];
+  slowMovers: { id: string; name: string; category: string; stock: number; costCents: number | null; retailCents: number }[];
+  shrink: { id: string; name: string; units: number; costCents: number }[];
+}
+
+/** Money taken by tender, and the balances the course holds for golfers or is owed by them. */
+export interface BalancesReport {
+  from: string;
+  to: string;
+  collected: Record<MoneyMethod, number> & { totalCents: number };
+  other: { giftCardsSoldCents: number; accountPaymentsCents: number };
+  held: {
+    giftCards: { cards: number; cents: number; soldInPeriodCents: number; redeemedInPeriodCents: number };
+    rainChecks: { open: number; cents: number; expiredCents: number };
+    punchCards: { cards: number; roundsLeft: number; cents: number; unpriced: number };
+    seasonPasses: { active: number };
+    loyalty: { golfers: number; points: number; cents: number };
+    totalCents: number;
+  };
+  receivable: {
+    accounts: number;
+    cents: number;
+    creditCents: number;
+    chargedInPeriodCents: number;
+    paidInPeriodCents: number;
+    overLimit: number;
+    largest: { id: string; name: string; balanceCents: number; limitCents: number | null; status: string }[];
+  };
+}
+
 export type AccountingFormat = "quickbooks" | "xero";
 export type AccountKey =
   | "cash"
@@ -1323,6 +1361,8 @@ function createHttpClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "ap
     report: (from: string, to: string) => request<Report>(`/reports?from=${from}&to=${to}`),
     overview: (from: string, to: string, compare: ReportCompare = "previous") => request<Overview>(`/reports/overview?from=${from}&to=${to}&compare=${compare}`),
     labor: (from: string, to: string) => request<LaborReport>(`/reports/labor?from=${from}&to=${to}`),
+    inventoryReport: (from: string, to: string) => request<InventoryReport>(`/reports/inventory?from=${from}&to=${to}`),
+    balancesReport: (from: string, to: string) => request<BalancesReport>(`/reports/balances?from=${from}&to=${to}`),
     dayClose: (date: string) => request<DayClose>(`/closes/${date}`),
     openDay: (date: string, open: { startingCashCents: number }) => request<DayClose>(`/opens/${date}`, { method: "PUT", body: open }),
     closeDay: (date: string, close: { countedCashCents: number; note?: string | null }) =>
