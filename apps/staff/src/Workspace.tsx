@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Modal, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
-import { ApiError, createClient, type Course, type DayClose, type Me, type Settings } from "./api";
+import { ApiError, createClient, type Client, type Course, type DayClose, type Me, type Settings } from "./api";
 import { todayIn } from "./dates";
 import { TeeSheetScreen } from "./TeeSheetScreen";
 import { WaiverEditor } from "./WaiverEditor";
@@ -14,14 +14,14 @@ import { CardPaymentSettings, CardReaderProvider } from "./CardReader";
 import { AccountsScreen } from "./AccountsScreen";
 import { EventsScreen } from "./EventsScreen";
 import { FoodBarScreen } from "./FoodBarScreen";
-import { FOOD_BAR } from "./features";
+import { FOOD_BAR, PRO_SHOP } from "./features";
 import { StationPicker } from "./SetupScreen";
 import { FleetScreen } from "./FleetScreen";
 import { MessagesScreen } from "./MessagesScreen";
 import { ReportsScreen, StartDayForm } from "./ReportsScreen";
 import { colors, type WebPress } from "./theme";
 
-type Section = "tee-sheet" | "import" | "staff" | "customers" | "events" | "food" | "accounts" | "fleet" | "messages" | "reports" | "schedule" | "inventory" | "settings";
+type Section = "tee-sheet" | "import" | "staff" | "customers" | "events" | "food" | "accounts" | "messages" | "reports" | "schedule" | "inventory" | "settings";
 
 // Sections with a group fold under one menu item, so the menu stays short.
 type Group = "shop";
@@ -38,12 +38,11 @@ const ALL_SECTIONS: { id: Section; label: string; soon?: string; managers?: bool
   { id: "inventory", label: "Pro shop", group: "shop" },
   { id: "events", label: "Leagues & events" },
   { id: "food", label: "Food & bar" },
-  { id: "fleet", label: "Carts & maintenance" },
   { id: "reports", label: "Reports", starters: false },
   { id: "schedule", label: "Staff schedule" },
   { id: "settings", label: "Settings" },
 ];
-const SECTIONS = ALL_SECTIONS.filter((s) => FOOD_BAR || s.id !== "food");
+const SECTIONS = ALL_SECTIONS.filter((s) => (FOOD_BAR || s.id !== "food") && (PRO_SHOP || s.id !== "inventory"));
 
 // Below this width the menu folds away behind a button, as on phones and iPads held upright.
 const RAIL_BREAKPOINT = 1024;
@@ -191,11 +190,6 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
             <Header title="Gift cards & accounts" onOpenMenu={openMenu} />
             <AccountsScreen client={client} isManager={isManager} />
           </>
-        ) : section === "fleet" ? (
-          <>
-            <Header title="Carts & maintenance" onOpenMenu={openMenu} />
-            <FleetScreen client={client} isManager={isManager} meId={me?.user?.id} />
-          </>
         ) : section === "messages" ? (
           <>
             <Header title="Messages" onOpenMenu={openMenu} />
@@ -204,7 +198,7 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
         ) : section === "reports" ? (
           <>
             <Header title="Reports" onOpenMenu={openMenu} />
-            {course && <ReportsScreen client={client} me={me} timeZone={course.timeZone} />}
+            {course && <ReportsArea client={client} me={me} isManager={isManager} timeZone={course.timeZone} />}
           </>
         ) : section === "inventory" ? (
           <>
@@ -383,11 +377,44 @@ function SideMenu(props: {
   );
 }
 
+/** Reports: the money side (cash drawer and sales) and maintenance (carts, equipment, work orders). */
+function ReportsArea({ client, me, isManager, timeZone }: { client: Client; me: Me | undefined; isManager: boolean; timeZone: string }) {
+  const [part, setPart] = useState<"sales" | "maintenance">("sales");
+  return (
+    <View style={{ flex: 1 }}>
+      <View role="tablist" style={styles.tabs}>
+        {(
+          [
+            ["sales", "Cash & sales"],
+            ["maintenance", "Maintenance"],
+          ] as const
+        ).map(([id, label]) => (
+          <Pressable
+            key={id}
+            role="tab"
+            aria-selected={part === id}
+            onPress={() => setPart(id)}
+            style={({ focused }: WebPress) => [styles.tab, part === id && styles.tabOn, focused && styles.focusRing]}
+          >
+            <Text style={[styles.tabText, part === id && styles.tabTextOn]}>{label}</Text>
+          </Pressable>
+        ))}
+      </View>
+      {part === "sales" ? <ReportsScreen client={client} me={me} timeZone={timeZone} /> : <FleetScreen client={client} isManager={isManager} meId={me?.user?.id} />}
+    </View>
+  );
+}
+
 const STATION_LABEL: Record<Settings["station"], string> = { proshop: "Pro shop", starter: "Starter" };
 
 const styles = StyleSheet.create({
   stationTag: { color: "#fff", backgroundColor: colors.primary, borderRadius: 3, paddingVertical: 8, fontSize: 14, fontWeight: "600", textAlign: "center" },
   page: { flex: 1, flexDirection: "row", backgroundColor: colors.bg },
+  tabs: { flexDirection: "row", borderBottomWidth: 1, borderColor: colors.border, paddingHorizontal: 16, backgroundColor: colors.card },
+  tab: { paddingHorizontal: 14, paddingVertical: 9, borderBottomWidth: 2, borderColor: "transparent", marginBottom: -1 },
+  tabOn: { borderColor: colors.primary },
+  tabText: { fontSize: 14, color: colors.muted, fontWeight: "600" },
+  tabTextOn: { color: colors.primary },
   main: { flex: 1, minWidth: 0 },
   rail: { width: 240, backgroundColor: colors.rail, paddingTop: 16, height: "100%" },
   railTop: { flexDirection: "row", alignItems: "flex-start", paddingHorizontal: 12, marginBottom: 14 },
