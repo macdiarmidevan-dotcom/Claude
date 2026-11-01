@@ -13,6 +13,7 @@ import {
   type AccountingFormat,
   type DelayReason,
   type TeeSheetDelay,
+  type StaffFeedback,
   type AudiencePreview,
   type Campaign,
   type CampaignDetail,
@@ -918,6 +919,7 @@ export function createDemoClient(apiKey: string): Client {
   }
   // Weather delays: tee times from a point in the day move later, groups and all.
   const delays: (TeeSheetDelay & { fromAt: string })[] = [];
+  const feedback: StaffFeedback[] = [];
   const DELAY_LABEL: Record<DelayReason, string> = { frost: "Frost", fog: "Fog", rain: "Rain", lightning: "Lightning", heat: "Heat", course: "Course conditions", other: "Weather" };
   function shiftTimes(date: string, fromAt: string, minutes: number) {
     const moved = [...teeTimes.values()].filter((t) => t.date === date && t.startsAt >= fromAt);
@@ -2035,6 +2037,15 @@ export function createDemoClient(apiKey: string): Client {
     report: (from: string, to: string) => reply(() => demoReport(from, to)),
     dayClose: (date: string) => reply(() => demoClose(date)),
     delays: (date: string) => reply(() => delays.filter((d) => d.date === date).map(({ fromAt: _, ...d }) => d)),
+    sendFeedback: (input: { body: string; page?: string | null }) =>
+      reply(() => {
+        if (!input.body.trim()) throw new ApiError(400, "invalid_request", "Write your feedback first");
+        const f = { id: id(), page: input.page ?? null, body: input.body.trim(), staff: account()?.name ?? null, at: new Date().toISOString() };
+        feedback.unshift(f);
+        log("Sent feedback");
+        return f;
+      }),
+    feedback: () => reply(() => (managerOnly(), [...feedback])),
     delayTeeSheet: (input: { date: string; from: string; minutes: number; reason: DelayReason; note?: string | null; notify?: { channels: MessageChannel[]; body?: string | null } | null }) =>
       reply(() => {
         ensureDay(input.date);
