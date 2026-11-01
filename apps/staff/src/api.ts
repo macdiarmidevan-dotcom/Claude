@@ -280,7 +280,11 @@ export interface StaffUser {
   employeeType: { id: string; name: string } | null;
   active: boolean;
   lastLoginAt: string | null;
+  /** What they're paid. Only managers see it, in the staff list. */
+  pay?: Pay | null;
 }
+/** Hourly: cents per hour. Salary: cents per year. */
+export type Pay = { type: "hourly" | "salary"; cents: number };
 
 export interface EmployeeType {
   id: string;
@@ -894,6 +898,34 @@ export interface Overview {
   previous: { revenue: Departments; rounds: RoundsSummary; yield: RoundYield; rateMix: RateMixRow[]; avgDiscountPct: number | null } | null;
 }
 
+/** Hours from the time clock and what they cost, against revenue. */
+export interface LaborReport {
+  from: string;
+  to: string;
+  overtimeRule: { afterHours: number; rate: number };
+  totals: {
+    hours: number;
+    overtimeHours: number;
+    scheduledHours: number;
+    costCents: number;
+    hourlyCents: number;
+    overtimeCents: number;
+    salaryCents: number;
+    revenueCents: number;
+    laborPct: number | null;
+    revenuePerHourCents: number | null;
+    rounds: number;
+    roundsPerHour: number | null;
+  };
+  byType: { type: string; people: number; hours: number; costCents: number }[];
+  people: { id: string; name: string; type: string; pay: Pay | null; hours: number; overtimeHours: number; scheduledHours: number; costCents: number; missingPay: boolean }[];
+  days: { date: string; hours: number; costCents: number; revenueCents: number; laborPct: number | null }[];
+  /** People with hours but no pay set, so their hours cost nothing here. */
+  missingPay: number;
+  /** Punches still open (someone clocked in now); they count once they clock out. */
+  openPunches: number;
+}
+
 export type AccountingFormat = "quickbooks" | "xero";
 export type AccountKey =
   | "cash"
@@ -1124,9 +1156,9 @@ function createHttpClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "ap
     logout: () => request("/logout", { method: "POST" }),
     changePassword: (current: string, next: string) => request("/me/password", { method: "PUT", body: { current, next } }),
     staff: () => request<StaffUser[]>("/staff"),
-    addStaff: (input: { name: string; email: string; role: Role; password: string; employeeTypeId?: string | null }) =>
+    addStaff: (input: { name: string; email: string; role: Role; password: string; employeeTypeId?: string | null; pay?: Pay | null }) =>
       request<StaffUser>("/staff", { method: "POST", body: input }),
-    updateStaff: (id: string, patch: { name?: string; role?: Role; active?: boolean; password?: string; employeeTypeId?: string | null }) =>
+    updateStaff: (id: string, patch: { name?: string; role?: Role; active?: boolean; password?: string; employeeTypeId?: string | null; pay?: Pay | null }) =>
       request<StaffUser>(`/staff/${id}`, { method: "PATCH", body: patch }),
     employeeTypes: () => request<EmployeeType[]>("/employee-types"),
     addEmployeeType: (name: string) => request<EmployeeType>("/employee-types", { method: "POST", body: { name } }),
@@ -1290,6 +1322,7 @@ function createHttpClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "ap
     savePosSettings: (settings: { salesTaxBps: number }) => request<{ salesTaxBps: number }>("/settings/pos", { method: "PUT", body: settings }),
     report: (from: string, to: string) => request<Report>(`/reports?from=${from}&to=${to}`),
     overview: (from: string, to: string, compare: ReportCompare = "previous") => request<Overview>(`/reports/overview?from=${from}&to=${to}&compare=${compare}`),
+    labor: (from: string, to: string) => request<LaborReport>(`/reports/labor?from=${from}&to=${to}`),
     dayClose: (date: string) => request<DayClose>(`/closes/${date}`),
     openDay: (date: string, open: { startingCashCents: number }) => request<DayClose>(`/opens/${date}`, { method: "PUT", body: open }),
     closeDay: (date: string, close: { countedCashCents: number; note?: string | null }) =>

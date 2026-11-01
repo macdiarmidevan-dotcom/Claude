@@ -42,6 +42,7 @@ import {
 } from "./pos.ts";
 import { closeDay, getDayClose, openDay, report } from "./reports.ts";
 import { managerOverview } from "./analytics.ts";
+import { laborReport } from "./labor.ts";
 import {
   cancelCardPayment,
   createTerminal,
@@ -356,7 +357,12 @@ const importBody = z.object({
 });
 const loginBody = z.object({ email: z.string().trim().min(3).max(200), password: z.string().min(1).max(200) });
 const role = z.enum(["staff", "manager"]);
+// Hourly in cents per hour (up to $500), salary in cents per year (up to $1,000,000).
+const pay = z
+  .object({ type: z.enum(["hourly", "salary"]), cents: z.number().int().min(0) })
+  .refine((p) => p.cents <= (p.type === "hourly" ? 50_000 : 100_000_000), { message: "That pay looks too high" });
 const newStaffBody = z.object({
+  pay: pay.nullish(),
   name: z.string().trim().min(1).max(200),
   email: z.email(),
   role,
@@ -369,6 +375,7 @@ const staffPatch = z.object({
   active: z.boolean().optional(),
   password: z.string().max(200).optional(),
   employeeTypeId: z.uuid().nullable().optional(),
+  pay: pay.nullable().optional(),
 });
 const hhmm = z.string().regex(/^\d{2}:\d{2}$/);
 const shiftBody = z.object({
@@ -785,6 +792,12 @@ export function buildApp(
     const course = await managedCourseFor(req);
     const q = z.object({ from: z.iso.date(), to: z.iso.date(), compare: z.enum(["previous", "last_year", "none"]).default("previous") }).parse(req.query);
     return managerOverview(db, course, q.from, q.to, q.compare);
+  });
+  // Labor cost: hours and pay against revenue, by person, job and day. Managers only.
+  app.get("/v1/courses/:slug/reports/labor", async (req) => {
+    const course = await managedCourseFor(req);
+    const { from, to } = rangeQuery.parse(req.query);
+    return laborReport(db, course, from, to);
   });
   const dateParams = z.object({ date: z.iso.date() });
   app.get("/v1/courses/:slug/closes/:date", async (req) => getDayClose(db, await courseFor(req), dateParams.parse(req.params).date));

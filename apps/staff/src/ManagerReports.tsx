@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import type { Client, Departments, Overview, ReportCompare, RoundsSummary } from "./api";
+import type { Client, Departments, LaborReport, Overview, ReportCompare, RoundsSummary } from "./api";
 import { addDays, todayIn } from "./dates";
 import { colors, radius, type WebPress } from "./theme";
 
@@ -124,6 +124,211 @@ export function OverviewReport({ client, timeZone, view, range, onRange }: { cli
       )}
     </ScrollView>
   );
+}
+
+/** Reports › Labor: what the hours on the time clock cost, against the revenue they brought in. */
+export function LaborReportScreen({ client, timeZone, range, onRange, onOpenStaff }: { client: Client; timeZone: string; range: ReportRange; onRange: (r: ReportRange) => void; onOpenStaff?: () => void }) {
+  const [data, setData] = useState<LaborReport>();
+  const [error, setError] = useState<string>();
+  const [from, to] = datesFor(range.preset, todayIn(timeZone));
+  useEffect(() => {
+    let live = true;
+    setError(undefined);
+    client
+      .labor(from, to)
+      .then((r) => live && setData(r))
+      .catch((e) => live && setError(e instanceof Error ? e.message : "Couldn't load the report"));
+    return () => {
+      live = false;
+    };
+  }, [client, from, to]);
+  const fresh = data && data.from === from && data.to === to;
+  return (
+    <ScrollView contentContainerStyle={styles.page}>
+      <View style={[styles.bar, styles.choices]}>
+        {PRESETS.map((p) => (
+          <Chip key={p.id} label={p.label} on={range.preset === p.id} onPress={() => onRange({ ...range, preset: p.id })} />
+        ))}
+        {data && Platform.OS === "web" && (
+          <Pressable accessibilityRole="button" onPress={() => laborCsv(data)} style={({ focused }: WebPress) => [styles.csv, focused && styles.focus]}>
+            <Text style={styles.csvText}>Download CSV</Text>
+          </Pressable>
+        )}
+      </View>
+      {error && <Text role="alert" style={styles.error}>{error}</Text>}
+      {!data && !error && <ActivityIndicator style={{ marginTop: 24 }} color={colors.primary} />}
+      {data && (
+        <View style={{ opacity: fresh ? 1 : 0.55 }}>
+          <Text style={styles.period}>{span(data.from, data.to)}</Text>
+          <LaborView r={data} onOpenStaff={onOpenStaff} />
+        </View>
+      )}
+    </ScrollView>
+  );
+}
+
+function LaborView({ r, onOpenStaff }: { r: LaborReport; onOpenStaff?: () => void }) {
+  const t = r.totals;
+  const hoursText = (h: number) => `${h.toLocaleString("en-US", { maximumFractionDigits: 1 })} h`;
+  // Days for a month or less, weeks up to about four months, months after that.
+  const size = r.days.length <= 31 ? "day" : r.days.length <= 120 ? "week" : "month";
+  const groups = new Map<string, { label: string; from: string; costCents: number; revenueCents: number; hours: number }>();
+  r.days.forEach((d, i) => {
+    const key = size === "day" ? d.date : size === "week" ? String(Math.floor(i / 7)) : d.date.slice(0, 7);
+    const g = groups.get(key) ?? { label: size === "month" ? MONTHS[Number(d.date.slice(5, 7)) - 1] : short(d.date), from: d.date, costCents: 0, revenueCents: 0, hours: 0 };
+    g.costCents += d.costCents;
+    g.revenueCents += d.revenueCents;
+    g.hours += d.hours;
+    groups.set(key, g);
+  });
+  const list = [...groups.values()];
+  const share = (g: { costCents: number; revenueCents: number }) => (g.revenueCents ? (g.costCents / g.revenueCents) * 100 : null);
+  // Round the top of the scale up to a multiple of 10%, so the axis reads cleanly.
+  const max = Math.max(10, Math.ceil(Math.max(0, ...list.map((g) => share(g) ?? 0)) / 10) * 10);
+  const every = Math.ceil(list.length / 8);
+  return (
+    <>
+      <View style={styles.tiles}>
+        <Tile label="Labor cost" value={dollars(t.costCents)} note={t.laborPct == null ? "No revenue in this period" : `${t.laborPct}% of revenue`} />
+        <Tile label="Hours worked" value={hoursText(t.hours)} note={t.overtimeHours ? `${hoursText(t.overtimeHours)} overtime` : "No overtime"} />
+        <Tile label="Revenue per labor hour" value={t.revenuePerHourCents == null ? "–" : cents2(t.revenuePerHourCents)} note={`${dollars(t.revenueCents)} revenue`} />
+        <Tile label="Rounds per labor hour" value={t.roundsPerHour == null ? "–" : String(t.roundsPerHour)} note={`${count(t.rounds)} rounds`} />
+      </View>
+
+      {(r.missingPay > 0 || r.openPunches > 0) && (
+        <View style={styles.notice}>
+          {r.missingPay > 0 && (
+            <Text style={styles.noticeText}>
+              {`${r.missingPay} ${r.missingPay === 1 ? "person has" : "people have"} hours but no pay set, so their hours cost nothing here. Set pay in Staff accounts.`}
+              {onOpenStaff && (
+                <Text role="link" onPress={onOpenStaff} style={styles.link}>
+                  {"  Open Staff accounts"}
+                </Text>
+              )}
+            </Text>
+          )}
+          {r.openPunches > 0 && <Text style={styles.noticeText}>{`${r.openPunches} ${r.openPunches === 1 ? "person is" : "people are"} clocked in now. Their hours count once they clock out.`}</Text>}
+        </View>
+      )}
+
+      <Card title="Labor cost as a share of revenue" note={`Hourly pay is for hours on the time clock, with time and a half past ${r.overtimeRule.afterHours} hours in a Monday to Sunday week. Salaries are spread evenly over every day.`}>
+        {list.length < 2 ? (
+          <Text style={styles.cardNote}>Pick a longer period to see a trend.</Text>
+        ) : (
+          <View>
+            <View style={styles.chartArea}>
+              <View style={styles.yAxis}>
+                <Text style={styles.axisText}>{`${max}%`}</Text>
+                <Text style={styles.axisText}>{`${max / 2}%`}</Text>
+                <Text style={styles.axisText}>0%</Text>
+              </View>
+              <View style={styles.plot}>
+                <View style={[styles.gridLine, { top: 0 }]} />
+                <View style={[styles.gridLine, { top: "50%" }]} />
+                {list.map((g) => {
+                  const s = share(g);
+                  return (
+                    <View
+                      key={g.from}
+                      role="img"
+                      aria-label={`${g.label}: labor ${dollars(g.costCents)} of ${dollars(g.revenueCents)} revenue${s == null ? "" : `, ${s.toFixed(1)}%`}`}
+                      style={styles.barSlot}
+                    >
+                      <View style={{ width: "100%", maxWidth: 28, height: `${Math.min(100, ((s ?? 0) / max) * 100)}%`, backgroundColor: colors.primary }} />
+                    </View>
+                  );
+                })}
+              </View>
+            </View>
+            <View style={styles.xAxis}>
+              {list.map((g, i) => (
+                <Text key={g.from} numberOfLines={1} style={[styles.axisText, styles.xLabel]}>
+                  {i % every === 0 ? g.label : ""}
+                </Text>
+              ))}
+            </View>
+            <Text style={[styles.cardNote, { marginTop: 8, marginBottom: 0 }]}>Days with no revenue (closed or rained out) have no bar.</Text>
+          </View>
+        )}
+      </Card>
+
+      <View style={styles.columns}>
+        <Card title="By job" half>
+          <View style={[styles.tr, styles.th]}>
+            <Text style={[styles.thText, { flex: 1 }]}>Job</Text>
+            <Text style={[styles.thText, styles.numS]}>Hours</Text>
+            <Text style={[styles.thText, styles.num]}>Cost</Text>
+            <Text style={[styles.thText, styles.numS]}>Share</Text>
+          </View>
+          {r.byType.length === 0 && <Text style={styles.cardNote}>Nobody worked in this period.</Text>}
+          {r.byType.map((x) => (
+            <View key={x.type} style={styles.tr}>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={styles.td}>{x.type}</Text>
+                <Text style={styles.help}>{`${x.people} ${x.people === 1 ? "person" : "people"}`}</Text>
+              </View>
+              <Text style={[styles.td, styles.numS]}>{x.hours.toLocaleString("en-US")}</Text>
+              <Text style={[styles.td, styles.num]}>{dollars(x.costCents)}</Text>
+              <Text style={[styles.td, styles.numS, { color: colors.muted }]}>{t.costCents ? `${Math.round((x.costCents / t.costCents) * 100)}%` : "–"}</Text>
+            </View>
+          ))}
+          <View style={[styles.tr, { borderBottomWidth: 0 }]}>
+            <Text style={[styles.td, { flex: 1, fontWeight: "700" }]}>Total</Text>
+            <Text style={[styles.td, styles.numS, { fontWeight: "700" }]}>{t.hours.toLocaleString("en-US")}</Text>
+            <Text style={[styles.td, styles.num, { fontWeight: "700" }]}>{dollars(t.costCents)}</Text>
+            <Text style={styles.numS} />
+          </View>
+          <Text style={[styles.cardNote, { marginTop: 8 }]}>
+            {`Hourly ${dollars(t.hourlyCents)} (overtime ${dollars(t.overtimeCents)} of it), salaries ${dollars(t.salaryCents)}.`}
+          </Text>
+        </Card>
+
+        <Card title="By person" half note="Worked hours from the time clock next to the hours they were scheduled.">
+          <View style={[styles.tr, styles.th]}>
+            <Text style={[styles.thText, { flex: 1 }]}>Person</Text>
+            <Text style={[styles.thText, styles.numS]}>Worked</Text>
+            <Text style={[styles.thText, styles.numS]}>Sched.</Text>
+            <Text style={[styles.thText, styles.num]}>Cost</Text>
+          </View>
+          {r.people.length === 0 && <Text style={styles.cardNote}>Nobody worked in this period.</Text>}
+          {r.people.map((p) => (
+            <View key={p.id} style={styles.tr}>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={styles.td} numberOfLines={1}>{p.name}</Text>
+                <Text style={[styles.help, p.missingPay && { color: colors.warn, fontWeight: "700" }]} numberOfLines={1}>
+                  {`${p.type} · ${p.pay ? (p.pay.type === "hourly" ? `${cents2(p.pay.cents)}/hr` : `${dollars(p.pay.cents)}/yr`) : "No pay set"}`}
+                </Text>
+              </View>
+              <View style={styles.numS}>
+                <Text style={styles.td}>{p.hours}</Text>
+                {p.overtimeHours > 0 && <Text style={[styles.help, { color: colors.warn }]}>{`${p.overtimeHours} OT`}</Text>}
+              </View>
+              <Text style={[styles.td, styles.numS, { color: colors.muted }]}>{p.scheduledHours || "–"}</Text>
+              <Text style={[styles.td, styles.num]}>{dollars(p.costCents)}</Text>
+            </View>
+          ))}
+        </Card>
+      </View>
+    </>
+  );
+}
+
+function laborCsv(r: LaborReport) {
+  const cell = (c: number) => (c / 100).toFixed(2);
+  const quote = (s: string) => (/[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);
+  const lines = [
+    ["Date", "Hours", "Labor cost", "Revenue", "Labor %"].join(","),
+    ...r.days.map((d) => [d.date, d.hours, cell(d.costCents), cell(d.revenueCents), d.laborPct ?? ""].join(",")),
+    "",
+    ["Person", "Job", "Pay type", "Pay", "Hours", "Overtime hours", "Scheduled hours", "Cost"].join(","),
+    ...r.people.map((p) => [quote(p.name), quote(p.type), p.pay?.type ?? "", p.pay ? cell(p.pay.cents) : "", p.hours, p.overtimeHours, p.scheduledHours, cell(p.costCents)].join(",")),
+  ];
+  const url = URL.createObjectURL(new Blob([lines.join("\n") + "\n"], { type: "text/csv" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `river-bend-labor-${r.from}-to-${r.to}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 function Chip({ label, on, onPress, small }: { label: string; on: boolean; onPress: () => void; small?: boolean }) {
@@ -620,6 +825,9 @@ const styles = StyleSheet.create({
   heatCell: { flex: 1, minWidth: 34, height: 30, borderRadius: 2, alignItems: "center", justifyContent: "center" },
   heatEmpty: { borderWidth: 1, borderColor: "#eceef1", borderStyle: "dashed" },
   heatText: { fontSize: 11, fontWeight: "600", color: colors.text, fontVariant: ["tabular-nums"] },
+  notice: { backgroundColor: "#fff6e0", borderWidth: 1, borderColor: "#ecd9a6", borderRadius: radius, padding: 10, gap: 4, marginBottom: 12 },
+  noticeText: { fontSize: 13, color: colors.text, lineHeight: 19 },
+  link: { color: colors.primaryText, fontWeight: "700" },
   splitTitle: { fontSize: 12, fontWeight: "700", color: colors.text, marginBottom: 4 },
   splitLegend: { flexDirection: "row", flexWrap: "wrap", gap: 12, marginTop: 6 },
 });

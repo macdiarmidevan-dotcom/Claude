@@ -176,6 +176,10 @@ A round here is a player booked on a tee time who wasn't a no-show. Blocked tee 
 
 API: `GET /reports/overview?from&to&compare=previous|last_year|none` (managers, up to 366 days).
 
+**Reports › Labor** puts staff hours and pay against revenue: labor cost and its share of revenue, hours and overtime, revenue and rounds per labor hour, labor percent over time, and cost by job and by person (worked hours next to scheduled hours). Pay is set per person in **Staff accounts › Pay**, hourly (cents an hour) or salary (cents a year), and only managers see it. Hourly pay counts time clock hours, with hours past 40 in a Monday to Sunday week at time and a half; salaries are spread evenly over every day. People with hours but no pay are flagged. API: `GET /reports/labor?from&to` (managers, up to 366 days); `pay: { type, cents } | null` on `POST /staff` and `PATCH /staff/:id`.
+
+![Labor report](docs/screenshots/reports-labor.png)
+
 ![Revenue report](docs/screenshots/reports-revenue.png)
 
 ![Rounds and tee sheet report](docs/screenshots/reports-rounds.png)

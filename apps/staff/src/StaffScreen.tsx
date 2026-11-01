@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import type { ActivityEntry, Client, EmployeeType, Role, StaffUser } from "./api";
+import type { ActivityEntry, Client, EmployeeType, Pay, Role, StaffUser } from "./api";
 import { colors, type WebPress } from "./theme";
 
 /**
@@ -78,12 +78,13 @@ export function StaffScreen({ client, me }: { client: Client; me: StaffUser | nu
 function Person({ person, isMe, client, types, onChanged }: { person: StaffUser; isMe: boolean; client: Client; types: EmployeeType[]; onChanged: () => void }) {
   const [resetting, setResetting] = useState(false);
   const [retyping, setRetyping] = useState(false);
+  const [paying, setPaying] = useState(false);
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
 
-  async function change(patch: { role?: Role; active?: boolean; password?: string; employeeTypeId?: string | null }, done?: string) {
+  async function change(patch: { role?: Role; active?: boolean; password?: string; employeeTypeId?: string | null; pay?: Pay | null }, done?: string) {
     setBusy(true);
     setError(undefined);
     setNotice(undefined);
@@ -91,6 +92,7 @@ function Person({ person, isMe, client, types, onChanged }: { person: StaffUser;
       await client.updateStaff(person.id, patch);
       setResetting(false);
       setRetyping(false);
+      setPaying(false);
       setPassword("");
       setNotice(done);
       onChanged();
@@ -116,6 +118,7 @@ function Person({ person, isMe, client, types, onChanged }: { person: StaffUser;
           <Text style={styles.meta}>
             {person.email}
           </Text>
+          <Text style={styles.meta}>{payText(person.pay)}</Text>
           <Text style={styles.meta}>{person.lastLoginAt ? `Last signed in ${when(person.lastLoginAt)}` : "Hasn't signed in yet"}</Text>
         </View>
         <View style={styles.actions}>
@@ -127,6 +130,7 @@ function Person({ person, isMe, client, types, onChanged }: { person: StaffUser;
             />
           )}
           {person.active && <Small label="Change type" disabled={busy} onPress={() => setRetyping(!retyping)} />}
+          {person.active && <Small label="Pay" disabled={busy} onPress={() => setPaying(!paying)} />}
           {person.active && <Small label="Reset password" disabled={busy} onPress={() => setResetting(!resetting)} />}
           {!isMe && (
             <Small
@@ -145,6 +149,7 @@ function Person({ person, isMe, client, types, onChanged }: { person: StaffUser;
           <Small label="None" primary={!person.employeeType} disabled={busy} onPress={() => change({ employeeTypeId: null })} />
         </View>
       )}
+      {paying && <PayForm name={person.name} pay={person.pay ?? null} busy={busy} onSave={(pay) => change({ pay }, "Pay saved. It's used in Reports › Labor.")} />}
       {resetting && (
         <View style={styles.resetRow}>
           <TextInput
@@ -161,6 +166,40 @@ function Person({ person, isMe, client, types, onChanged }: { person: StaffUser;
       )}
       {error && <Text role="alert" style={styles.error}>{error}</Text>}
       {notice && <Text style={styles.notice}>{notice}</Text>}
+    </View>
+  );
+}
+
+/** "$16.50 an hour", "$58,000 a year" or "No pay set". */
+export function payText(pay: Pay | null | undefined) {
+  if (!pay) return "No pay set";
+  return pay.type === "hourly" ? `$${(pay.cents / 100).toFixed(2)} an hour` : `$${Math.round(pay.cents / 100).toLocaleString("en-US")} a year`;
+}
+
+function PayForm({ name, pay, busy, onSave }: { name: string; pay: Pay | null; busy: boolean; onSave: (pay: Pay | null) => void }) {
+  const [type, setType] = useState<Pay["type"]>(pay?.type ?? "hourly");
+  const [amount, setAmount] = useState(pay ? String(pay.type === "hourly" ? (pay.cents / 100).toFixed(2) : Math.round(pay.cents / 100)) : "");
+  const dollars = Number(amount.replace(/[$,\s]/g, ""));
+  const valid = amount.trim() !== "" && Number.isFinite(dollars) && dollars >= 0;
+  return (
+    <View style={{ marginTop: 12, gap: 8 }} accessibilityLabel={`Pay for ${name}`}>
+      <View style={styles.actions}>
+        <Small label="Hourly" primary={type === "hourly"} disabled={busy} onPress={() => setType("hourly")} />
+        <Small label="Salary" primary={type === "salary"} disabled={busy} onPress={() => setType("salary")} />
+      </View>
+      <View style={styles.resetRow}>
+        <TextInput
+          accessibilityLabel={type === "hourly" ? `Hourly pay for ${name}` : `Yearly salary for ${name}`}
+          placeholder={type === "hourly" ? "Dollars an hour, like 16.50" : "Dollars a year, like 52000"}
+          value={amount}
+          onChangeText={setAmount}
+          keyboardType="decimal-pad"
+          style={[styles.input, { flex: 1, minWidth: 200 }]}
+        />
+        <Small label="Save" primary disabled={busy || !valid} onPress={() => onSave({ type, cents: Math.round(dollars * 100) })} />
+        {pay && <Small label="Clear pay" disabled={busy} onPress={() => onSave(null)} />}
+      </View>
+      <Text style={styles.meta}>Only managers see pay. Hourly pay counts the hours on the time clock, with time and a half past 40 hours a week.</Text>
     </View>
   );
 }

@@ -22,6 +22,10 @@ export interface StaffUser {
   lastLoginAt: string | null;
 }
 
+export type Pay = { type: "hourly" | "salary"; cents: number };
+/** A staff account as managers see it, with pay. */
+export type StaffWithPay = StaffUser & { pay: Pay | null };
+
 export async function hashPassword(password: string): Promise<string> {
   const salt = randomBytes(16);
   return `scrypt$${salt.toString("base64")}$${(await scrypt(password, salt, 32)).toString("base64")}`;
@@ -51,9 +55,11 @@ const toUser = (r: any): StaffUser => ({
 // Staff rows with their employee type's name, for toUser.
 const USERS = `SELECT u.*, et.name AS employee_type_name FROM staff_users u LEFT JOIN employee_types et ON et.id = u.employee_type_id`;
 
+const withPay = (r: any): StaffWithPay => ({ ...toUser(r), pay: r.pay_type ? { type: r.pay_type, cents: r.pay_cents } : null });
+
 async function getUser(db: DbClient, id: string) {
   const { rows } = await db.query(`${USERS} WHERE u.id = $1`, [id]);
-  return toUser(rows[0]);
+  return withPay(rows[0]);
 }
 
 export const DEFAULT_EMPLOYEE_TYPES = ["Pro Shop", "Ranger/Starter", "Cart Attendant", "Bartender", "Food & Beverage", "Grounds Crew"];
@@ -171,22 +177,22 @@ export async function logout(db: DbClient, sessionId: string) {
   await db.query("UPDATE staff_sessions SET revoked_at = now() WHERE id = $1", [sessionId]);
 }
 
-export async function listStaff(db: DbClient, courseId: string): Promise<StaffUser[]> {
+export async function listStaff(db: DbClient, courseId: string): Promise<StaffWithPay[]> {
   const { rows } = await db.query(`${USERS} WHERE u.course_id = $1 ORDER BY u.active DESC, lower(u.name)`, [courseId]);
-  return rows.map(toUser);
+  return rows.map(withPay);
 }
 
 export async function createStaff(
   db: DbClient,
   courseId: string,
-  input: { name: string; email: string; role: KeyRole; password: string; employeeTypeId?: string | null },
+  input: { name: string; email: string; role: KeyRole; password: string; employeeTypeId?: string | null; pay?: Pay | null },
 ) {
   validatePassword(input.password);
   await checkType(db, courseId, input.employeeTypeId);
   try {
     const { rows } = await db.query(
-      "INSERT INTO staff_users (course_id, name, email, role, password_hash, employee_type_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
-      [courseId, input.name.trim(), input.email.trim().toLowerCase(), input.role, await hashPassword(input.password), input.employeeTypeId ?? null],
+      "INSERT INTO staff_users (course_id, name, email, role, password_hash, employee_type_id, pay_type, pay_cents) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
+      [courseId, input.name.trim(), input.email.trim().toLowerCase(), input.role, await hashPassword(input.password), input.employeeTypeId ?? null, input.pay?.type ?? null, input.pay?.cents ?? null],
     );
     return getUser(db, rows[0].id);
   } catch (err) {
@@ -204,7 +210,7 @@ export async function updateStaff(
   courseId: string,
   actorId: string | undefined,
   id: string,
-  patch: { name?: string; role?: KeyRole; active?: boolean; password?: string; employeeTypeId?: string | null },
+  patch: { name?: string; role?: KeyRole; active?: boolean; password?: string; employeeTypeId?: string | null; pay?: Pay | null },
 ) {
   const { rows } = await db.query("SELECT * FROM staff_users WHERE id = $1 AND course_id = $2", [id, courseId]);
   const current = rows[0];
@@ -223,7 +229,8 @@ export async function updateStaff(
   await db.query(
     `UPDATE staff_users SET name = COALESCE($2, name), role = COALESCE($3, role), active = COALESCE($4, active),
             password_hash = COALESCE($5, password_hash),
-            employee_type_id = CASE WHEN $6 THEN $7::uuid ELSE employee_type_id END
+            employee_type_id = CASE WHEN $6 THEN $7::uuid ELSE employee_type_id END,
+            pay_type = CASE WHEN $8 THEN $9 ELSE pay_type END, pay_cents = CASE WHEN $8 THEN $10::int ELSE pay_cents END
       WHERE id = $1`,
     [
       id,
@@ -233,6 +240,9 @@ export async function updateStaff(
       patch.password ? await hashPassword(patch.password) : null,
       patch.employeeTypeId !== undefined,
       patch.employeeTypeId ?? null,
+      patch.pay !== undefined,
+      patch.pay?.type ?? null,
+      patch.pay?.cents ?? null,
     ],
   );
   if (patch.active === false || patch.password !== undefined) {

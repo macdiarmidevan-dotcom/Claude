@@ -11,6 +11,8 @@ import {
   type Role,
   type EmployeeType,
   type DayClose,
+  type LaborReport,
+  type Pay,
   type Overview,
   type ReportCompare,
   type AccountingFormat,
@@ -166,11 +168,11 @@ const slugOf = (name: string, taken: string[], sep: string) => {
 };
 
 const accounts: (StaffUser & { password: string })[] = [
-  { id: "u-1", name: "Morgan Ellis", email: "manager@riverbend.example", role: "manager", employeeType: null, active: true, lastLoginAt: null, password: DEMO_PASSWORD },
-  { id: "u-2", name: "Jordan Price", email: "proshop@riverbend.example", role: "staff", employeeType: typeRef("et-1"), active: true, lastLoginAt: null, password: DEMO_PASSWORD },
-  { id: "u-3", name: "Sam Torres", email: "starter@riverbend.example", role: "staff", employeeType: typeRef("et-2"), active: true, lastLoginAt: null, password: DEMO_PASSWORD },
-  { id: "u-4", name: "Riley Chen", email: "carts@riverbend.example", role: "staff", employeeType: typeRef("et-3"), active: true, lastLoginAt: null, password: DEMO_PASSWORD },
-  { id: "u-5", name: "Alex Moreno", email: "bar@riverbend.example", role: "staff", employeeType: typeRef("et-4"), active: true, lastLoginAt: null, password: DEMO_PASSWORD },
+  { id: "u-1", name: "Morgan Ellis", email: "manager@riverbend.example", role: "manager", employeeType: null, active: true, lastLoginAt: null, password: DEMO_PASSWORD, pay: { type: "salary", cents: 5_800_000 } },
+  { id: "u-2", name: "Jordan Price", email: "proshop@riverbend.example", role: "staff", employeeType: typeRef("et-1"), active: true, lastLoginAt: null, password: DEMO_PASSWORD, pay: { type: "hourly", cents: 1650 } },
+  { id: "u-3", name: "Sam Torres", email: "starter@riverbend.example", role: "staff", employeeType: typeRef("et-2"), active: true, lastLoginAt: null, password: DEMO_PASSWORD, pay: { type: "hourly", cents: 1500 } },
+  { id: "u-4", name: "Riley Chen", email: "carts@riverbend.example", role: "staff", employeeType: typeRef("et-3"), active: true, lastLoginAt: null, password: DEMO_PASSWORD, pay: { type: "hourly", cents: 1500 } },
+  { id: "u-5", name: "Alex Moreno", email: "bar@riverbend.example", role: "staff", employeeType: typeRef("et-4"), active: true, lastLoginAt: null, password: DEMO_PASSWORD, pay: null },
 ];
 const activity: ActivityEntry[] = [];
 const publicUser = ({ password: _, ...u }: StaffUser & { password: string }): StaffUser => u;
@@ -1724,6 +1726,115 @@ export function createDemoClient(apiKey: string): Client {
     };
   }
 
+  // Labor cost, the server's rules: overtime past 40 hours in a Monday to Sunday week at time and
+  // a half, salaries spread over every day. Days before today use the usual weekly schedule
+  // (with a little give either way) while the course is open; today on uses the real time clock.
+  const WORK_PATTERN: [string, string, number, number, number[]][] = [
+    ["u-2", "et-1", 6, 8.5, [0, 1, 2, 3, 4]],
+    ["u-3", "et-2", 6.5, 7, [0, 2, 4, 5, 6]],
+    ["u-4", "et-3", 7, 8, [1, 2, 3, 5, 6]],
+    ["u-5", "et-4", 15, 7, [2, 3, 4, 5]],
+  ];
+  function demoLabor(from: string, to: string): LaborReport {
+    managerOnly();
+    if (to < from) throw new ApiError(400, "invalid_range", "from must be on or before to");
+    if (addDays(from, 366) < to) throw new ApiError(400, "invalid_range", "Ask for 366 days or fewer at a time");
+    const today = todayIn(riverBend.timeZone);
+    type Shift = { staffId: string; date: string; hours: number };
+    const worked: Shift[] = [];
+    const weekFrom = weekStart(from);
+    const weekTo = addDays(weekStart(to), 6);
+    for (let date = weekFrom; date <= weekTo; date = addDays(date, 1)) {
+      if (date >= today) continue;
+      const month = Number(date.slice(5, 7)) - 1;
+      if (SEASON[month] < 0.15) continue;
+      const dow = dowOf(date) - 1;
+      for (const [staffId, , , hours, days_] of WORK_PATTERN)
+        if (days_.includes(dow)) worked.push({ staffId, date, hours: hours + Math.round((noise(`w${staffId}${date}`) - 0.4) * 4) / 2 });
+    }
+    const dayOfIso = (iso: string) => new Intl.DateTimeFormat("en-CA", { timeZone: riverBend.timeZone }).format(new Date(iso));
+    for (const p of punches) if (p.clockOut) worked.push({ staffId: p.staffId, date: dayOfIso(p.clockIn), hours: (Date.parse(p.clockOut) - Date.parse(p.clockIn)) / 3_600_000 });
+    worked.sort((a, b) => a.date.localeCompare(b.date));
+
+    const period = overviewPeriod(from, to);
+    const revenueByDay = new Map(period.days.map((d) => [d.date, d.totalCents]));
+    const days = new Map<string, LaborReport["days"][number]>();
+    for (let date = from; date <= to; date = addDays(date, 1)) days.set(date, { date, hours: 0, costCents: 0, revenueCents: revenueByDay.get(date) ?? 0, laborPct: null });
+    const people = new Map<string, LaborReport["people"][number]>();
+    const person = (a: (typeof accounts)[number]) => {
+      if (!people.has(a.id)) people.set(a.id, { id: a.id, name: a.name, type: a.employeeType?.name ?? (a.role === "manager" ? "Management" : "No job set"), pay: a.pay ?? null, hours: 0, overtimeHours: 0, scheduledHours: 0, costCents: 0, missingPay: false });
+      return people.get(a.id)!;
+    };
+    const week = new Map<string, number>();
+    for (const w of worked) {
+      const a = accounts.find((x) => x.id === w.staffId);
+      if (!a) continue;
+      const key = `${a.id}|${weekStart(w.date)}`;
+      const before = week.get(key) ?? 0;
+      week.set(key, before + w.hours);
+      const day = days.get(w.date);
+      if (!day) continue;
+      const p = person(a);
+      const hourly = a.pay?.type === "hourly";
+      const ot = hourly ? Math.max(0, before + w.hours - Math.max(before, 40)) : 0;
+      const cost = hourly ? (w.hours - ot + ot * 1.5) * a.pay!.cents : 0;
+      p.hours += w.hours;
+      p.overtimeHours += ot;
+      p.costCents += cost;
+      day.hours += w.hours;
+      day.costCents += cost;
+    }
+    for (const s of shifts) if (s.staffId && s.date >= from && s.date <= to) {
+      const a = accounts.find((x) => x.id === s.staffId);
+      if (a) person(a).scheduledHours += (Number(s.end.slice(0, 2)) * 60 + Number(s.end.slice(3)) - Number(s.start.slice(0, 2)) * 60 - Number(s.start.slice(3))) / 60;
+    }
+    for (const a of accounts)
+      if (a.active && a.pay?.type === "salary")
+        for (const d of days.values()) {
+          person(a).costCents += a.pay.cents / 365;
+          d.costCents += a.pay.cents / 365;
+        }
+    const r1 = (n: number) => Math.round(n * 10) / 10;
+    const pct = (a: number, b: number) => (b ? Math.round((a / b) * 1000) / 10 : null);
+    const list = [...people.values()].map((p) => ({ ...p, hours: r1(p.hours), overtimeHours: r1(p.overtimeHours), scheduledHours: r1(p.scheduledHours), costCents: Math.round(p.costCents), missingPay: !p.pay && p.hours > 0 }));
+    const hours = [...people.values()].reduce((t, p) => t + p.hours, 0);
+    const costCents = list.reduce((t, p) => t + p.costCents, 0);
+    const salaryCents = list.filter((p) => p.pay?.type === "salary").reduce((t, p) => t + p.costCents, 0);
+    const types = new Map<string, LaborReport["byType"][number]>();
+    for (const p of list) {
+      const t = types.get(p.type) ?? { type: p.type, people: 0, hours: 0, costCents: 0 };
+      t.people += 1;
+      t.hours = r1(t.hours + p.hours);
+      t.costCents += p.costCents;
+      types.set(p.type, t);
+    }
+    const revenueCents = period.revenue.totalCents;
+    return {
+      from,
+      to,
+      overtimeRule: { afterHours: 40, rate: 1.5 },
+      totals: {
+        hours: r1(hours),
+        overtimeHours: r1(list.reduce((t, p) => t + p.overtimeHours, 0)),
+        scheduledHours: r1(list.reduce((t, p) => t + p.scheduledHours, 0)),
+        costCents,
+        hourlyCents: costCents - salaryCents,
+        overtimeCents: Math.round([...people.values()].reduce((t, p) => t + (p.pay?.type === "hourly" ? p.overtimeHours * 1.5 * p.pay.cents : 0), 0)),
+        salaryCents,
+        revenueCents,
+        laborPct: pct(costCents, revenueCents),
+        revenuePerHourCents: hours ? Math.round(revenueCents / hours) : null,
+        rounds: period.rounds.rounds,
+        roundsPerHour: hours ? Math.round((period.rounds.rounds / hours) * 10) / 10 : null,
+      },
+      byType: [...types.values()].sort((a, b) => b.costCents - a.costCents),
+      people: list.sort((a, b) => b.costCents - a.costCents || b.hours - a.hours),
+      days: [...days.values()].map((d) => ({ ...d, hours: r1(d.hours), costCents: Math.round(d.costCents), laborPct: pct(d.costCents, d.revenueCents) })),
+      missingPay: list.filter((p) => p.missingPay).length,
+      openPunches: punches.filter((p) => !p.clockOut).length,
+    };
+  }
+
   const ACCOUNT_DEFAULTS: Record<AccountKey, string> = {
     cash: "Undeposited Funds", card: "Card Clearing", check: "Undeposited Funds", house_account: "Accounts Receivable - House Accounts",
     gift_card: "Gift Cards Outstanding", rain_check: "Rain Checks Outstanding", loyalty: "Loyalty Rewards", punch_card: "Prepaid Rounds",
@@ -1955,7 +2066,7 @@ export function createDemoClient(apiKey: string): Client {
         log("Changed an employee type");
         return { ...t, staffCount: accounts.filter((a) => a.active && a.employeeType?.id === t.id).length };
       }),
-    addStaff: (input: { name: string; email: string; role: Role; password: string; employeeTypeId?: string | null }) =>
+    addStaff: (input: { name: string; email: string; role: Role; password: string; employeeTypeId?: string | null; pay?: Pay | null }) =>
       reply(() => {
         managerOnly();
         const email = input.email.trim().toLowerCase();
@@ -1963,13 +2074,13 @@ export function createDemoClient(apiKey: string): Client {
         if (input.password.length < 8) throw new ApiError(400, "weak_password", "Passwords need at least 8 characters");
         const a = {
           id: id(), name: input.name.trim(), email, role: input.role, active: true, lastLoginAt: null, password: input.password,
-          employeeType: input.employeeTypeId ? typeRef(input.employeeTypeId) : null,
+          employeeType: input.employeeTypeId ? typeRef(input.employeeTypeId) : null, pay: input.pay ?? null,
         };
         accounts.push(a);
         log("Added a staff account");
         return publicUser(a);
       }),
-    updateStaff: (userId: string, patch: { name?: string; role?: Role; active?: boolean; password?: string; employeeTypeId?: string | null }) =>
+    updateStaff: (userId: string, patch: { name?: string; role?: Role; active?: boolean; password?: string; employeeTypeId?: string | null; pay?: Pay | null }) =>
       reply(() => {
         managerOnly();
         const a = accounts.find((x) => x.id === userId)!;
@@ -2295,6 +2406,7 @@ export function createDemoClient(apiKey: string): Client {
       }),
     report: (from: string, to: string) => reply(() => demoReport(from, to)),
     overview: (from: string, to: string, compare: ReportCompare = "previous") => reply(() => demoOverview(from, to, compare)),
+    labor: (from: string, to: string) => reply(() => demoLabor(from, to)),
     dayClose: (date: string) => reply(() => demoClose(date)),
     delays: (date: string) => reply(() => delays.filter((d) => d.date === date).map(({ fromAt: _, ...d }) => d)),
     sendFeedback: (input: { body: string; page?: string | null }) =>
