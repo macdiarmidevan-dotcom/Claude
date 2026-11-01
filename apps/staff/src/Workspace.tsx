@@ -1,4 +1,6 @@
 import { Icon, type IconName } from "./Icon";
+import { AddOnsScreen, PricingScreen } from "./PricingScreen";
+import { RadarScreen } from "./RadarScreen";
 import { useEffect, useMemo, useState } from "react";
 import { Modal, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 import { ApiError, createClient, type Client, type Course, type DayClose, type Me, type Settings } from "./api";
@@ -24,7 +26,7 @@ import { AccountMenu, FeedbackList } from "./AccountMenu";
 import { HelpCenter } from "./HelpCenter";
 import { colors, type WebPress } from "./theme";
 
-type Section = "tee-sheet" | "import" | "staff" | "customers" | "events" | "food" | "accounts" | "messages" | "reports" | "schedule" | "inventory" | "settings" | "help";
+type Section = "tee-sheet" | "radar" | "pricing" | "add-ons" | "import" | "staff" | "customers" | "events" | "food" | "accounts" | "messages" | "reports" | "schedule" | "inventory" | "settings" | "help";
 
 // Sections with a group fold under one menu item, so the menu stays short.
 type Group = "shop";
@@ -33,6 +35,9 @@ const GROUP_ICON: Record<Group, IconName> = { shop: "users" };
 
 const SECTION_ICON: Record<Section, IconName> = {
   "tee-sheet": "clock",
+  radar: "radar",
+  pricing: "tag",
+  "add-ons": "box",
   import: "sync",
   staff: "user",
   customers: "users",
@@ -51,12 +56,15 @@ const SECTION_ICON: Record<Section, IconName> = {
 // inMenu: false keeps a section out of the sidebar; it opens from the account menu instead.
 const ALL_SECTIONS: { id: Section; label: string; soon?: string; managers?: boolean; group?: Group; starters?: false; inMenu?: false }[] = [
   { id: "tee-sheet", label: "Tee sheet" },
+  { id: "radar", label: "Radar" },
   { id: "import", label: "Sync tee sheet", managers: true },
   { id: "staff", label: "Staff accounts", managers: true },
   { id: "customers", label: "Golfers", group: "shop" },
   { id: "messages", label: "Messages", group: "shop" },
   { id: "accounts", label: "Gift cards & accounts", group: "shop" },
   { id: "inventory", label: "Pro shop", group: "shop" },
+  { id: "pricing", label: "Pricing", starters: false },
+  { id: "add-ons", label: "Add-ons", starters: false },
   { id: "events", label: "Leagues & events" },
   { id: "food", label: "Food & bar" },
   { id: "reports", label: "Reports", starters: false },
@@ -79,6 +87,8 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
   const [section, setSection] = useState<Section>("tee-sheet");
   const [menuOpen, setMenuOpen] = useState(false);
   const [course, setCourse] = useState<Course>();
+  // Prices on the tee sheet come with the course, so it reloads when Pricing or Add-ons change.
+  const refreshCourse = () => client.course().then(setCourse).catch((e) => setError(e.message));
   const [error, setError] = useState<string>();
   const [me, setMe] = useState<Me>();
   const isManager = me?.role === "manager";
@@ -121,7 +131,7 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
   };
 
   useEffect(() => {
-    client.course().then(setCourse).catch((e) => setError(e.message));
+    refreshCourse();
     client
       .me()
       .then(setMe)
@@ -247,6 +257,21 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
           <>
             <Header title="Pro shop" onOpenMenu={openMenu} />
             {course && <ProShopScreen client={client} me={me} timeZone={course.timeZone} />}
+          </>
+        ) : section === "radar" ? (
+          <>
+            <Header title="Radar" onOpenMenu={openMenu} subtitle="Weather around the course" />
+            <RadarScreen station={settings.radarStation} onChangeStation={(radarStation) => onChangeSettings({ ...settings, radarStation })} />
+          </>
+        ) : section === "pricing" ? (
+          <>
+            <Header title="Pricing" onOpenMenu={openMenu} subtitle="Green fee and replay rates" />
+            <PricingScreen client={client} isManager={isManager} onChanged={refreshCourse} />
+          </>
+        ) : section === "add-ons" ? (
+          <>
+            <Header title="Add-ons" onOpenMenu={openMenu} subtitle="Carts, rentals and extras" />
+            <AddOnsScreen client={client} isManager={isManager} onChanged={refreshCourse} />
           </>
         ) : section === "help" ? (
           <>

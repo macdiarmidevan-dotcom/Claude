@@ -3,6 +3,7 @@ import cors from "@fastify/cors";
 import { z, ZodError } from "zod";
 import type { Db } from "./db.ts";
 import { AppError, badRequest, notFound } from "./errors.ts";
+import { createAddOn, createRate, listAddOns, listRates, updateAddOn, updateRate } from "./pricing.ts";
 import { lookupApiKey, type ApiKeyContext } from "./keys.ts";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { buildMcpServer } from "./mcp.ts";
@@ -266,6 +267,10 @@ const ACTIONS: Record<string, string> = {
   "POST /v1/courses/:slug/tee-sheet/delays/:id/undo": "Took back a tee sheet delay",
   "POST /v1/courses/:slug/feedback": "Sent feedback",
   "POST /v1/courses/:slug/support": "Emailed support",
+  "POST /v1/courses/:slug/pricing/rates": "Added a rate",
+  "PATCH /v1/courses/:slug/pricing/rates/:id": "Changed a rate",
+  "POST /v1/courses/:slug/pricing/add-ons": "Added an add-on",
+  "PATCH /v1/courses/:slug/pricing/add-ons/:id": "Changed an add-on",
 };
 
 const player = z.object({
@@ -679,6 +684,39 @@ export function buildApp(
     foodBev: z.boolean().optional(),
     station: z.enum(["kitchen", "bar"]).nullish(),
   });
+  // Pricing: everyone can see the rates and add-ons; managers change them.
+  const rateTime = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "use HH:mm");
+  const rateBody = z.object({
+    name: z.string().trim().min(1).max(120),
+    priceCents: money,
+    // 1-7 are Monday to Sunday; 8 is holidays.
+    days: z.array(z.number().int().min(1).max(8)).min(1).max(8),
+    startTime: rateTime.nullish(),
+    endTime: rateTime.nullish(),
+    residency: z.enum(["resident", "nonresident"]).nullish(),
+    ageGroups: z.array(z.enum(["adult", "senior", "junior"])).max(3).nullish(),
+    isReplay: z.boolean().optional(),
+  });
+  const addOnBody = z.object({ name: z.string().trim().min(1).max(120), priceCents: money });
+  app.get("/v1/courses/:slug/pricing/rates", async (req) => listRates(db, await courseFor(req)));
+  app.post("/v1/courses/:slug/pricing/rates", async (req, reply) => {
+    const course = await managedCourseFor(req);
+    return reply.status(201).send(await createRate(db, course, rateBody.parse(req.body)));
+  });
+  app.patch("/v1/courses/:slug/pricing/rates/:id", async (req) => {
+    const course = await managedCourseFor(req);
+    return updateRate(db, course, idParams.parse(req.params).id, rateBody.partial().extend({ active: z.boolean().optional() }).parse(req.body));
+  });
+  app.get("/v1/courses/:slug/pricing/add-ons", async (req) => listAddOns(db, await courseFor(req)));
+  app.post("/v1/courses/:slug/pricing/add-ons", async (req, reply) => {
+    const course = await managedCourseFor(req);
+    return reply.status(201).send(await createAddOn(db, course, addOnBody.parse(req.body)));
+  });
+  app.patch("/v1/courses/:slug/pricing/add-ons/:id", async (req) => {
+    const course = await managedCourseFor(req);
+    return updateAddOn(db, course, idParams.parse(req.params).id, addOnBody.partial().extend({ active: z.boolean().optional() }).parse(req.body));
+  });
+
   app.get("/v1/courses/:slug/products", async (req) => {
     const course = await courseFor(req);
     const { q, all } = z.object({ q: z.string().max(100).optional(), all: z.enum(["1", "0"]).optional() }).parse(req.query);

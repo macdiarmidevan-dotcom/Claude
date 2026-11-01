@@ -299,3 +299,10 @@ The **Help center** (in the account menu) has three parts:
 - **Guides.** Step-by-step articles grouped by topic, with search, related articles and a "Was this helpful?" prompt. The articles live in `packages/core/src/help.ts`, so update them when a feature changes.
 - **Ask the assistant.** Staff ask how to do something and get a short answer with links to the articles it used. With `ANTHROPIC_API_KEY` set on the server, Claude (`claude-opus-5-5`, low effort) answers from the articles only, and says when they don't cover the question. Without a key, or if Claude can't be reached, the closest paragraph of the best-matching guide is shown instead, so it always answers. The demo uses this offline mode.
 - **Email support.** A topic, subject, message and reply-to address (prefilled with theirs). Each request gets a reference like `SR-00042`, is saved for the course, and is emailed to `SUPPORT_EMAIL` with the page they were on. Staff see their own requests; managers see the whole course's. Emails go through the same simulator as golfer messages until an email provider is connected.
+
+### Pricing, add-ons and radar
+
+- **Pricing** lists the green fee and replay rates. Each rate covers chosen days (holidays count as a day), optional hours, a residency and age groups. Everyone can see them; managers add, edit and remove them (`/pricing/rates`). A player pays the most specific rate that fits. Rates keep their code for good, and removing a rate only switches it off, so past bookings still show what they were charged.
+- **Add-ons** lists per-person extras such as carts and club rental (`/pricing/add-ons`). The gas cart prices riding golfers, so it can be repriced but not removed.
+- Both pages are hidden on the starter station, and the tee sheet's price pills update as soon as a price changes.
+- **Radar** shows the National Weather Service radar loop for the device's station (KLOT for River Bend), refreshed every five minutes, with a link to the live map. Each device can pick its own station.
