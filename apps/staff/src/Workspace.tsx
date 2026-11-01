@@ -15,10 +15,12 @@ import { EventsScreen } from "./EventsScreen";
 import { FoodBarScreen } from "./FoodBarScreen";
 import { FOOD_BAR } from "./features";
 import { StationPicker } from "./SetupScreen";
+import { FleetScreen } from "./FleetScreen";
+import { MessagesScreen } from "./MessagesScreen";
 import { ReportsScreen } from "./ReportsScreen";
 import { colors, type WebPress } from "./theme";
 
-type Section = "tee-sheet" | "import" | "staff" | "customers" | "events" | "food" | "accounts" | "reports" | "schedule" | "inventory" | "settings";
+type Section = "tee-sheet" | "import" | "staff" | "customers" | "events" | "food" | "accounts" | "fleet" | "messages" | "reports" | "schedule" | "inventory" | "settings";
 
 // Sections with a group fold under one menu item, so the menu stays short.
 type Group = "shop";
@@ -29,10 +31,12 @@ const ALL_SECTIONS: { id: Section; label: string; soon?: string; managers?: bool
   { id: "import", label: "Sync tee sheet", managers: true },
   { id: "staff", label: "Staff accounts", managers: true },
   { id: "customers", label: "Golfers", group: "shop" },
+  { id: "messages", label: "Messages", group: "shop" },
   { id: "accounts", label: "Gift cards & accounts", group: "shop" },
   { id: "inventory", label: "Pro shop", group: "shop" },
   { id: "events", label: "Leagues & events" },
   { id: "food", label: "Food & bar" },
+  { id: "fleet", label: "Carts & maintenance" },
   { id: "reports", label: "Reports" },
   { id: "schedule", label: "Staff schedule" },
   { id: "settings", label: "Settings" },
@@ -162,6 +166,16 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
           <>
             <Header title="Gift cards & accounts" onOpenMenu={openMenu} />
             <AccountsScreen client={client} isManager={isManager} />
+          </>
+        ) : section === "fleet" ? (
+          <>
+            <Header title="Carts & maintenance" onOpenMenu={openMenu} />
+            <FleetScreen client={client} isManager={isManager} meId={me?.user?.id} />
+          </>
+        ) : section === "messages" ? (
+          <>
+            <Header title="Messages" onOpenMenu={openMenu} />
+            {course && <MessagesScreen client={client} isManager={isManager} timeZone={course.timeZone} />}
           </>
         ) : section === "reports" ? (
           <>
