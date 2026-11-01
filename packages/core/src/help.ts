@@ -9,7 +9,7 @@ export const HELP_CATEGORIES: { id: HelpCategory; label: string; blurb: string }
   { id: "golfers", label: "Golfers", blurb: "Accounts, history, messages" },
   { id: "shop", label: "Gift cards & pricing", blurb: "Gift cards, house accounts, passes, rates" },
   { id: "events", label: "Leagues & events", blurb: "Weekly leagues, outings, shotguns" },
-  { id: "reports", label: "Reports", blurb: "Cash drawer, sales, maintenance" },
+  { id: "reports", label: "Reports", blurb: "Revenue, rounds, cash drawer, maintenance" },
   { id: "staff", label: "Staff & schedule", blurb: "Shifts, swaps, staff accounts" },
   { id: "account", label: "Your account & settings", blurb: "Sign-in, stations, password, waiver" },
 ];
@@ -311,6 +311,20 @@ export const HELP_ARTICLES: HelpArticle[] = [
       "Reports is hidden on the starter station.",
     ],
     keywords: ["sales", "revenue", "report", "quickbooks", "xero", "accounting", "export"],
+  },
+  {
+    id: "manager-reports",
+    category: "reports",
+    title: "Revenue and rounds reports",
+    summary: "How the course is doing over any stretch, compared with before.",
+    body: [
+      "Reports › Revenue and Reports › Rounds & tee sheet are for managers. Pick the dates at the top (today up to the year so far) and what to compare with: the period just before, or the same dates last year. Both tabs keep the dates you picked.",
+      "Revenue shows total revenue, rounds, revenue per round and occupancy, a chart of revenue over time by department, and each department's share. Revenue per round covers the average green fee, everything per round, revenue per available spot (green fees spread over every open spot, filled or not) and how far below your top green fee the average round sold.",
+      "Rounds & tee sheet shows how full the tee sheet was, with a heat map by weekday and hour, the split between 9 and 18 holes, walking and riding, booking sources and weekdays against weekends, and the rate mix: which green fees rounds were sold at.",
+      "A round is a player booked on a tee time who wasn't a no-show. Blocked tee times don't count as open spots. Download CSV saves the numbers for a spreadsheet.",
+    ],
+    keywords: ["revenue", "rounds", "utilization", "occupancy", "yield", "revpatt", "rate mix", "heat map", "compare", "last year", "dashboard"],
+    managersOnly: true,
   },
   {
     id: "maintenance",

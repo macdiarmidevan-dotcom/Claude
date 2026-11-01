@@ -11,6 +11,8 @@ import {
   type Role,
   type EmployeeType,
   type DayClose,
+  type Overview,
+  type ReportCompare,
   type AccountingFormat,
   type DelayReason,
   type TeeSheetDelay,
@@ -1551,6 +1553,177 @@ export function createDemoClient(apiKey: string): Client {
     };
   }
 
+  // The manager dashboard. Today and later come from the demo's own bookings and sales; earlier
+  // days are a made-up but steady season for River Bend (the same numbers every time), so
+  // trends, comparisons and the heat map have something to show.
+  const SEASON = [0.02, 0.03, 0.15, 0.45, 0.7, 0.85, 0.9, 0.85, 0.75, 0.5, 0.2, 0.03];
+  const HOUR_PULL: Record<number, number> = { 6: 0.5, 7: 0.95, 8: 1, 9: 0.95, 10: 0.85, 11: 0.7, 12: 0.6, 13: 0.55, 14: 0.5, 15: 0.45, 16: 0.5, 17: 0.55, 18: 0.35, 19: 0.1 };
+  const noise = (key: string) => {
+    let h = 2166136261;
+    for (let i = 0; i < key.length; i++) h = Math.imul(h ^ key.charCodeAt(i), 16777619);
+    return ((h >>> 0) % 10000) / 10000;
+  };
+  type Group = { date: string; dow: number; hour: number; startsAt: string; localTime: string; players: number; holes: number; riding: boolean; noShow: boolean; resident: boolean; ageGroup: "adult" | "senior" | "junior"; source: string; played: boolean };
+  const quoteCache = new Map<string, { lines: { rateId: string; name: string; priceCents: number }[] }>();
+  function quoteGroup(g: Group) {
+    const loops = Math.max(1, Math.round(g.holes / riverBend.holes));
+    const key = `${g.dow}|${g.localTime}|${g.resident}|${g.ageGroup}|${loops}`;
+    if (!quoteCache.has(key)) {
+      const ctx = { startsAt: g.startsAt, timeZone: riverBend.timeZone };
+      const residency = g.resident ? ("resident" as const) : ("nonresident" as const);
+      let q;
+      try {
+        q = quotePlayer(liveRates(), { residency, ageGroup: g.ageGroup }, ctx, loops);
+      } catch {
+        q = quotePlayer(liveRates(), { residency, ageGroup: "adult" }, ctx, loops);
+      }
+      quoteCache.set(key, q);
+    }
+    return quoteCache.get(key)!;
+  }
+  const dowOf = (date: string) => ((new Date(`${date}T12:00:00Z`).getUTCDay() + 6) % 7) + 1;
+  function overviewPeriod(from: string, to: string) {
+    const today = todayIn(riverBend.timeZone);
+    const groups: Group[] = [];
+    const capacity: { date: string; dow: number; hour: number; spots: number }[] = [];
+    const dayMoney = new Map<string, Overview["days"][number]>();
+    const money = (date: string) => {
+      if (!dayMoney.has(date)) dayMoney.set(date, { date, greenFeesCents: 0, cartsAndExtrasCents: 0, proShopCents: 0, foodBevCents: 0, eventsCents: 0, totalCents: 0 });
+      return dayMoney.get(date)!;
+    };
+    for (let date = from; date <= to; date = addDays(date, 1)) {
+      const dow = dowOf(date);
+      const weekend = dow >= 5;
+      if (date >= today) {
+        for (const t of teeTimes.values()) {
+          if (t.date !== date) continue;
+          const hour = Number(t.localTime.slice(0, 2));
+          if (t.status === "open") capacity.push({ date, dow, hour, spots: t.maxPlayers });
+          for (const b of live(t.id))
+            groups.push({ date, dow, hour, startsAt: t.startsAt, localTime: t.localTime, players: b.players, holes: b.holes, riding: b.riding, noShow: b.status === "no_show", resident: b.resident, ageGroup: "adult", source: b.source, played: b.status === "checked_in" || b.status === "teed_off" });
+        }
+        if (!days.has(date)) for (const t of generateTeeTimes(date, riverBend.timeZone, riverBendTeeSheet)) capacity.push({ date, dow, hour: Number(t.localTime.slice(0, 2)), spots: t.maxPlayers });
+        continue;
+      }
+      const month = Number(date.slice(5, 7)) - 1;
+      // About one day in eight is rained out.
+      const weather = noise(`rain${date}`) < 0.12 ? 0.15 : 1;
+      const lastYear = date < `${today.slice(0, 4)}-01-01` ? 0.92 : 1;
+      let rounds = 0;
+      for (const t of generateTeeTimes(date, riverBend.timeZone, riverBendTeeSheet)) {
+        const hour = Number(t.localTime.slice(0, 2));
+        capacity.push({ date, dow, hour, spots: t.maxPlayers });
+        const k = `${date}${t.localTime}`;
+        const want = SEASON[month] * (HOUR_PULL[hour] ?? 0.2) * (weekend ? 1.2 : 0.9) * weather * lastYear * (0.6 + noise(k) * 0.7);
+        const players = Math.min(t.maxPlayers, Math.round(t.maxPlayers * want));
+        if (players < 1) continue;
+        const pick = noise(`p${k}`);
+        groups.push({
+          date, dow, hour, startsAt: t.startsAt, localTime: t.localTime, players,
+          holes: (hour < 11 ? pick < 0.6 : pick < 0.3) ? 18 : 9,
+          riding: noise(`r${k}`) < 0.65,
+          noShow: noise(`n${k}`) < 0.02,
+          resident: noise(`res${k}`) < 0.4,
+          ageGroup: noise(`a${k}`) < 0.2 ? "senior" : noise(`j${k}`) < 0.05 ? "junior" : "adult",
+          source: pick < 0.55 ? "teeitup" : pick < 0.85 ? "staff" : "phone",
+          played: true,
+        });
+        rounds += players;
+      }
+      const m = money(date);
+      m.proShopCents = Math.round(rounds * (450 + noise(`s${date}`) * 300));
+      m.foodBevCents = Math.round(rounds * (650 + noise(`f${date}`) * 400));
+      m.eventsCents = weekend && SEASON[month] > 0.4 && noise(`e${date}`) < 0.35 ? 60000 + Math.round(noise(`ev${date}`) * 120000) : 0;
+    }
+    // Sales and league payments on the demo's own days.
+    const realFrom = from > today ? from : today;
+    if (realFrom <= to)
+      for (const d of demoReport(realFrom, to).days) Object.assign(money(d.date), { proShopCents: d.proShopCents, foodBevCents: d.foodBevCents, eventsCents: d.eventsCents });
+
+    const mix = new Map<string, Overview["rateMix"][number]>();
+    const live_ = groups.filter((g) => !g.noShow);
+    for (const g of live_) {
+      const m = money(g.date);
+      for (const l of quoteGroup(g).lines) {
+        const rate = priceRates.find((x) => x.code === l.rateId);
+        const row = mix.get(l.rateId) ?? { code: l.rateId, name: l.name, isReplay: rate?.isReplay ?? false, rounds: 0, revenueCents: 0, avgCents: null };
+        row.rounds += g.players;
+        row.revenueCents += l.priceCents * g.players;
+        mix.set(l.rateId, row);
+        m.greenFeesCents += l.priceCents * g.players;
+      }
+      if (g.riding) m.cartsAndExtrasCents += cartPrice() * g.players;
+    }
+    const days_ = [...dayMoney.values()].sort((a, b) => a.date.localeCompare(b.date));
+    for (const d of days_) d.totalCents = d.greenFeesCents + d.cartsAndExtrasCents + d.proShopCents + d.foodBevCents + d.eventsCents;
+    const total = (k: keyof Omit<Overview["days"][number], "date">) => days_.reduce((t, d) => t + d[k], 0);
+    const revenue = { greenFeesCents: total("greenFeesCents"), cartsAndExtrasCents: total("cartsAndExtrasCents"), proShopCents: total("proShopCents"), foodBevCents: total("foodBevCents"), eventsCents: total("eventsCents"), totalCents: total("totalCents") };
+    const pct = (a: number, b: number) => (b ? Math.round((a / b) * 1000) / 10 : null);
+    const per = (a: number, b: number) => (b ? Math.round(a / b) : null);
+    const sum = (list: Group[]) => list.reduce((t, g) => t + g.players, 0);
+    const rounds = sum(live_);
+    const spots = capacity.reduce((t, c) => t + c.spots, 0);
+    const split = (weekend: boolean) => {
+      const n = sum(live_.filter((g) => g.dow >= 5 === weekend));
+      const cap = capacity.filter((c) => c.dow >= 5 === weekend).reduce((t, c) => t + c.spots, 0);
+      return { rounds: n, spots: cap, occupancy: pct(n, cap) };
+    };
+    const heat = new Map<string, Overview["heat"][number]>();
+    const cell = (weekday: number, hour: number) => {
+      const k = `${weekday}-${hour}`;
+      if (!heat.has(k)) heat.set(k, { weekday, hour, players: 0, spots: 0 });
+      return heat.get(k)!;
+    };
+    for (const c of capacity) cell(c.dow, c.hour).spots += c.spots;
+    for (const g of live_) cell(g.dow, g.hour).players += g.players;
+    const bySource: Record<string, number> = {};
+    for (const g of live_) bySource[g.source] = (bySource[g.source] ?? 0) + g.players;
+    const rateMix = [...mix.values()].map((m) => ({ ...m, avgCents: per(m.revenueCents, m.rounds) })).sort((a, b) => b.rounds - a.rounds || b.revenueCents - a.revenueCents);
+    const first = rateMix.filter((m) => !m.isReplay);
+    const top = Math.max(0, ...priceRates.filter((x) => x.active && !x.isReplay).map((x) => x.priceCents)) || null;
+    const firstRounds = first.reduce((t, m) => t + m.rounds, 0);
+    return {
+      revenue,
+      days: days_,
+      rounds: {
+        rounds,
+        played: sum(live_.filter((g) => g.played)),
+        noShows: sum(groups.filter((g) => g.noShow)),
+        spots,
+        occupancy: pct(rounds, spots),
+        holes9: sum(live_.filter((g) => g.holes <= 9)),
+        holes18: sum(live_.filter((g) => g.holes > 9)),
+        riding: sum(live_.filter((g) => g.riding)),
+        walking: sum(live_.filter((g) => !g.riding)),
+        weekday: split(false),
+        weekend: split(true),
+        bySource,
+      },
+      yield: { avgGreenFeeCents: per(revenue.greenFeesCents, rounds), revenuePerRoundCents: per(revenue.totalCents, rounds), revPattCents: per(revenue.greenFeesCents, spots) },
+      heat: [...heat.values()].sort((a, b) => a.weekday - b.weekday || a.hour - b.hour),
+      rateMix,
+      topRateCents: top,
+      avgDiscountPct: top && firstRounds ? Math.round((1 - first.reduce((t, m) => t + m.revenueCents, 0) / (firstRounds * top)) * 1000) / 10 : null,
+    };
+  }
+  function demoOverview(from: string, to: string, compare: ReportCompare): Overview {
+    managerOnly();
+    if (to < from) throw new ApiError(400, "invalid_range", "from must be on or before to");
+    const span = Math.round((Date.parse(`${to}T12:00:00Z`) - Date.parse(`${from}T12:00:00Z`)) / 86_400_000);
+    if (span > 366) throw new ApiError(400, "invalid_range", "Ask for 366 days or fewer at a time");
+    const yearBack = (d: string) => `${Number(d.slice(0, 4)) - 1}${d.slice(4) === "-02-29" ? "-02-28" : d.slice(4)}`;
+    const range = compare === "none" ? null : compare === "last_year" ? { from: yearBack(from), to: yearBack(to) } : { from: addDays(from, -(span + 1)), to: addDays(from, -1) };
+    const now = overviewPeriod(from, to);
+    const before = range && overviewPeriod(range.from, range.to);
+    return {
+      from,
+      to,
+      compare: range && { kind: compare, ...range },
+      ...now,
+      previous: before && { revenue: before.revenue, rounds: before.rounds, yield: before.yield, rateMix: before.rateMix, avgDiscountPct: before.avgDiscountPct },
+    };
+  }
+
   const ACCOUNT_DEFAULTS: Record<AccountKey, string> = {
     cash: "Undeposited Funds", card: "Card Clearing", check: "Undeposited Funds", house_account: "Accounts Receivable - House Accounts",
     gift_card: "Gift Cards Outstanding", rain_check: "Rain Checks Outstanding", loyalty: "Loyalty Rewards", punch_card: "Prepaid Rounds",
@@ -2121,6 +2294,7 @@ export function createDemoClient(apiKey: string): Client {
         return sale;
       }),
     report: (from: string, to: string) => reply(() => demoReport(from, to)),
+    overview: (from: string, to: string, compare: ReportCompare = "previous") => reply(() => demoOverview(from, to, compare)),
     dayClose: (date: string) => reply(() => demoClose(date)),
     delays: (date: string) => reply(() => delays.filter((d) => d.date === date).map(({ fromAt: _, ...d }) => d)),
     sendFeedback: (input: { body: string; page?: string | null }) =>

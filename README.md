@@ -165,6 +165,21 @@ Menu items are products with **Food or drink** turned on, and optionally **Made 
 
 ![A house account](docs/screenshots/house-account.png)
 
+## Manager reports
+
+**Reports › Revenue** and **Reports › Rounds & tee sheet** are for managers. Pick today, yesterday, the last 7 or 30 days, this or last month, or the year so far, and compare with the period just before or the same dates last year. Both tabs keep the same dates.
+
+- **Revenue**: total revenue, rounds, revenue per round and occupancy, each with its change; revenue over time by department (by day for a month or less, by week up to about four months, by month after that); each department's share and change; and revenue per round: the average green fee, total revenue per round, revenue per available spot (green fees over every open spot, filled or not) and the average discount below the top green fee.
+- **Rounds & tee sheet**: rounds, occupancy, empty spots and no-shows; a heat map of how full each weekday and hour was; 9 against 18 holes, walking against riding, booking source, and Monday to Thursday against Friday to Sunday occupancy; and the rate mix, which green fees the rounds were sold at, with rounds, share, revenue and average price. An 18-hole round on a 9-hole course is a first loop plus a replay, so shares count first loops.
+
+A round here is a player booked on a tee time who wasn't a no-show. Blocked tee times don't count as open spots. **Download CSV** saves the day-by-day revenue, or the rate mix and heat map.
+
+API: `GET /reports/overview?from&to&compare=previous|last_year|none` (managers, up to 366 days).
+
+![Revenue report](docs/screenshots/reports-revenue.png)
+
+![Rounds and tee sheet report](docs/screenshots/reports-rounds.png)
+
 ## Accounting export
 
 **Reports › Send to accounting** (managers) turns the report's dates into one balanced journal entry per day that QuickBooks Online or Xero imports, so the bookkeeper doesn't retype the day's totals. Money taken is debited to where it went (cash and checks to Undeposited Funds, cards to Card Clearing, gift cards and rain checks spent against what's held for golfers, charges to house accounts receivable). Revenue (green fees, carts and extras, pro shop, food and drink, leagues and outings), sales tax, gift cards sold and payments on house accounts are credited. A round paid on a different day than it's played lands in a clearing account, which evens out across days. **Show the entries** previews each day; **Download import file** saves the CSV (`Journal No, Journal Date, Account, Debits, Credits, Description` for QuickBooks, the manual journal layout for Xero) and records who exported which dates. **Account names** sets the course's own names (QuickBooks) or codes (Xero) for each line.
