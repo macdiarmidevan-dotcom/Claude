@@ -12,6 +12,7 @@ import {
   type EmployeeType,
   type DayClose,
   type LaborReport,
+  type SetupChecklist,
   type InventoryReport,
   type BalancesReport,
   type Pay,
@@ -2005,6 +2006,38 @@ export function createDemoClient(apiKey: string): Client {
     };
   }
 
+  // The manager's go-live checklist, worked out from the demo's own state like the server does.
+  function demoSetup(): SetupChecklist {
+    managerOnly();
+    seedProducts();
+    const active = accounts.filter((a) => a.active);
+    const unpaid = active.filter((a) => !a.pay).length;
+    const syncing = !!sync?.enabled && sync.lastStatus === "ok";
+    const carts = fleet.length;
+    const items: SetupChecklist["items"] = [
+      { id: "staff", title: "Add your staff", detail: active.length > 1 ? `${active.length} people can sign in.` : "Only one account so far. Add the pro shop, starters and cart staff so each person signs in as themselves.", status: active.length > 1 ? "done" : "todo", where: "staff" },
+      { id: "pay", title: "Set everyone's pay", detail: unpaid === 0 ? "Pay is set for everyone, so the labor report is complete." : `${unpaid} ${unpaid === 1 ? "person has" : "people have"} no pay set, so their hours cost nothing in the labor report.`, status: unpaid === 0 ? "done" : "todo", where: "staff" },
+      { id: "rates", title: "Check your green fees", detail: `${priceRates.filter((r) => r.active).length} rates are set up. Open Pricing and check them against your rate sheet.`, status: "done", where: "pricing" },
+      { id: "tax", title: "Set the sales tax rate", detail: pos.salesTaxBps > 0 ? "Sales tax is set for the register." : "The register is charging no sales tax. Set your rate under Pro shop settings.", status: pos.salesTaxBps > 0 ? "done" : "todo", where: "inventory" },
+      {
+        id: "sync",
+        title: "Connect your booking system",
+        detail: !sync ? "Not connected. Add the TeeItUp report link in Sync tee sheet so bookings flow in on their own." : syncing ? "Syncing. The last pull worked." : "Open Sync tee sheet to see how the last pull went.",
+        status: syncing ? "done" : "todo",
+        where: "sync",
+      },
+      { id: "waiver", title: "Put your own wording in the cart waiver", detail: waiver.version > 1 ? "Your waiver is in use. Have the course's lawyer or park district review it." : "Drivers are signing the sample waiver. Replace it with text your lawyer approves.", status: waiver.version > 1 ? "done" : "todo", where: "settings" },
+      { id: "carts", title: "Add your carts to the fleet", detail: carts ? `${carts} in the fleet.` : "No carts yet. Once added, the starter can only assign carts that are in service.", status: carts ? "done" : "todo", where: "reports" },
+      { id: "drawer", title: "Do a practice start-of-day", detail: opens.size ? "A day has been opened with starting cash." : "Open the day with a starting cash amount at the pro shop, once, to be sure it works.", status: opens.size ? "done" : "todo", where: "reports" },
+      { id: "products", title: "Enter your pro shop stock", detail: `${products.filter((p) => p.active).length} products are set up.`, status: "done", where: "inventory" },
+      { id: "cards", title: "Connect a card reader", detail: cardSettings.provider !== "standalone" ? "A card processor is connected." : "Cards are recorded only, taken on your own terminal. Connect Stripe or Square to charge from here.", status: cardSettings.provider !== "standalone" ? "done" : "optional", where: "settings" },
+      { id: "server-sync", title: "Server: set SYNC_SECRET", detail: "Needed to store a provider's API sign-in. Set it to a long random string on the server.", status: "optional", where: "none" },
+      { id: "server-ai", title: "Server: set ANTHROPIC_API_KEY", detail: "Without it the help assistant answers from the guides only.", status: "optional", where: "none" },
+    ];
+    const needed = items.filter((i) => i.status !== "optional");
+    return { items, done: needed.filter((i) => i.status === "done").length, total: needed.length };
+  }
+
   const ACCOUNT_DEFAULTS: Record<AccountKey, string> = {
     cash: "Undeposited Funds", card: "Card Clearing", check: "Undeposited Funds", house_account: "Accounts Receivable - House Accounts",
     gift_card: "Gift Cards Outstanding", rain_check: "Rain Checks Outstanding", loyalty: "Loyalty Rewards", punch_card: "Prepaid Rounds",
@@ -2577,6 +2610,7 @@ export function createDemoClient(apiKey: string): Client {
     report: (from: string, to: string) => reply(() => demoReport(from, to)),
     overview: (from: string, to: string, compare: ReportCompare = "previous") => reply(() => demoOverview(from, to, compare)),
     labor: (from: string, to: string) => reply(() => demoLabor(from, to)),
+    setup: () => reply(() => demoSetup()),
     inventoryReport: (from: string, to: string) => reply(() => demoInventory(from, to)),
     balancesReport: (from: string, to: string) => reply(() => demoBalances(from, to)),
     dayClose: (date: string) => reply(() => demoClose(date)),

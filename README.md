@@ -66,6 +66,12 @@ POST /v1/courses/river-bend/bookings
 - **No double-booking.** A booking locks its tee time row for the transaction, so simultaneous requests for the last spots can't overbook.
 - **Rates.** The most specific matching rule wins (residency, age group, time window), and ties go to the lower price. Holidays use weekend rates. 18 holes on a 9-hole course is the 9-hole rate plus the replay rate.
 
+## Hosting, backups and the go-live checklist
+
+`Dockerfile` and `docker-compose.yml` run the API and the staff app together on one address (set `STAFF_WEB_DIR` to the staff app's web build and the server also serves it; the app then finds the server on its own). `GET /ready` checks the database, for an uptime monitor. `scripts/backup.sh` and `scripts/restore.sh` make and load dated, compressed database copies. **Settings › Getting ready to go live** (managers) is a checklist that ticks itself off from what is saved: staff and their pay, green fees, sales tax, booking sync, cart waiver, carts, a practice start-of-day, and optional items. API: `GET /setup`. The full guide for a pilot, including costs, HTTPS, backups and running beside the old process, is in [docs/PILOT.md](docs/PILOT.md).
+
+![Go-live checklist](docs/screenshots/setup-checklist.png)
+
 ## Tee sheet sync and import
 
 Golfers keep booking on the course's booking provider (TeeItUp or GolfNow). Their bookings come in under **Sync tee sheet** in the app, which managers can open.

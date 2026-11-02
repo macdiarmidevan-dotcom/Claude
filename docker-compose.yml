@@ -1,0 +1,32 @@
+# Runs the whole system on one machine: the app and its database.
+#   cp .env.example .env   (then set the secrets below)
+#   docker compose up -d
+#   docker compose run --rm app pnpm db:seed    # first time only: creates River Bend and prints its sign-in
+services:
+  app:
+    build: .
+    ports: ["3000:3000"]
+    environment:
+      DATABASE_URL: postgres://golf:${POSTGRES_PASSWORD:-golf}@db:5432/golf
+      SYNC_SECRET: ${SYNC_SECRET:?set SYNC_SECRET to a long random string}
+      PUBLIC_URL: ${PUBLIC_URL:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      SUPPORT_EMAIL: ${SUPPORT_EMAIL:-}
+    depends_on:
+      db: { condition: service_healthy }
+    restart: unless-stopped
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: golf
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-golf}
+      POSTGRES_DB: golf
+    volumes: ["pgdata:/var/lib/postgresql/data", "./backups:/backups"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U golf"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+volumes:
+  pgdata:
