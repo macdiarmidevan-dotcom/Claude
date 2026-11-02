@@ -26,6 +26,7 @@ import { ReportsScreen, StartDayForm } from "./ReportsScreen";
 import { BalancesReportScreen, DEFAULT_RANGE, InventoryReportScreen, LaborReportScreen, OverviewReport, type ReportRange } from "./ManagerReports";
 import { AccountMenu, FeedbackList } from "./AccountMenu";
 import { HelpCenter } from "./HelpCenter";
+import { SetupChecklistCard } from "./SetupChecklistCard";
 import { colors, type WebPress } from "./theme";
 
 type Section = "tee-sheet" | "radar" | "pricing" | "add-ons" | "import" | "staff" | "customers" | "events" | "food" | "messages" | "reports" | "schedule" | "inventory" | "settings" | "help";
@@ -307,6 +308,17 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
           <>
             <Header title="Settings" onOpenMenu={openMenu} />
             <ScrollView contentContainerStyle={styles.content}>
+              {isManager && (
+                <SetupChecklistCard
+                  client={client}
+                  onOpen={(where) => {
+                    const target: Partial<Record<typeof where, Section>> = { staff: "staff", pricing: "pricing", sync: "import", inventory: "inventory", reports: "reports" };
+                    const section = target[where];
+                    // The pro shop is an add-on; if it's off, its settings are turned on in Add-ons first.
+                    if (section) go(sectionOn(section, addOns) ? section : "add-ons");
+                  }}
+                />
+              )}
               <Text style={styles.label}>This device is for</Text>
               {isManager ? (
                 <View style={{ maxWidth: 360 }}>

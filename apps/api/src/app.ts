@@ -44,6 +44,7 @@ import { closeDay, getDayClose, openDay, report } from "./reports.ts";
 import { managerOverview } from "./analytics.ts";
 import { laborReport } from "./labor.ts";
 import { balancesReport, inventoryReport } from "./shopreports.ts";
+import { setupChecklist } from "./setup.ts";
 import {
   cancelCardPayment,
   createTerminal,
@@ -451,6 +452,17 @@ export function buildApp(
   });
 
   app.get("/health", async () => ({ ok: true }));
+  // For the host's uptime check: fails when the database can't be reached.
+  app.get("/ready", async (_req, reply) => {
+    try {
+      await db.query("SELECT 1");
+      return { ok: true };
+    } catch {
+      return reply.status(503).send({ ok: false });
+    }
+  });
+  // The manager's go-live checklist.
+  app.get("/v1/courses/:slug/setup", async (req) => setupChecklist(db, await managedCourseFor(req)));
 
   // Every /v1 route needs a signed-in employee (st_ session) or a staff device key (sk_), apart
   // from signing in. Golfers don't book through this API: they book with the course's

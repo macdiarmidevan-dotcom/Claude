@@ -926,6 +926,13 @@ export interface LaborReport {
   openPunches: number;
 }
 
+/** What a course still has to set up before it can run a day on the system. */
+export interface SetupChecklist {
+  items: { id: string; title: string; detail: string; status: "done" | "todo" | "optional"; where: "staff" | "pricing" | "sync" | "settings" | "inventory" | "reports" | "none" }[];
+  done: number;
+  total: number;
+}
+
 /** Pro shop inventory: sales and margin, stock on hand, what to reorder, slow movers and shrink. */
 export interface InventoryReport {
   from: string;
@@ -1361,6 +1368,7 @@ function createHttpClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "ap
     report: (from: string, to: string) => request<Report>(`/reports?from=${from}&to=${to}`),
     overview: (from: string, to: string, compare: ReportCompare = "previous") => request<Overview>(`/reports/overview?from=${from}&to=${to}&compare=${compare}`),
     labor: (from: string, to: string) => request<LaborReport>(`/reports/labor?from=${from}&to=${to}`),
+    setup: () => request<SetupChecklist>("/setup"),
     inventoryReport: (from: string, to: string) => request<InventoryReport>(`/reports/inventory?from=${from}&to=${to}`),
     balancesReport: (from: string, to: string) => request<BalancesReport>(`/reports/balances?from=${from}&to=${to}`),
     dayClose: (date: string) => request<DayClose>(`/closes/${date}`),

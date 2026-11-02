@@ -9,8 +9,18 @@ import { DEMO, DEMO_PASSWORD } from "./demo";
  * checked a group in and only shows manager tools to managers. A shared device key is still
  * offered for a kiosk that nobody signs in to.
  */
+/**
+ * In a browser, the app is normally served by the API itself, so the server is wherever the page
+ * came from. The local dev server (port 8081) still points at the API on port 3000.
+ */
+function defaultApiUrl() {
+  const loc = (globalThis as { location?: { origin: string; port: string; protocol: string } }).location;
+  if (loc && loc.protocol.startsWith("http") && loc.port !== "8081" && !DEMO) return loc.origin;
+  return "http://localhost:3000";
+}
+
 export function SetupScreen({ initial, onSave }: { initial?: Settings; onSave: (s: Settings) => void }) {
-  const [apiUrl, setApiUrl] = useState(initial?.apiUrl ?? "http://localhost:3000");
+  const [apiUrl, setApiUrl] = useState(initial?.apiUrl ?? defaultApiUrl());
   const [courseSlug, setCourseSlug] = useState(initial?.courseSlug ?? "river-bend");
   const [mode, setMode] = useState<"account" | "key">("account");
   const [email, setEmail] = useState(DEMO ? "manager@riverbend.example" : "");

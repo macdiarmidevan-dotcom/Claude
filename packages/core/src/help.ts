@@ -367,6 +367,19 @@ export const HELP_ARTICLES: HelpArticle[] = [
     managersOnly: true,
   },
   {
+    id: "go-live-checklist",
+    category: "account",
+    title: "Getting ready to go live",
+    summary: "The manager's checklist for setting up the course.",
+    body: [
+      "Settings shows a checklist to managers. It ticks itself off as you set things up: adding staff and their pay, checking green fees, setting the sales tax rate, connecting your booking system, putting your own wording in the cart waiver, adding carts and doing a practice start-of-day.",
+      "Press Open next to a step to go to the screen that fixes it. Steps marked optional, like entering pro shop stock or connecting a card reader, don't hold up going live.",
+      "Replace the sample cart waiver with wording your lawyer or park district has approved before drivers sign it for real.",
+    ],
+    keywords: ["setup", "checklist", "onboarding", "go live", "get started", "new course", "waiver"],
+    managersOnly: true,
+  },
+  {
     id: "maintenance",
     category: "reports",
     title: "Carts, equipment and work orders",
