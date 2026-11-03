@@ -3,6 +3,7 @@ import type { Course } from "./courses.ts";
 import { dayRange } from "./courses.ts";
 import type { DbClient } from "./db.ts";
 import { badRequest } from "./errors.ts";
+import { budgetFor } from "./budgets.ts";
 import { report } from "./reports.ts";
 
 // Manager reports: the revenue dashboard, rounds and utilization, revenue per round and the
@@ -148,7 +149,11 @@ export function compareRange(from: string, to: string, compare: Compare) {
 export async function managerOverview(db: DbClient, course: Course, from: string, to: string, compare: Compare = "previous") {
   if (to < from) throw badRequest("invalid_range", "from must be on or before to");
   const range = compareRange(from, to, compare);
-  const [now, before] = await Promise.all([period(db, course, from, to), range ? period(db, course, range.from, range.to) : null]);
+  const [now, before, budget] = await Promise.all([
+    period(db, course, from, to),
+    range ? period(db, course, range.from, range.to) : null,
+    budgetFor(db, course, from, to),
+  ]);
   const { rows } = await db.query<{ cents: number | null }>("SELECT MAX(price_cents)::int AS cents FROM rate_rules WHERE course_id = $1 AND active AND NOT is_replay", [course.id]);
   const topRateCents = rows[0]?.cents ?? null;
   // How far below the top green fee the average first-loop round went.
@@ -166,8 +171,11 @@ export async function managerOverview(db: DbClient, course: Course, from: string
     rateMix: now.rateMix,
     topRateCents,
     avgDiscountPct: discount(now),
+    // The manager's monthly budget, prorated to these dates; null when none of the months has one.
+    budget,
     previous: before && {
       revenue: before.revenue,
+      days: before.days,
       rounds: before.rounds,
       yield: before.yield,
       rateMix: before.rateMix,

@@ -175,12 +175,16 @@ Menu items are products with **Food or drink** turned on, and optionally **Made 
 
 **Reports › Revenue** and **Reports › Rounds & tee sheet** are for managers. Pick today, yesterday, the last 7 or 30 days, this or last month, or the year so far, and compare with the period just before or the same dates last year. Both tabs keep the same dates.
 
-- **Revenue**: total revenue, rounds, revenue per round and occupancy, each with its change; revenue over time by department (by day for a month or less, by week up to about four months, by month after that); each department's share and change; and revenue per round: the average green fee, total revenue per round, revenue per available spot (green fees over every open spot, filled or not) and the average discount below the top green fee.
+- **Revenue**: total revenue, revenue against budget, rounds, revenue per round and occupancy, each with its change; revenue over time by department, by day, week (Monday to Sunday) or month (it starts by day for a month or less, by week up to about four months, by month after that), with a solid line for the comparison period and a dashed line for the budget; each department's share, change and percent of budget; and revenue per round: the average green fee, total revenue per round, revenue per available spot (green fees over every open spot, filled or not) and the average discount below the top green fee.
 - **Rounds & tee sheet**: rounds, occupancy, empty spots and no-shows; a heat map of how full each weekday and hour was; 9 against 18 holes, walking against riding, booking source, and Monday to Thursday against Friday to Sunday occupancy; and the rate mix, which green fees the rounds were sold at, with rounds, share, revenue and average price. An 18-hole round on a 9-hole course is a first loop plus a replay, so shares count first loops.
 
 A round here is a player booked on a tee time who wasn't a no-show. Blocked tee times don't count as open spots. **Download CSV** saves the day-by-day revenue, or the rate mix and heat map.
 
-API: `GET /reports/overview?from&to&compare=previous|last_year|none` (managers, up to 366 days).
+**Set budget** opens the year's revenue budget: an amount per month for each department (green fees, carts and extras, pro shop, food and drink, leagues and outings). **Fill in** starts it from last year's revenue plus a percent, rounded to $100. A month's budget is spread evenly over its days, so any dates get the matching share; a month left blank has no budget.
+
+API: `GET /reports/overview?from&to&compare=previous|last_year|none` (managers, up to 366 days; includes `budget` prorated to the dates, or null, and the comparison period's `days`). `GET /reports/budget?year` and `PUT /reports/budget` with `{ months: [{ month: "YYYY-MM", greenFeesCents, cartsAndExtrasCents, proShopCents, foodBevCents, eventsCents }] }` (managers, one year per save; a month of all zeros clears it).
+
+![Revenue budget](docs/screenshots/reports-budget.png)
 
 **Reports › Labor** puts staff hours and pay against revenue: labor cost and its share of revenue, hours and overtime, revenue and rounds per labor hour, labor percent over time, and cost by job and by person (worked hours next to scheduled hours). Pay is set per person in **Staff accounts › Pay**, hourly (cents an hour) or salary (cents a year), and only managers see it. Hourly pay counts time clock hours, with hours past 40 in a Monday to Sunday week at time and a half; salaries are spread evenly over every day. People with hours but no pay are flagged. API: `GET /reports/labor?from&to` (managers, up to 366 days); `pay: { type, cents } | null` on `POST /staff` and `PATCH /staff/:id`.
 
