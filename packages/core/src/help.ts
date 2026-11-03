@@ -319,11 +319,12 @@ export const HELP_ARTICLES: HelpArticle[] = [
     summary: "How the course is doing over any stretch, compared with before.",
     body: [
       "Reports › Revenue and Reports › Rounds & tee sheet are for managers. Pick the dates at the top (today up to the year so far) and what to compare with: the period just before, or the same dates last year. Both tabs keep the dates you picked.",
-      "Revenue shows total revenue, rounds, revenue per round and occupancy, a chart of revenue over time by department, and each department's share. Revenue per round covers the average green fee, everything per round, revenue per available spot (green fees spread over every open spot, filled or not) and how far below your top green fee the average round sold.",
+      "Revenue shows total revenue, how it's doing against budget, rounds, revenue per round and occupancy, a chart of revenue over time by department, and each department's share and budget. The chart can show each day, week (Monday to Sunday) or month; a solid line marks the comparison period and a dashed red line the budget. Revenue per round covers the average green fee, everything per round, revenue per available spot (green fees spread over every open spot, filled or not) and how far below your top green fee the average round sold.",
       "Rounds & tee sheet shows how full the tee sheet was, with a heat map by weekday and hour, the split between 9 and 18 holes, walking and riding, booking sources and weekdays against weekends, and the rate mix: which green fees rounds were sold at.",
       "A round is a player booked on a tee time who wasn't a no-show. Blocked tee times don't count as open spots. Download CSV saves the numbers for a spreadsheet.",
+      "To set a budget, press Set budget on Reports › Revenue. Type what you expect each department (green fees, carts and extras, pro shop, food and drink, leagues and outings) to bring in each month, in dollars, then press Save budget. Fill in can start you from last year's revenue plus a percent, rounded to $100. Each month's budget is spread evenly over its days, so 10 days of a 30-day month count a third of it. A month left blank has no budget, and Against budget shows a dash for dates with no budget at all. Budget is shown as a percent: 100% means on budget.",
     ],
-    keywords: ["revenue", "rounds", "utilization", "occupancy", "yield", "revpatt", "rate mix", "heat map", "compare", "last year", "dashboard"],
+    keywords: ["budget", "vs budget", "revenue", "rounds", "utilization", "occupancy", "yield", "revpatt", "rate mix", "heat map", "compare", "last year", "dashboard"],
     managersOnly: true,
   },
   {

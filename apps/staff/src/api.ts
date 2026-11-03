@@ -895,7 +895,21 @@ export interface Overview {
   topRateCents: number | null;
   /** How far below the top green fee the average first-loop round was, in percent. */
   avgDiscountPct: number | null;
-  previous: { revenue: Departments; rounds: RoundsSummary; yield: RoundYield; rateMix: RateMixRow[]; avgDiscountPct: number | null } | null;
+  /** The manager's monthly budget, prorated to these dates; null when none of the months has one. */
+  budget: OverviewBudget | null;
+  previous: { revenue: Departments; days: Overview["days"]; rounds: RoundsSummary; yield: RoundYield; rateMix: RateMixRow[]; avgDiscountPct: number | null } | null;
+}
+export interface OverviewBudget {
+  revenue: Departments;
+  /** Each budgeted month the dates touch, with its whole-month total (spread evenly over its days). */
+  months: { month: string; daysInMonth: number; daysInRange: number; totalCents: number }[];
+}
+export type BudgetDepartments = Omit<Departments, "totalCents">;
+/** A month's revenue budget by department. month is YYYY-MM; set is false when it has none. */
+export type BudgetMonth = BudgetDepartments & { month: string; set: boolean; totalCents: number };
+export interface RevenueBudget {
+  year: number;
+  months: BudgetMonth[];
 }
 
 /** Hours from the time clock and what they cost, against revenue. */
@@ -1368,6 +1382,8 @@ function createHttpClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "ap
     report: (from: string, to: string) => request<Report>(`/reports?from=${from}&to=${to}`),
     overview: (from: string, to: string, compare: ReportCompare = "previous") => request<Overview>(`/reports/overview?from=${from}&to=${to}&compare=${compare}`),
     labor: (from: string, to: string) => request<LaborReport>(`/reports/labor?from=${from}&to=${to}`),
+    budget: (year: number) => request<RevenueBudget>(`/reports/budget?year=${year}`),
+    saveBudget: (months: (BudgetDepartments & { month: string })[]) => request<RevenueBudget>("/reports/budget", { method: "PUT", body: { months } }),
     setup: () => request<SetupChecklist>("/setup"),
     inventoryReport: (from: string, to: string) => request<InventoryReport>(`/reports/inventory?from=${from}&to=${to}`),
     balancesReport: (from: string, to: string) => request<BalancesReport>(`/reports/balances?from=${from}&to=${to}`),

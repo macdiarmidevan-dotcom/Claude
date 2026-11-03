@@ -18,6 +18,8 @@ import {
   type Pay,
   type Overview,
   type ReportCompare,
+  type BudgetDepartments,
+  type RevenueBudget,
   type AccountingFormat,
   type DelayReason,
   type TeeSheetDelay,
@@ -1742,8 +1744,83 @@ export function createDemoClient(apiKey: string): Client {
       to,
       compare: range && { kind: compare, ...range },
       ...now,
-      previous: before && { revenue: before.revenue, rounds: before.rounds, yield: before.yield, rateMix: before.rateMix, avgDiscountPct: before.avgDiscountPct },
+      budget: demoBudgetFor(from, to),
+      previous: before && { revenue: before.revenue, days: before.days, rounds: before.rounds, yield: before.yield, rateMix: before.rateMix, avgDiscountPct: before.avgDiscountPct },
     };
+  }
+
+  // Monthly revenue budgets, the server's rules: a month with every department at zero has no
+  // budget, and a stretch of days gets each month's budget prorated by the days it covers. The
+  // demo starts with this year budgeted at last year's revenue plus 6%, rounded to $100.
+  const BUDGET_KEYS = ["greenFeesCents", "cartsAndExtrasCents", "proShopCents", "foodBevCents", "eventsCents"] as const;
+  let budgets: Map<string, BudgetDepartments> | undefined;
+  const daysIn = (month: string) => new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).getUTCDate();
+  const budgetTotal = (b: BudgetDepartments) => BUDGET_KEYS.reduce((t, k) => t + b[k], 0);
+  function budgetStore() {
+    if (budgets) return budgets;
+    budgets = new Map();
+    const year = Number(todayIn(riverBend.timeZone).slice(0, 4));
+    const last = overviewPeriod(`${year - 1}-01-01`, `${year - 1}-12-31`);
+    for (const d of last.days) {
+      const month = `${year}${d.date.slice(4, 7)}`;
+      const b = budgets.get(month) ?? { greenFeesCents: 0, cartsAndExtrasCents: 0, proShopCents: 0, foodBevCents: 0, eventsCents: 0 };
+      for (const k of BUDGET_KEYS) b[k] += d[k];
+      budgets.set(month, b);
+    }
+    for (const [month, b] of budgets) {
+      for (const k of BUDGET_KEYS) b[k] = Math.round((b[k] * 1.06) / 10_000) * 10_000;
+      if (!budgetTotal(b)) budgets.delete(month);
+    }
+    return budgets;
+  }
+  function demoBudget(year: number): RevenueBudget {
+    managerOnly();
+    const store = budgetStore();
+    return {
+      year,
+      months: Array.from({ length: 12 }, (_, i) => {
+        const month = `${year}-${String(i + 1).padStart(2, "0")}`;
+        const b = store.get(month);
+        const values = b ? { ...b } : { greenFeesCents: 0, cartsAndExtrasCents: 0, proShopCents: 0, foodBevCents: 0, eventsCents: 0 };
+        return { month, set: !!b, ...values, totalCents: budgetTotal(values) };
+      }),
+    };
+  }
+  function demoSaveBudget(months: (BudgetDepartments & { month: string })[]): RevenueBudget {
+    managerOnly();
+    if (!months.length) throw new ApiError(400, "no_months", "Send at least one month");
+    if (new Set(months.map((m) => m.month.slice(0, 4))).size > 1) throw new ApiError(400, "one_year", "Save one year's budget at a time");
+    for (const m of months) {
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(m.month)) throw new ApiError(400, "invalid_request", "Use YYYY-MM");
+      for (const k of BUDGET_KEYS) if (!Number.isInteger(m[k]) || m[k] < 0 || m[k] > 100_000_000) throw new ApiError(400, "invalid_request", "Budgets are whole cents, $0 to $1,000,000");
+    }
+    const store = budgetStore();
+    for (const m of months) {
+      const b = Object.fromEntries(BUDGET_KEYS.map((k) => [k, m[k]])) as BudgetDepartments;
+      if (budgetTotal(b)) store.set(m.month, b);
+      else store.delete(m.month);
+    }
+    return demoBudget(Number(months[0].month.slice(0, 4)));
+  }
+  function demoBudgetFor(from: string, to: string): Overview["budget"] {
+    const store = budgetStore();
+    const revenue = { greenFeesCents: 0, cartsAndExtrasCents: 0, proShopCents: 0, foodBevCents: 0, eventsCents: 0, totalCents: 0 };
+    const months: NonNullable<Overview["budget"]>["months"] = [];
+    for (let first = from; first <= to; ) {
+      const month = first.slice(0, 7);
+      const monthEnd = `${month}-${String(daysIn(month)).padStart(2, "0")}`;
+      const last = monthEnd < to ? monthEnd : to;
+      const b = store.get(month);
+      if (b) {
+        const daysInRange = Math.round((Date.parse(`${last}T12:00:00Z`) - Date.parse(`${first}T12:00:00Z`)) / 86_400_000) + 1;
+        for (const k of BUDGET_KEYS) revenue[k] += Math.round((b[k] * daysInRange) / daysIn(month));
+        months.push({ month, daysInMonth: daysIn(month), daysInRange, totalCents: budgetTotal(b) });
+      }
+      first = addDays(monthEnd, 1);
+    }
+    if (!months.length) return null;
+    revenue.totalCents = BUDGET_KEYS.reduce((t, k) => t + revenue[k], 0);
+    return { revenue, months };
   }
 
   // Labor cost, the server's rules: overtime past 40 hours in a Monday to Sunday week at time and
@@ -2610,6 +2687,8 @@ export function createDemoClient(apiKey: string): Client {
     report: (from: string, to: string) => reply(() => demoReport(from, to)),
     overview: (from: string, to: string, compare: ReportCompare = "previous") => reply(() => demoOverview(from, to, compare)),
     labor: (from: string, to: string) => reply(() => demoLabor(from, to)),
+    budget: (year: number) => reply(() => demoBudget(year)),
+    saveBudget: (months: (BudgetDepartments & { month: string })[]) => reply(() => demoSaveBudget(months)),
     setup: () => reply(() => demoSetup()),
     inventoryReport: (from: string, to: string) => reply(() => demoInventory(from, to)),
     balancesReport: (from: string, to: string) => reply(() => demoBalances(from, to)),

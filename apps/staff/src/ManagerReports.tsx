@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import type { BalancesReport, Client, Departments, InventoryReport, LaborReport, MoneyMethod, Overview, ReportCompare, RoundsSummary } from "./api";
-import { addDays, todayIn } from "./dates";
+import { BudgetEditor } from "./BudgetEditor";
+import { addDays, todayIn, weekStart } from "./dates";
 import { colors, radius, type WebPress } from "./theme";
 
 // Manager reports: the revenue dashboard and rounds and utilization, with revenue per round and
@@ -69,7 +70,7 @@ const DEPARTMENTS: { key: keyof Omit<Departments, "totalCents">; label: string; 
 ];
 const SOURCE_LABEL: Record<string, string> = { staff: "Pro shop / walk-in", phone: "Phone", teeitup: "TeeItUp", golfnow: "GolfNow", import: "Imported" };
 
-function useOverview(client: Client, timeZone: string, range: ReportRange) {
+function useOverview(client: Client, timeZone: string, range: ReportRange, version = 0) {
   const [data, setData] = useState<Overview>();
   const [error, setError] = useState<string>();
   const [from, to] = datesFor(range.preset, todayIn(timeZone));
@@ -83,14 +84,27 @@ function useOverview(client: Client, timeZone: string, range: ReportRange) {
     return () => {
       live = false;
     };
-  }, [client, from, to, range.compare]);
+  }, [client, from, to, range.compare, version]);
   const current = data && data.from === from && data.to === to && (data.compare?.kind ?? "none") === range.compare ? data : undefined;
   return { data: current, stale: data, error };
 }
 
 export function OverviewReport({ client, timeZone, view, range, onRange }: { client: Client; timeZone: string; view: "revenue" | "rounds"; range: ReportRange; onRange: (r: ReportRange) => void }) {
-  const { data, stale, error } = useOverview(client, timeZone, range);
+  const [version, setVersion] = useState(0);
+  const [budgetYear, setBudgetYear] = useState<number>();
+  const { data, stale, error } = useOverview(client, timeZone, range, version);
   const shown = data ?? stale;
+  if (budgetYear)
+    return (
+      <BudgetEditor
+        client={client}
+        initialYear={budgetYear}
+        onClose={(changed) => {
+          setBudgetYear(undefined);
+          if (changed) setVersion((v) => v + 1);
+        }}
+      />
+    );
   return (
     <ScrollView contentContainerStyle={styles.page}>
       <View style={styles.bar}>
@@ -104,8 +118,17 @@ export function OverviewReport({ client, timeZone, view, range, onRange }: { cli
           {COMPARES.map((c) => (
             <Chip key={c.id} label={c.label} on={range.compare === c.id} onPress={() => onRange({ ...range, compare: c.id })} small />
           ))}
+          {view === "revenue" && (
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setBudgetYear(Number((shown?.to ?? todayIn(timeZone)).slice(0, 4)))}
+              style={({ focused }: WebPress) => [styles.csv, focused && styles.focus]}
+            >
+              <Text style={styles.csvText}>Set budget</Text>
+            </Pressable>
+          )}
           {shown && Platform.OS === "web" && (
-            <Pressable accessibilityRole="button" onPress={() => downloadCsv(shown, view)} style={({ focused }: WebPress) => [styles.csv, focused && styles.focus]}>
+            <Pressable accessibilityRole="button" onPress={() => downloadCsv(shown, view)} style={({ focused }: WebPress) => [styles.csv, view === "revenue" && { marginLeft: 0 }, focused && styles.focus]}>
               <Text style={styles.csvText}>Download CSV</Text>
             </Pressable>
           )}
@@ -119,7 +142,7 @@ export function OverviewReport({ client, timeZone, view, range, onRange }: { cli
             {span(shown.from, shown.to)}
             {shown.compare && <Text style={styles.periodMuted}>{`  ·  compared with ${span(shown.compare.from, shown.compare.to)}`}</Text>}
           </Text>
-          {view === "revenue" ? <RevenueView o={shown} /> : <RoundsView o={shown} />}
+          {view === "revenue" ? <RevenueView o={shown} onSetBudget={() => setBudgetYear(Number(shown.to.slice(0, 4)))} /> : <RoundsView o={shown} />}
         </View>
       )}
     </ScrollView>
@@ -634,22 +657,46 @@ function Card({ title, children, note, half }: { title: string; children: React.
 
 // ---- Revenue ----
 
-type Bucket = { label: string; from: string; values: number[]; total: number };
+type Size = "day" | "week" | "month";
+type Bucket = { label: string; from: string; values: number[]; total: number; before: number; budget: number };
+const SIZE_LABEL: Record<Size, string> = { day: "Day", week: "Week", month: "Month" };
 
+const datesOf = (from: string, to: string) => {
+  const list: string[] = [];
+  for (let d = from; d <= to; d = addDays(d, 1)) list.push(d);
+  return list;
+};
+/** The sizes that make sense for this many days: days up to two months, months once it spans two. */
+function sizesFor(o: Overview): Size[] {
+  const n = datesOf(o.from, o.to).length;
+  const sizes: Size[] = [];
+  if (n <= 62) sizes.push("day");
+  if (n >= 8) sizes.push("week");
+  if (o.from.slice(0, 7) !== o.to.slice(0, 7)) sizes.push("month");
+  return sizes;
+}
 /** Days for a month or less, weeks up to about four months, months after that. */
-function buckets(o: Overview): Bucket[] {
-  const days = o.from === o.to ? [] : (() => {
-    const list: string[] = [];
-    for (let d = o.from; d <= o.to; d = addDays(d, 1)) list.push(d);
-    return list;
-  })();
+function defaultSize(o: Overview): Size {
+  const n = datesOf(o.from, o.to).length;
+  return n <= 31 ? "day" : n <= 120 ? "week" : "month";
+}
+
+/**
+ * Revenue in each day, week (Monday to Sunday) or month, with the comparison period's revenue
+ * lined up day for day, and the budget for the same days.
+ */
+function buckets(o: Overview, size: Size): Bucket[] {
+  const days = o.from === o.to ? [] : datesOf(o.from, o.to);
   const byDate = new Map(o.days.map((d) => [d.date, d]));
-  const size = days.length <= 31 ? "day" : days.length <= 120 ? "week" : "month";
+  const before = new Map((o.previous?.days ?? []).map((d) => [d.date, d.totalCents]));
+  const perDay = new Map((o.budget?.months ?? []).map((m) => [m.month, m.totalCents / m.daysInMonth]));
   const out = new Map<string, Bucket>();
   days.forEach((date, i) => {
-    const key = size === "day" ? date : size === "week" ? String(Math.floor(i / 7)) : date.slice(0, 7);
-    if (!out.has(key)) out.set(key, { label: size === "month" ? MONTHS[Number(date.slice(5, 7)) - 1] : short(date), from: date, values: DEPARTMENTS.map(() => 0), total: 0 });
+    const key = size === "day" ? date : size === "week" ? weekStart(date) : date.slice(0, 7);
+    if (!out.has(key)) out.set(key, { label: size === "month" ? MONTHS[Number(date.slice(5, 7)) - 1] : short(date), from: date, values: DEPARTMENTS.map(() => 0), total: 0, before: 0, budget: 0 });
     const b = out.get(key)!;
+    if (o.compare) b.before += before.get(addDays(o.compare.from, i)) ?? 0;
+    b.budget += perDay.get(date.slice(0, 7)) ?? 0;
     const d = byDate.get(date);
     if (!d) return;
     DEPARTMENTS.forEach((dep, j) => {
@@ -660,13 +707,27 @@ function buckets(o: Overview): Bucket[] {
   return [...out.values()];
 }
 
+const COMPARE_NAME: Record<ReportCompare, string> = { previous: "Previous period", last_year: "Last year", none: "" };
+
 function TrendChart({ o }: { o: Overview }) {
-  const list = buckets(o);
+  const sizes = sizesFor(o);
+  const [picked, setPicked] = useState<Size>();
+  const size = picked && sizes.includes(picked) ? picked : defaultSize(o);
+  const list = buckets(o, size);
   if (list.length === 0) return <Text style={styles.cardNote}>Pick a longer period to see a trend.</Text>;
-  const max = Math.max(1, ...list.map((b) => b.total));
+  const showBefore = !!o.compare;
+  const showBudget = !!o.budget;
+  const max = Math.max(1, ...list.map((b) => Math.max(b.total, showBefore ? b.before : 0, showBudget ? b.budget : 0)));
   const every = Math.ceil(list.length / 8);
   return (
     <View>
+      {sizes.length > 1 && (
+        <View style={[styles.choices, styles.sizes]} role="radiogroup" aria-label="Show revenue by">
+          {sizes.map((s) => (
+            <Chip key={s} label={SIZE_LABEL[s]} on={size === s} onPress={() => setPicked(s)} small />
+          ))}
+        </View>
+      )}
       <View style={styles.chartArea}>
         <View style={styles.yAxis}>
           <Text style={styles.axisText}>{dollars(max)}</Text>
@@ -677,10 +738,17 @@ function TrendChart({ o }: { o: Overview }) {
           <View style={[styles.gridLine, { top: 0 }]} />
           <View style={[styles.gridLine, { top: "50%" }]} />
           {list.map((b) => (
-            <View key={b.from} style={styles.barSlot} aria-label={`${b.label}: ${dollars(b.total)}`} role="img">
+            <View
+              key={b.from}
+              style={styles.barSlot}
+              aria-label={`${b.label}: ${dollars(b.total)}${showBefore ? `, ${COMPARE_NAME[o.compare!.kind].toLowerCase()} ${dollars(b.before)}` : ""}${showBudget ? `, budget ${dollars(b.budget)}` : ""}`}
+              role="img"
+            >
               <View style={{ height: `${(b.total / max) * 100}%`, width: "100%", maxWidth: 28, flexDirection: "column-reverse" }}>
                 {b.values.map((v, j) => (v > 0 ? <View key={j} style={{ flex: v, backgroundColor: DEPARTMENTS[j].color }} /> : null))}
               </View>
+              {showBudget && b.budget > 0 && <View style={[styles.mark, styles.markBudget, { bottom: `${(b.budget / max) * 100}%` }]} />}
+              {showBefore && b.before > 0 && <View style={[styles.mark, styles.markBefore, { bottom: `${(b.before / max) * 100}%` }]} />}
             </View>
           ))}
         </View>
@@ -699,19 +767,54 @@ function TrendChart({ o }: { o: Overview }) {
             <Text style={styles.legendText}>{d.label}</Text>
           </View>
         ))}
+        {showBefore && (
+          <View style={styles.legendItem}>
+            <View style={[styles.legendMark, styles.markBefore]} />
+            <Text style={styles.legendText}>{COMPARE_NAME[o.compare!.kind]}</Text>
+          </View>
+        )}
+        {showBudget && (
+          <View style={styles.legendItem}>
+            <View style={[styles.legendMark, styles.markBudget]} />
+            <Text style={styles.legendText}>Budget</Text>
+          </View>
+        )}
       </View>
     </View>
   );
 }
 
-function RevenueView({ o }: { o: Overview }) {
+/** How far ahead of or behind the budget, in dollars. */
+function BudgetChange({ now, budget }: { now: number; budget: number | undefined }) {
+  if (!budget) return null;
+  const diff = now - budget;
+  if (diff === 0) return <Text style={styles.changeFlat}>On budget</Text>;
+  return (
+    <Text aria-label={`${dollars(Math.abs(diff))} ${diff > 0 ? "ahead of" : "behind"} budget`} style={[styles.change, { color: diff > 0 ? colors.checkedIn : colors.noShow }]}>
+      {diff > 0 ? "▲" : "▼"} {dollars(Math.abs(diff))}
+    </Text>
+  );
+}
+const ofBudget = (now: number, budget: number | undefined) => (budget ? `${Math.round((now / budget) * 100)}%` : "–");
+
+function RevenueView({ o, onSetBudget }: { o: Overview; onSetBudget: () => void }) {
   const p = o.previous;
   const total = o.revenue.totalCents;
+  const budget = o.budget?.revenue;
   return (
     <>
       <View style={styles.tiles}>
         <Tile label="Total revenue" value={dollars(total)} note={p ? `vs ${dollars(p.revenue.totalCents)}` : undefined}>
           <Change now={total} before={p?.revenue.totalCents} />
+        </Tile>
+        <Tile label="Against budget" value={ofBudget(total, budget?.totalCents)} note={budget ? `budget ${dollars(budget.totalCents)}` : undefined}>
+          {budget ? (
+            <BudgetChange now={total} budget={budget.totalCents} />
+          ) : (
+            <Pressable accessibilityRole="button" onPress={onSetBudget} style={({ focused }: WebPress) => focused && styles.focus}>
+              <Text style={[styles.tileNote, styles.link]}>Set a budget</Text>
+            </Pressable>
+          )}
         </Tile>
         <Tile label="Rounds" value={count(o.rounds.rounds)} note={p ? `vs ${count(p.rounds.rounds)}` : undefined}>
           <Change now={o.rounds.rounds} before={p?.rounds.rounds} />
@@ -733,7 +836,8 @@ function RevenueView({ o }: { o: Overview }) {
           <View style={[styles.tr, styles.th]}>
             <Text style={[styles.thText, { flex: 1 }]}>Department</Text>
             <Text style={[styles.thText, styles.num]}>Revenue</Text>
-            {p && <Text style={[styles.thText, styles.num]}>Change</Text>}
+            {p && <Text style={[styles.thText, styles.numS]}>Change</Text>}
+            {budget && <Text style={[styles.thText, styles.numS]}>Budget</Text>}
           </View>
           {DEPARTMENTS.map((d) => {
             const v = o.revenue[d.key];
@@ -751,10 +855,11 @@ function RevenueView({ o }: { o: Overview }) {
                 </View>
                 <Text style={[styles.td, styles.num]}>{dollars(v)}</Text>
                 {p && (
-                  <View style={styles.num}>
+                  <View style={styles.numS}>
                     <Change now={v} before={p.revenue[d.key]} />
                   </View>
                 )}
+                {budget && <BudgetPct now={v} budget={budget[d.key]} />}
               </View>
             );
           })}
@@ -762,11 +867,13 @@ function RevenueView({ o }: { o: Overview }) {
             <Text style={[styles.td, { flex: 1, fontWeight: "700" }]}>Total</Text>
             <Text style={[styles.td, styles.num, { fontWeight: "700" }]}>{dollars(total)}</Text>
             {p && (
-              <View style={styles.num}>
+              <View style={styles.numS}>
                 <Change now={total} before={p.revenue.totalCents} />
               </View>
             )}
+            {budget && <BudgetPct now={total} budget={budget.totalCents} />}
           </View>
+          {budget && <Text style={styles.help}>Budget is the share of each month's budget for these dates. 100% means on budget.</Text>}
         </Card>
 
         <Card title="Revenue per round" half note="What each round brings in. Rounds are players who came (no-shows left out).">
@@ -788,6 +895,16 @@ function RevenueView({ o }: { o: Overview }) {
         </Card>
       </View>
     </>
+  );
+}
+
+function BudgetPct({ now, budget }: { now: number; budget: number }) {
+  if (!budget) return <Text style={[styles.changeFlat, styles.numS]}>–</Text>;
+  const pct = Math.round((now / budget) * 100);
+  return (
+    <Text aria-label={`${pct}% of a ${dollars(budget)} budget`} style={[styles.change, styles.numS, { color: pct >= 100 ? colors.checkedIn : colors.noShow }]}>
+      {pct}%
+    </Text>
   );
 }
 
@@ -1036,13 +1153,13 @@ const styles = StyleSheet.create({
   tile: { flexGrow: 1, flexBasis: 150, minWidth: 140, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: radius, padding: 12 },
   tileLabel: { fontSize: 11, fontWeight: "700", color: colors.muted, textTransform: "uppercase", letterSpacing: 0.4 },
   tileValue: { fontSize: 22, fontWeight: "700", color: colors.text, marginTop: 4, fontVariant: ["tabular-nums"] },
-  tileFoot: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 4, minHeight: 18 },
+  tileFoot: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", columnGap: 8, rowGap: 2, marginTop: 4, minHeight: 18 },
   tileNote: { fontSize: 12, color: colors.muted },
   change: { fontSize: 12, fontWeight: "700", fontVariant: ["tabular-nums"] },
   changeFlat: { fontSize: 12, color: colors.muted },
   columns: { flexDirection: "row", flexWrap: "wrap", gap: 12, alignItems: "flex-start" },
   card: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: radius, padding: 14, marginBottom: 12 },
-  half: { flexGrow: 1, flexBasis: 420, minWidth: 0 },
+  half: { flexGrow: 1, flexShrink: 1, flexBasis: 420, minWidth: 0 },
   cardTitle: { fontSize: 14, fontWeight: "700", color: colors.text, marginBottom: 4 },
   cardNote: { fontSize: 12, color: colors.muted, lineHeight: 17, marginBottom: 8 },
   chartArea: { flexDirection: "row", height: 180, marginTop: 8 },
@@ -1057,6 +1174,11 @@ const styles = StyleSheet.create({
   legendItem: { flexDirection: "row", alignItems: "center", gap: 5 },
   legendText: { fontSize: 12, color: colors.muted },
   swatch: { width: 10, height: 10, borderRadius: 2 },
+  sizes: { justifyContent: "flex-end", marginBottom: 2 },
+  mark: { position: "absolute", left: "8%", right: "8%", height: 0 },
+  markBefore: { borderTopWidth: 2, borderColor: "#3a3e44" },
+  markBudget: { borderTopWidth: 2, borderColor: "#b5121b", borderStyle: "dashed" },
+  legendMark: { width: 16, height: 0 },
   tr: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 8, borderBottomWidth: 1, borderColor: "#eceef1" },
   th: { paddingVertical: 6, borderColor: colors.border },
   thText: { fontSize: 11, fontWeight: "700", color: colors.muted, textTransform: "uppercase", letterSpacing: 0.4 },

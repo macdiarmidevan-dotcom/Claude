@@ -41,6 +41,7 @@ import {
   updateProduct,
 } from "./pos.ts";
 import { closeDay, getDayClose, openDay, report } from "./reports.ts";
+import { getBudget, saveBudget } from "./budgets.ts";
 import { managerOverview } from "./analytics.ts";
 import { laborReport } from "./labor.ts";
 import { balancesReport, inventoryReport } from "./shopreports.ts";
@@ -805,6 +806,34 @@ export function buildApp(
     const course = await managedCourseFor(req);
     const q = z.object({ from: z.iso.date(), to: z.iso.date(), compare: z.enum(["previous", "last_year", "none"]).default("previous") }).parse(req.query);
     return managerOverview(db, course, q.from, q.to, q.compare);
+  });
+  // Monthly revenue budgets by department, for "vs budget" on the revenue dashboard. Managers only.
+  app.get("/v1/courses/:slug/reports/budget", async (req) => {
+    const course = await managedCourseFor(req);
+    const { year } = z.object({ year: z.coerce.number().int().min(2000).max(2100) }).parse(req.query);
+    return getBudget(db, course, year);
+  });
+  app.put("/v1/courses/:slug/reports/budget", async (req) => {
+    const course = await managedCourseFor(req);
+    const cents = z.number().int().min(0).max(100_000_000);
+    const body = z
+      .object({
+        months: z
+          .array(
+            z.object({
+              month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, "Use YYYY-MM"),
+              greenFeesCents: cents,
+              cartsAndExtrasCents: cents,
+              proShopCents: cents,
+              foodBevCents: cents,
+              eventsCents: cents,
+            }),
+          )
+          .min(1)
+          .max(12),
+      })
+      .parse(req.body);
+    return saveBudget(db, course, req.staff?.user.id, body.months);
   });
   // Labor cost: hours and pay against revenue, by person, job and day. Managers only.
   app.get("/v1/courses/:slug/reports/labor", async (req) => {
