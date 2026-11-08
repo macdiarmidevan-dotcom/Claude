@@ -235,7 +235,7 @@ function Button({ label, onPress, primary, disabled }: { label: string; onPress:
 }
 
 const styles = StyleSheet.create({
-  card: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, padding: 14, backgroundColor: colors.card, marginTop: 16 },
+  card: { borderWidth: 1, borderColor: colors.border, borderRadius: 0, padding: 14, backgroundColor: colors.card, marginTop: 16 },
   title: { fontSize: 15, fontWeight: "700", color: colors.text, marginBottom: 6 },
   text: { color: colors.text, fontSize: 14 },
   strong: { fontSize: 14, fontWeight: "600", color: colors.text },
@@ -244,14 +244,14 @@ const styles = StyleSheet.create({
   error: { color: colors.noShow, marginVertical: 6 },
   row: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 8, alignItems: "center" },
   nameRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, alignItems: "center", marginBottom: 6 },
-  input: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, padding: 8, fontSize: 14, color: colors.text, backgroundColor: "#fff" },
+  input: { borderWidth: 1, borderColor: colors.border, borderRadius: 0, padding: 8, fontSize: 14, color: colors.text, backgroundColor: "#fff" },
   jRow: { flexDirection: "row", gap: 8, paddingVertical: 6, borderBottomWidth: 1, borderColor: colors.border, alignItems: "center" },
   jHead: { borderBottomWidth: 2 },
   num: { width: 100, textAlign: "right" },
-  chip: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, paddingHorizontal: 10, paddingVertical: 7, backgroundColor: "#fff" },
+  chip: { borderWidth: 1, borderColor: colors.border, borderRadius: 0, paddingHorizontal: 10, paddingVertical: 7, backgroundColor: "#fff" },
   chipOn: { backgroundColor: colors.primary, borderColor: colors.primary },
   chipText: { fontSize: 13, color: colors.text },
-  button: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, paddingHorizontal: 14, minHeight: 36, justifyContent: "center", backgroundColor: "#fff" },
+  button: { borderWidth: 1, borderColor: colors.border, borderRadius: 0, paddingHorizontal: 14, minHeight: 36, justifyContent: "center", backgroundColor: "#fff" },
   buttonPrimary: { backgroundColor: colors.primary, borderColor: colors.primary },
   buttonText: { color: colors.text, fontWeight: "600", fontSize: 14 },
   focus: { outlineColor: colors.focus, outlineWidth: 2, outlineStyle: "solid" } as object,

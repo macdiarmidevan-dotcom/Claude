@@ -36,7 +36,7 @@ export const HELP_ARTICLES: HelpArticle[] = [
     summary: "What the colors, columns and week strip mean.",
     body: [
       "Each row is a tee time with one slot per player. Groups are colored by where they are: blue is booked but not paid, dark blue is booked and paid, orange is checked in at the pro shop, green is on the course, and red is a no-show. The color key sits above the grid.",
-      "The right-hand column shows whether the time is paid or what the group still owes, plus any cart numbers.",
+      "The two right-hand columns show the cart numbers and a status box: Owes and the amount, Paid, Checked in, On course, No-show or Blocked. The box uses the same colors as the players.",
       "Use the week strip to change days, Today to come back, or Calendar to jump to any date. The sheet refreshes every few seconds, so changes from the pro shop show up on the starter's iPad.",
     ],
     keywords: ["colors", "legend", "calendar", "date", "day", "refresh"],
@@ -438,7 +438,7 @@ export const HELP_ARTICLES: HelpArticle[] = [
     summary: "Which screen you see after signing in.",
     body: [
       "On the sign-in page, pick Pro shop or Starter. That decides what this device shows.",
-      "Staff can't switch stations after signing in; sign out and back in to change. Managers can switch from the menu.",
+      "Staff can't switch stations after signing in; sign out and back in to change. Managers can switch with the Pro shop and Starter buttons in the top bar (on a phone, in the menu).",
     ],
     keywords: ["station", "starter", "pro shop", "switch", "sign in", "login"],
   },
@@ -448,7 +448,7 @@ export const HELP_ARTICLES: HelpArticle[] = [
     title: "Your account and password",
     summary: "See your details and change your password.",
     body: [
-      "Tap your name at the bottom of the menu and choose My account. It shows your name, email, role, course and station.",
+      "Tap your name at the top right (on a phone, at the bottom of the menu) and choose My account. It shows your name, email, role, course and station.",
       "Enter your current password and a new one (at least 8 characters) to change it. Other devices you're signed in on will ask you to sign in again.",
       "Forgot your password? Ask a manager to set a new one in Staff accounts.",
     ],

@@ -207,7 +207,7 @@ function Button({ label, onPress, primary, disabled }: { label: string; onPress:
 }
 
 const styles = StyleSheet.create({
-  card: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, padding: 14, backgroundColor: colors.card, marginBottom: 14 },
+  card: { borderWidth: 1, borderColor: colors.border, borderRadius: 0, padding: 14, backgroundColor: colors.card, marginBottom: 14 },
   title: { fontSize: 15, fontWeight: "700", color: colors.text, marginBottom: 4 },
   text: { color: colors.text, fontSize: 14, lineHeight: 20 },
   strong: { fontSize: 14, fontWeight: "600", color: colors.text },
@@ -216,11 +216,11 @@ const styles = StyleSheet.create({
   line: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 10, paddingVertical: 10, borderBottomWidth: 1, borderColor: colors.border },
   row: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 8 },
   label: { fontSize: 12, fontWeight: "600", color: colors.muted, marginBottom: 4 },
-  input: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, padding: 9, fontSize: 14, color: colors.text, backgroundColor: "#fff" },
-  chip: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, paddingHorizontal: 10, paddingVertical: 7, backgroundColor: "#fff" },
+  input: { borderWidth: 1, borderColor: colors.border, borderRadius: 0, padding: 9, fontSize: 14, color: colors.text, backgroundColor: "#fff" },
+  chip: { borderWidth: 1, borderColor: colors.border, borderRadius: 0, paddingHorizontal: 10, paddingVertical: 7, backgroundColor: "#fff" },
   chipOn: { backgroundColor: colors.primary, borderColor: colors.primary },
   chipText: { fontSize: 13, color: colors.text },
-  button: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, paddingHorizontal: 12, minHeight: 34, justifyContent: "center", backgroundColor: "#fff", alignSelf: "flex-start", marginTop: 8 },
+  button: { borderWidth: 1, borderColor: colors.border, borderRadius: 0, paddingHorizontal: 12, minHeight: 34, justifyContent: "center", backgroundColor: "#fff", alignSelf: "flex-start", marginTop: 8 },
   buttonPrimary: { backgroundColor: colors.primary, borderColor: colors.primary },
   buttonText: { color: colors.text, fontWeight: "600", fontSize: 13 },
   focus: { outlineColor: colors.focus, outlineWidth: 2, outlineStyle: "solid" } as object,

@@ -58,7 +58,7 @@ const styles = StyleSheet.create({
   head: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
   title: { fontSize: 15, fontWeight: "700", color: colors.text },
   count: { fontSize: 13, fontWeight: "700", color: colors.muted },
-  track: { height: 6, backgroundColor: "#eceef1", borderRadius: 2, overflow: "hidden", marginBottom: 8 },
+  track: { height: 6, backgroundColor: "#eceef1", borderRadius: 0, overflow: "hidden", marginBottom: 8 },
   fill: { height: "100%", backgroundColor: colors.primary },
   row: { flexDirection: "row", gap: 10, alignItems: "flex-start", paddingVertical: 9, borderTopWidth: 1, borderColor: "#eceef1" },
   mark: { width: 18, height: 18, borderRadius: 9, borderWidth: 2, borderColor: colors.border, marginTop: 1, alignItems: "center", justifyContent: "center" },

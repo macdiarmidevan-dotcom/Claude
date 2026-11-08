@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ActivityIndicator, SafeAreaView, StyleSheet, View } from "react-native";
+import { ActivityIndicator, Platform, SafeAreaView, StyleSheet, View } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { Settings } from "./src/api";
@@ -9,6 +9,18 @@ import { colors } from "./src/theme";
 import { DEMO, DEMO_URL } from "./src/demo";
 
 const SETTINGS_KEY = "golf-staff-settings";
+
+// On the web the whole app uses IBM Plex Sans; phones and iPads keep the system font.
+if (Platform.OS === "web" && typeof document !== "undefined" && !document.getElementById("app-font")) {
+  const link = document.createElement("link");
+  link.id = "app-font";
+  link.rel = "stylesheet";
+  link.href = "https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap";
+  document.head.appendChild(link);
+  const style = document.createElement("style");
+  style.textContent = "div, span, input, textarea, button, select { font-family: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif !important; }";
+  document.head.appendChild(style);
+}
 
 export default function App() {
   const [loaded, setLoaded] = useState(false);

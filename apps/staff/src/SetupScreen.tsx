@@ -121,7 +121,7 @@ export function StationPicker({ value, onChange, dark }: { value: Station; onCha
     { id: "starter", label: "Starter" },
   ];
   return (
-    <View style={[styles.segment, dark && { borderColor: "#3a3d42" }]}>
+    <View style={[styles.segment, dark && { borderColor: colors.toolbarLine }]}>
       {options.map((o) => {
         const on = o.id === value;
         return (
@@ -152,15 +152,15 @@ function Field(props: { label: string } & React.ComponentProps<typeof TextInput>
 
 const styles = StyleSheet.create({
   page: { flex: 1, backgroundColor: colors.bg, alignItems: "center", justifyContent: "center", padding: 16 },
-  card: { backgroundColor: colors.card, borderRadius: 3, borderWidth: 1, borderColor: colors.border, padding: 24, width: "100%", maxWidth: 420 },
+  card: { backgroundColor: colors.card, borderRadius: 0, borderWidth: 1, borderColor: colors.border, padding: 24, width: "100%", maxWidth: 420 },
   title: { fontSize: 20, fontWeight: "700", color: colors.text, marginBottom: 4 },
   subtitle: { color: colors.muted, marginBottom: 20, fontSize: 14 },
   label: { fontSize: 12, fontWeight: "600", color: colors.muted, marginBottom: 6 },
-  input: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, padding: 12, fontSize: 14, color: colors.text },
+  input: { borderWidth: 1, borderColor: colors.border, borderRadius: 0, padding: 12, fontSize: 14, color: colors.text },
   error: { color: colors.noShow, marginBottom: 12 },
-  segment: { flexDirection: "row", borderWidth: 1, borderColor: colors.border, borderRadius: 3, overflow: "hidden", marginBottom: 14 },
+  segment: { flexDirection: "row", borderWidth: 1, borderColor: colors.border, borderRadius: 0, overflow: "hidden", marginBottom: 14 },
   segmentItem: { flex: 1, paddingVertical: 7, paddingHorizontal: 10, alignItems: "center" },
-  button: { backgroundColor: colors.primary, borderRadius: 3, paddingVertical: 10, alignItems: "center", marginTop: 6 },
+  button: { backgroundColor: colors.primary, borderRadius: 0, paddingVertical: 10, alignItems: "center", marginTop: 6 },
   buttonText: { color: "#fff", fontSize: 14, fontWeight: "600" },
   links: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", gap: 12, marginTop: 16 },
   link: { color: colors.primary, fontWeight: "600", textDecorationLine: "underline", fontSize: 13 },

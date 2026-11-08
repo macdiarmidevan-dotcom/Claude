@@ -1,7 +1,7 @@
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { colors } from "./theme";
 
-/** A section's title bar. On narrow screens it carries the button that opens the menu. */
+/** A section's title bar (the dark toolbar under the menu). On narrow screens it carries the button that opens the menu. */
 export function Header({ title, subtitle, onOpenMenu, children }: { title: string; subtitle?: string; onOpenMenu?: () => void; children?: React.ReactNode }) {
   return (
     <View style={styles.header}>
@@ -21,9 +21,10 @@ export function Header({ title, subtitle, onOpenMenu, children }: { title: strin
 
 const styles = StyleSheet.create({
   // zIndex: menus that drop down from the bar sit over the page below it.
-  header: { zIndex: 10, flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: colors.card, borderBottomWidth: 1, borderColor: colors.border, paddingHorizontal: 12, minHeight: 48, paddingVertical: 8 },
-  menuButton: { width: 44, height: 44, alignItems: "center", justifyContent: "center", borderRadius: 3 },
-  menuIcon: { fontSize: 18, color: colors.text },
-  headerTitle: { fontSize: 17, fontWeight: "700", color: colors.text },
-  headerSub: { fontSize: 12, color: colors.muted, marginTop: 1 },
+  // The dark toolbar under the menu: the page title on the left, its buttons on the right.
+  header: { zIndex: 10, flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: colors.toolbar, paddingHorizontal: 16, minHeight: 50, paddingVertical: 7 },
+  menuButton: { width: 44, height: 44, alignItems: "center", justifyContent: "center", borderRadius: 0 },
+  menuIcon: { fontSize: 18, color: colors.railText },
+  headerTitle: { fontSize: 17, fontWeight: "600", color: "#ffffff" },
+  headerSub: { fontSize: 12, color: colors.railMuted, marginTop: 1 },
 });

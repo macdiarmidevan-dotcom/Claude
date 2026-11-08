@@ -289,7 +289,7 @@ function Button({ label, onPress, primary, disabled }: { label: string; onPress:
 
 const styles = StyleSheet.create({
   page: { padding: 16, maxWidth: 900 },
-  card: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, padding: 14, backgroundColor: colors.card, marginBottom: 14 },
+  card: { borderWidth: 1, borderColor: colors.border, borderRadius: 0, padding: 14, backgroundColor: colors.card, marginBottom: 14 },
   title: { fontSize: 15, fontWeight: "700", color: colors.text, marginBottom: 4 },
   strong: { fontSize: 14, fontWeight: "600", color: colors.text },
   help: { color: colors.muted, fontSize: 13, lineHeight: 19 },
@@ -300,11 +300,11 @@ const styles = StyleSheet.create({
   form: { marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderColor: colors.border },
   row: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 10 },
   label: { fontSize: 12, fontWeight: "600", color: colors.muted, marginBottom: 4 },
-  input: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, padding: 9, fontSize: 14, color: colors.text, backgroundColor: "#fff" },
-  chip: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, paddingHorizontal: 10, paddingVertical: 7, backgroundColor: "#fff" },
+  input: { borderWidth: 1, borderColor: colors.border, borderRadius: 0, padding: 9, fontSize: 14, color: colors.text, backgroundColor: "#fff" },
+  chip: { borderWidth: 1, borderColor: colors.border, borderRadius: 0, paddingHorizontal: 10, paddingVertical: 7, backgroundColor: "#fff" },
   chipOn: { backgroundColor: colors.primary, borderColor: colors.primary },
   chipText: { fontSize: 13, color: colors.text },
-  button: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, paddingHorizontal: 12, minHeight: 34, justifyContent: "center", backgroundColor: "#fff" },
+  button: { borderWidth: 1, borderColor: colors.border, borderRadius: 0, paddingHorizontal: 12, minHeight: 34, justifyContent: "center", backgroundColor: "#fff" },
   buttonPrimary: { backgroundColor: colors.primary, borderColor: colors.primary },
   buttonText: { color: colors.text, fontWeight: "600", fontSize: 13 },
   focus: { outlineColor: colors.focus, outlineWidth: 2, outlineStyle: "solid" } as object,

@@ -82,7 +82,7 @@ const styles = StyleSheet.create({
     width: "100%",
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: 3,
+    borderRadius: 0,
     backgroundColor: "#fdfdfb",
     overflow: "hidden",
     // Stops the browser scrolling the page while signing on the web.

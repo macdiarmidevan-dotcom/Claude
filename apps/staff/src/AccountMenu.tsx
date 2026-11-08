@@ -5,7 +5,7 @@ import type { Client, Course, Me, StaffFeedback, Station } from "./api";
 import { ChangePassword } from "./StaffScreen";
 import { colors, type WebPress } from "./theme";
 
-// The account menu: tapping your name at the foot of the sidebar opens settings, your schedule,
+// The account menu: tapping your name (top right, or at the foot of the phone menu) opens settings, your schedule,
 // your account, feedback, the help center, and log out.
 
 export type AccountAction = "settings" | "help" | "schedule";
@@ -19,6 +19,7 @@ export function AccountMenu({
   page,
   onGo,
   onSignOut,
+  top,
 }: {
   client: Client;
   course?: Course;
@@ -29,6 +30,8 @@ export function AccountMenu({
   page: string;
   onGo: (to: AccountAction) => void;
   onSignOut: () => void;
+  /** In the top bar on wide screens: the menu drops down from the right instead of up from the sidebar's foot. */
+  top?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const schedule = useAddOn("staff_schedule");
@@ -53,7 +56,7 @@ export function AccountMenu({
         accessibilityLabel={`Account menu for ${me?.user?.name ?? "this device"}`}
         accessibilityState={{ expanded: open }}
         onPress={() => setOpen(!open)}
-        style={({ hovered, focused }: WebPress) => [styles.foot, (hovered || open) && { backgroundColor: "#26292d" }, focused && styles.focus]}
+        style={({ hovered, focused }: WebPress) => [top ? styles.topButton : styles.foot, (hovered || open) && { backgroundColor: colors.railHover }, focused && styles.focus]}
       >
         <View style={styles.avatar}>
           <Text style={styles.avatarText}>{initials(me?.user?.name)}</Text>
@@ -62,12 +65,12 @@ export function AccountMenu({
           <Text style={styles.name} numberOfLines={1}>{me?.user?.name ?? "Shared device"}</Text>
           <Text style={styles.muted}>{isManager ? "Manager" : "Staff"}</Text>
         </View>
-        <Text style={styles.caret}>{open ? "▾" : "▴"}</Text>
+        <Text style={styles.caret}>{open === !top ? "▾" : "▴"}</Text>
       </Pressable>
 
       <Modal transparent visible={open} animationType="fade" onRequestClose={() => setOpen(false)}>
         <Pressable accessibilityLabel="Close account menu" style={StyleSheet.absoluteFill} onPress={() => setOpen(false)} />
-        <View role="menu" style={styles.popup}>
+        <View role="menu" style={[styles.popup, top && styles.popupTop]}>
           <View style={styles.popupHead}>
             <Text style={styles.popupName} numberOfLines={1}>{me?.user?.name ?? "Shared device"}</Text>
             {me?.user?.email ? <Text style={styles.popupSub} numberOfLines={1}>{me.user.email}</Text> : null}
@@ -255,8 +258,10 @@ function Button({ label, onPress, primary, disabled }: { label: string; onPress:
 }
 
 const styles = StyleSheet.create({
-  foot: { flexDirection: "row", alignItems: "center", gap: 10, borderTopWidth: 1, borderColor: "#2e3236", paddingHorizontal: 14, paddingVertical: 12 },
-  avatar: { width: 32, height: 32, borderRadius: 16, backgroundColor: colors.primary, alignItems: "center", justifyContent: "center" },
+  foot: { flexDirection: "row", alignItems: "center", gap: 10, borderTopWidth: 1, borderColor: colors.railLine, paddingHorizontal: 14, paddingVertical: 12 },
+  topButton: { flexDirection: "row", alignItems: "center", gap: 10, borderLeftWidth: 1, borderColor: colors.railLine, paddingHorizontal: 16, height: 50, maxWidth: 220 },
+  popupTop: { left: undefined, bottom: undefined, right: 8, top: 52 },
+  avatar: { width: 30, height: 30, borderRadius: 0, backgroundColor: colors.primary, alignItems: "center", justifyContent: "center" },
   avatarText: { color: "#fff", fontSize: 13, fontWeight: "700" },
   name: { color: colors.railText, fontSize: 13, fontWeight: "700" },
   muted: { color: colors.railMuted, fontSize: 12 },
@@ -269,7 +274,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.card,
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: 3,
+    borderRadius: 0,
     paddingVertical: 4,
     shadowColor: "#000",
     shadowOpacity: 0.18,
@@ -283,21 +288,21 @@ const styles = StyleSheet.create({
   itemLast: { borderTopWidth: 1, borderColor: colors.border, marginTop: 4 },
   itemText: { fontSize: 14, color: colors.text },
   backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)", alignItems: "center", justifyContent: "center", padding: 16 },
-  dialog: { width: "100%", maxWidth: 440, backgroundColor: colors.card, borderRadius: 3, padding: 18 },
+  dialog: { width: "100%", maxWidth: 440, backgroundColor: colors.card, borderRadius: 0, padding: 18 },
   title: { fontSize: 17, fontWeight: "700", color: colors.text, marginBottom: 6 },
   row: { flexDirection: "row", gap: 12, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: colors.border },
   rowLabel: { width: 96, color: colors.muted, fontSize: 14 },
   rowValue: { flex: 1, color: colors.text, fontSize: 14, fontWeight: "600" },
   locationName: { fontSize: 15, fontWeight: "700", color: colors.text, marginBottom: 2 },
   help: { color: colors.muted, fontSize: 14, lineHeight: 21 },
-  input: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, padding: 10, fontSize: 14, color: colors.text, backgroundColor: "#fff", marginTop: 10 },
+  input: { borderWidth: 1, borderColor: colors.border, borderRadius: 0, padding: 10, fontSize: 14, color: colors.text, backgroundColor: "#fff", marginTop: 10 },
   error: { color: colors.noShow, marginTop: 8 },
   actions: { flexDirection: "row", gap: 8, marginTop: 14 },
-  button: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, paddingHorizontal: 14, minHeight: 36, justifyContent: "center", backgroundColor: "#fff" },
+  button: { borderWidth: 1, borderColor: colors.border, borderRadius: 0, paddingHorizontal: 14, minHeight: 36, justifyContent: "center", backgroundColor: "#fff" },
   buttonPrimary: { backgroundColor: colors.primary, borderColor: colors.primary },
   buttonText: { color: colors.text, fontWeight: "600", fontSize: 14 },
   focus: { outlineColor: colors.focus, outlineWidth: 2, outlineStyle: "solid" } as object,
-  feedback: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, padding: 10, backgroundColor: colors.card, marginBottom: 8 },
+  feedback: { borderWidth: 1, borderColor: colors.border, borderRadius: 0, padding: 10, backgroundColor: colors.card, marginBottom: 8 },
   meta: { color: colors.muted, fontSize: 12 },
   feedbackBody: { color: colors.text, fontSize: 14, lineHeight: 20, marginBottom: 4 },
 });

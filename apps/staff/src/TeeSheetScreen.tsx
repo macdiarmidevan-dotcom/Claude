@@ -467,7 +467,7 @@ function WeekStrip({ date, today, compact, onPick }: { date: string; today: stri
               onPress={() => onPick(d)}
               style={({ hovered, focused }: WebPress) => [styles.day, hovered && !on && { backgroundColor: colors.bg }, on && styles.dayOn, focused && styles.focusRing]}
             >
-              <Text style={[styles.dayWeekday, on && { color: "#c9ccd1" }, d === today && !on && { color: colors.primary }]}>{compact ? weekday.slice(0, 2) : weekday}</Text>
+              <Text style={[styles.dayWeekday, on && { color: "rgba(255,255,255,0.8)" }, d === today && !on && { color: colors.primary }]}>{compact ? weekday.slice(0, 2) : weekday}</Text>
               <Text style={[styles.dayText, on && { color: "#fff" }, d === today && !on && { color: colors.primary }]}>{day}</Text>
             </Pressable>
           );
@@ -552,9 +552,9 @@ function ToolButton({ icon, label, on, disabled, onPress }: { icon: IconName; la
       disabled={disabled}
       onPress={onPress}
       {...({ title: label } as object)}
-      style={({ hovered, focused }: WebPress) => [styles.tool, on && styles.toolOn, hovered && !disabled && !on && { backgroundColor: colors.bg }, disabled && { opacity: 0.4 }, focused && styles.focusRing]}
+      style={({ hovered, focused }: WebPress) => [styles.tool, on && styles.toolOn, hovered && !disabled && !on && { backgroundColor: colors.railHover }, disabled && { opacity: 0.4 }, focused && styles.focusRing]}
     >
-      <Icon name={icon} size={18} color={on ? colors.primary : colors.text} />
+      <Icon name={icon} size={18} color={on ? "#fff" : colors.railText} />
     </Pressable>
   );
 }
@@ -586,6 +586,17 @@ function Legend() {
       ))}
     </View>
   );
+}
+
+/** The row's status box: money owed first, then where the groups are in their round. */
+function rowTag(groups: SheetBooking[], blocked: boolean, owed: number, compact: boolean): { text: string; color: string } | undefined {
+  if (blocked) return { text: "Blocked", color: "#5b6574" };
+  if (!groups.length) return undefined;
+  if (owed > 0) return { text: compact ? money(owed) : `Owes ${money(owed)}`, color: colors.warn };
+  if (groups.every((b) => b.status === "no_show")) return { text: "No-show", color: slotColor.no_show };
+  if (groups.some((b) => b.status === "teed_off")) return { text: "On course", color: slotColor.teed_off };
+  if (groups.some((b) => b.status === "checked_in")) return { text: "Checked in", color: slotColor.checked_in };
+  return { text: "Paid", color: slotColor.prepaid };
 }
 
 function stateOf(b: SheetBooking): SlotState {
@@ -625,6 +636,7 @@ function TeeTimeRow({ teeTime, priceCents, compact, selected, isNext, past, onPr
   // No-shows aren't expected to pay, so they don't count toward what's owed.
   const owed = groups.filter((b) => b.status !== "no_show").reduce((s, b) => s + b.payment.balanceCents, 0);
   const carts = groups.flatMap((b) => b.cartNumbers);
+  const tag = rowTag(groups, blocked, owed, compact);
 
   // One slot per player: each group fills as many slots as it has players, in booking order.
   const slots: { booking?: SheetBooking; first: boolean; player: number }[] = [];
@@ -750,26 +762,34 @@ function TeeTimeRow({ teeTime, priceCents, compact, selected, isNext, past, onPr
           )}
         </View>
       )}
-      {/* Money and carts sit in their own column so they stay visible when names are cut off. */}
-      <View style={[styles.endCol, compact && { width: 64 }]}>
+      {/* Carts and the status sit in their own columns so they stay visible when names are cut off. */}
+      {!compact && (
+        <View style={styles.cartCol} accessibilityLabel={carts.length ? `${carts.length === 1 ? "Cart" : "Carts"} ${carts.join(", ")}` : undefined}>
+          {carts.length > 0 && (
+            <>
+              <Icon name="cart" size={13} color={colors.muted} />
+              <Text style={styles.cart} numberOfLines={1}>{carts.join(", ")}</Text>
+            </>
+          )}
+        </View>
+      )}
+      <View style={[styles.endCol, compact && { width: 76 }]}>
         {moveTarget ? (
           <Text style={[styles.pay, { color: moveTarget === "ok" ? colors.primaryText : colors.noShow }]} numberOfLines={1}>
             {moveTarget === "ok" ? "Move here" : blocked ? "Blocked" : "No room"}
           </Text>
         ) : (
-          <>
-        {groups.some((b) => b.status !== "no_show") && (
-          <Text style={[styles.pay, { color: owed > 0 ? colors.noShow : colors.checkedIn }]} numberOfLines={1}>
-            {owed > 0 ? (compact ? money(owed) : `Owes ${money(owed)}`) : "Paid"}
-          </Text>
+          tag && (
+            <View style={[styles.tag, { backgroundColor: tag.color }, compact && { paddingHorizontal: 4 }]}>
+              <Text style={[styles.tagText, compact && { fontSize: 10, letterSpacing: 0 }]} numberOfLines={1}>{tag.text}</Text>
+            </View>
+          )
         )}
-        {carts.length > 0 && (
+        {compact && carts.length > 0 && (
           <View style={styles.cartRow} accessibilityLabel={`${carts.length === 1 ? "Cart" : "Carts"} ${carts.join(", ")}`}>
-            <Icon name="cart" size={13} color={colors.primaryText} />
+            <Icon name="cart" size={13} color={colors.muted} />
             <Text style={styles.cart} numberOfLines={1}>{carts.join(", ")}</Text>
           </View>
-        )}
-          </>
         )}
       </View>
     </Pressable>
@@ -846,68 +866,72 @@ const styles = StyleSheet.create({
   rowDropFull: { backgroundColor: "#fbeceb", outlineColor: colors.noShow, outlineWidth: 2, outlineStyle: "dashed", outlineOffset: -2 } as object,
   notice: { flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: colors.text },
   noticeText: { flex: 1, color: "#fff", fontSize: 13 },
-  noticeButton: { paddingHorizontal: 6, minHeight: 28, justifyContent: "center", borderRadius: 3 },
-  noticeAction: { color: "#9cc3f5", fontWeight: "700", fontSize: 13 },
+  noticeButton: { paddingHorizontal: 6, minHeight: 28, justifyContent: "center", borderRadius: 0 },
+  noticeAction: { color: "#8fd3ad", fontWeight: "700", fontSize: 13 },
   noticeClose: { color: "#c9ccd1", fontSize: 13 },
   slotGhost: { borderColor: colors.primary, borderStyle: "solid", backgroundColor: colors.primaryLight },
   ghostText: { color: colors.primaryText, fontSize: 12, fontWeight: "700" },
   empty: { color: colors.muted, textAlign: "center", marginTop: 40, paddingHorizontal: 24, fontSize: 14, lineHeight: 22 },
   focusRing: { outlineColor: colors.focus, outlineWidth: 2, outlineStyle: "solid", outlineOffset: -2 } as object,
   page: { flex: 1, backgroundColor: colors.bg, padding: 12 },
-  card: { flex: 1, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: 3, overflow: "hidden" },
-  stationText: { fontSize: 13, color: colors.muted, fontWeight: "600", marginRight: 4 },
-  tool: { width: 36, height: 36, borderRadius: 3, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card },
-  toolOn: { borderColor: colors.primary, backgroundColor: colors.primaryLight },
-  addButton: { flexDirection: "row", alignItems: "center", gap: 6, height: 36, paddingHorizontal: 12, borderRadius: 3, backgroundColor: colors.primary },
+  card: { flex: 1, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: 0, overflow: "hidden" },
+  stationText: { fontSize: 13, color: colors.railMuted, fontWeight: "600", marginRight: 4 },
+  tool: { width: 34, height: 34, borderRadius: 0, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: colors.toolbarLine, backgroundColor: "transparent" },
+  toolOn: { borderColor: colors.primary, backgroundColor: colors.primary },
+  addButton: { flexDirection: "row", alignItems: "center", gap: 6, height: 34, paddingHorizontal: 12, borderRadius: 0, backgroundColor: colors.primary },
   addText: { color: "#fff", fontWeight: "700", fontSize: 14 },
-  addMenu: { position: "absolute", top: 40, right: 0, zIndex: 20, minWidth: 220, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: 3, paddingVertical: 4, boxShadow: "0 4px 14px rgba(0,0,0,0.12)" } as object,
+  addMenu: { position: "absolute", top: 40, right: 0, zIndex: 20, minWidth: 220, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: 0, paddingVertical: 4, boxShadow: "0 4px 14px rgba(0,0,0,0.12)" } as object,
   menuRow: { flexDirection: "row", alignItems: "center", gap: 10, minHeight: 38, paddingHorizontal: 12 },
   menuRowText: { fontSize: 14, color: colors.text },
-  heading: { flexDirection: "row", alignItems: "center", paddingHorizontal: 14, paddingTop: 10, paddingBottom: 6 },
+  heading: { flexDirection: "row", alignItems: "center", paddingHorizontal: 14, paddingVertical: 6, backgroundColor: colors.strip, borderBottomWidth: 1, borderColor: colors.border },
   stats: { flex: 1, flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 16 },
   stat: { flexDirection: "row", alignItems: "center", gap: 5 },
   statValue: { fontSize: 14, fontWeight: "700", fontVariant: ["tabular-nums"] },
   statLabel: { fontSize: 13, color: colors.muted },
   offline: { fontSize: 13, color: colors.noShow, fontWeight: "600" },
-  bigDate: { flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 3, alignSelf: "center" },
-  bigDay: { fontSize: 34, fontWeight: "300", color: colors.text, fontVariant: ["tabular-nums"] },
+  bigDate: { flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 0, alignSelf: "center" },
+  bigDay: { fontSize: 28, fontWeight: "300", color: colors.text, fontVariant: ["tabular-nums"] },
   bigWeekday: { fontSize: 15, fontWeight: "700", color: colors.text },
   bigMonth: { fontSize: 13, color: colors.muted },
-  week: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 8, borderBottomWidth: 1, borderColor: colors.border },
-  todayButton: { borderWidth: 1, borderColor: colors.text, borderRadius: 3, paddingHorizontal: 14, minHeight: 40, justifyContent: "center" },
+  week: { flexDirection: "row", alignItems: "stretch", gap: 8, paddingHorizontal: 12, paddingVertical: 8, borderBottomWidth: 1, borderColor: colors.border },
+  todayButton: { borderWidth: 1, borderColor: colors.border, backgroundColor: colors.strip, borderRadius: 0, paddingHorizontal: 14, minHeight: 40, justifyContent: "center" },
   todayText: { color: colors.text, fontWeight: "700", fontSize: 13 },
-  arrow: { width: 32, minHeight: 40, alignItems: "center", justifyContent: "center", borderRadius: 3 },
-  days: { flex: 1, flexDirection: "row", gap: 4 },
-  day: { flex: 1, minHeight: 40, borderRadius: 3, alignItems: "center", justifyContent: "center", paddingHorizontal: 2 },
-  dayOn: { backgroundColor: colors.text },
+  arrow: { width: 32, minHeight: 40, alignItems: "center", justifyContent: "center", borderRadius: 0, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.strip },
+  days: { flex: 1, flexDirection: "row", borderWidth: 1, borderColor: colors.border, borderRightWidth: 0 },
+  day: { flex: 1, minHeight: 40, borderRadius: 0, alignItems: "center", justifyContent: "center", paddingHorizontal: 2, borderRightWidth: 1, borderColor: colors.border },
+  dayOn: { backgroundColor: colors.primary },
   dayWeekday: { fontSize: 11, fontWeight: "600", color: colors.muted, textAlign: "center" },
   dayText: { fontSize: 14, fontWeight: "700", color: colors.text, textAlign: "center" },
-  legend: { flexDirection: "row", flexWrap: "wrap", gap: 14, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: colors.bg, borderBottomWidth: 1, borderColor: colors.border },
+  legend: { flexDirection: "row", flexWrap: "wrap", gap: 14, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: colors.strip, borderBottomWidth: 1, borderColor: colors.border },
   legendItem: { flexDirection: "row", alignItems: "center", gap: 6 },
-  legendSwatch: { width: 16, height: 14, borderRadius: 2, alignItems: "center", justifyContent: "center" },
+  legendSwatch: { width: 16, height: 14, borderRadius: 0, alignItems: "center", justifyContent: "center" },
   legendMark: { color: "#fff", fontSize: 10, fontWeight: "700" },
   legendText: { fontSize: 12, color: colors.text },
   hour: { height: HOUR_HEIGHT, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12 },
-  hourPill: { backgroundColor: "#d9dde2", borderRadius: 3, paddingHorizontal: 8, paddingVertical: 3 },
+  hourPill: { backgroundColor: colors.strip, borderWidth: 1, borderColor: colors.border, borderRadius: 0, paddingHorizontal: 8, paddingVertical: 3 },
   hourText: { fontSize: 11, fontWeight: "700", color: colors.muted, letterSpacing: 0.5 },
   hourLine: { flex: 1, height: 1, backgroundColor: colors.border },
-  row: { height: ROW_HEIGHT, flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 12, backgroundColor: colors.card },
+  row: { height: ROW_HEIGHT, flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 12, backgroundColor: colors.card, borderBottomWidth: 1, borderColor: colors.rowLine },
   rowSelected: { backgroundColor: colors.primaryLight },
   timeCol: { width: 52 },
   rowTime: { fontSize: 15, fontWeight: "700", color: colors.text, fontVariant: ["tabular-nums"] },
   next: { fontSize: 9, fontWeight: "800", color: colors.primary, letterSpacing: 1 },
-  price: { width: 64, height: 24, borderRadius: 3, backgroundColor: "#e2e5e9", alignItems: "center", justifyContent: "center" },
-  priceText: { fontSize: 12, fontWeight: "600", color: colors.text, fontVariant: ["tabular-nums"] },
-  slots: { flex: 1, flexDirection: "row", gap: 4, minWidth: 0 },
-  slot: { flex: 1, height: 28, borderRadius: 3, justifyContent: "center", paddingHorizontal: 8, minWidth: 0 },
-  slotOpen: { backgroundColor: "#e2e5e9", alignItems: "center" },
+  price: { width: 56, height: 24, borderRadius: 0, alignItems: "flex-start", justifyContent: "center" },
+  priceText: { fontSize: 12, fontWeight: "500", color: colors.muted, fontVariant: ["tabular-nums"] },
+  slots: { flex: 1, flexDirection: "row", gap: 2, minWidth: 0 },
+  slot: { flex: 1, height: 26, borderRadius: 0, justifyContent: "center", paddingHorizontal: 8, minWidth: 0 },
+  slotOpen: { backgroundColor: "transparent", borderWidth: 1, borderStyle: "dashed", borderColor: "#a3adba", alignItems: "center" },
   slotText: { color: "#fff", fontSize: 13, fontWeight: "600" },
   openText: { color: colors.muted, fontSize: 12 },
-  blockedBar: { flex: 1, height: 28, borderRadius: 3, backgroundColor: colors.blocked, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 10 },
+  blockedBar: { flex: 1, height: 26, borderRadius: 0, backgroundColor: colors.blocked, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 10 },
   blockedText: { color: colors.muted, fontStyle: "italic", fontSize: 12, flex: 1 },
-  endCol: { width: 96, alignItems: "flex-end" },
+  endCol: { width: 112, alignItems: "flex-end" },
   pay: { fontWeight: "700", fontSize: 12 },
+  // Status as a small solid box, the same colors as the players' boxes.
+  tag: { paddingHorizontal: 7, paddingVertical: 3 },
+  tagText: { color: "#fff", fontSize: 11, fontWeight: "700", letterSpacing: 0.3 },
+  cartCol: { width: 84, flexDirection: "row", alignItems: "center", gap: 4, alignSelf: "stretch", borderLeftWidth: 1, borderColor: colors.rowLine, paddingLeft: 10 },
   cartRow: { flexDirection: "row", alignItems: "center", gap: 4 },
-  cart: { fontSize: 12, color: colors.primaryText, fontWeight: "600" },
+  cart: { fontSize: 12, color: colors.muted, fontWeight: "600" },
   side: { width: 400, borderLeftWidth: 1, borderColor: colors.border, backgroundColor: colors.card },
 });
