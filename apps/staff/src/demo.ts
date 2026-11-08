@@ -1,6 +1,6 @@
 // A pretend course that runs entirely in the browser, for showing the app without a server.
 // Only built in when EXPO_PUBLIC_DEMO=1. Nothing is saved: reloading the page starts over.
-import { addOnSettings, parseDataQuestion, quickAnswer, type AddOnKey, type DataAnswer, type DataReport, type DataTurn, type RateRule } from "@golf/core";
+import { ADVICE_ASSUMPTIONS, addOnSettings, parseDataQuestion, quickAnswer, recommendRates, type AddOnKey, type AdviceTeeTime, type DataAnswer, type DataReport, type DataTurn, type RateRule } from "@golf/core";
 import { answerFromArticles, generateTeeTimes, parseTeeSheetCsv, quotePlayer, riverBend, riverBendAddOns, riverBendRates, riverBendTeeSheet } from "@golf/core";
 import {
   ApiError,
@@ -18,6 +18,8 @@ import {
   type Pay,
   type Overview,
   type ReportCompare,
+  type AdviceBasis,
+  type RateAdvice,
   type BudgetDepartments,
   type RevenueBudget,
   type AccountingFormat,
@@ -1761,6 +1763,34 @@ export function createDemoClient(apiKey: string): Client {
       avgDiscountPct: top && firstRounds ? Math.round((1 - first.reduce((t, m) => t + m.revenueCents, 0) / (firstRounds * top)) * 1000) / 10 : null,
     };
   }
+  // Recommended rates from the made-up season, worked out by the same code the server uses.
+  function demoRateAdvice(weeks: number, basis: AdviceBasis): RateAdvice {
+    managerOnly();
+    if (!Number.isInteger(weeks) || weeks < 4 || weeks > 26) throw new ApiError(400, "invalid_request", "weeks must be from 4 to 26");
+    const today = todayIn(riverBend.timeZone);
+    const lastYear = `${Number(today.slice(0, 4)) - 1}${today.slice(4) === "-02-29" ? "-02-28" : today.slice(4)}`;
+    const from = basis === "last_year" ? lastYear : addDays(today, -weeks * 7);
+    const to = basis === "last_year" ? addDays(lastYear, weeks * 7 - 1) : addDays(today, -1);
+    const teeTimes: AdviceTeeTime[] = [];
+    for (let date = from; date <= to; date = addDays(date, 1)) {
+      const weekday = dowOf(date);
+      for (const t of generateTeeTimes(date, riverBend.timeZone, riverBendTeeSheet)) {
+        const g = madeUpGroup(date, t);
+        const players = g && !g.noShow ? g.players : 0;
+        teeTimes.push({
+          weekday,
+          time: t.localTime,
+          spots: t.maxPlayers,
+          players,
+          noShows: g?.noShow ? g.players : 0,
+          // Replays are extra loops, so only the first loop's green fee counts.
+          greenFeeCents: g && players ? (quoteGroup(g).lines[0]?.priceCents ?? 0) * players : 0,
+          extrasCents: g?.riding ? cartPrice() * players : 0,
+        });
+      }
+    }
+    return { from, to, weeks, basis, assumptions: ADVICE_ASSUMPTIONS, ...recommendRates({ teeTimes, rates: liveRates(), timeZone: riverBend.timeZone, weeks }) };
+  }
   function demoOverview(from: string, to: string, compare: ReportCompare): Overview {
     managerOnly();
     if (to < from) throw new ApiError(400, "invalid_range", "from must be on or before to");
@@ -2210,6 +2240,7 @@ export function createDemoClient(apiKey: string): Client {
         return { ...addOns };
       }),
     rates: () => reply(() => priceRates.filter((r) => r.active)),
+    rateAdvice: (weeks = 8, basis: AdviceBasis = "recent") => reply(() => demoRateAdvice(weeks, basis)),
     addRate: (input: RateInput) =>
       reply(() => {
         managerOnly();

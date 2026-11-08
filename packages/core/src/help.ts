@@ -265,6 +265,20 @@ export const HELP_ARTICLES: HelpArticle[] = [
     keywords: ["cart fee", "gas cart", "pull cart", "rental", "clubs", "extras", "price"],
   },
   {
+    id: "recommended-rates",
+    category: "shop",
+    title: "Recommended rates",
+    summary: "A suggested green fee for each day and time, from how full your tee sheet gets.",
+    body: [
+      "Pricing › Recommended rates (managers) shows a grid of the days of the week against four times of day: before 9 AM, 9 AM to noon, noon to 3 PM, and 3 PM and later. Each box has a suggested price, the change from today's nonresident adult rate (or Keep), and how full those times were. Tap a box to see why, with players against open spots, no-shows and the money per open spot now and at the suggested price.",
+      "Pick what it's based on: the last 4, 8 or 12 weeks, or the next 8 weeks of last year (better early in a season). The top shows how much more a week you could expect if you followed every suggestion.",
+      "Without price tests there's no way to know whether your overall price level is right, so a time as full as your average keeps today's rate and the others are priced around it: busier times up, quieter times down. Golfers who want busy times are assumed to care less about price. Times at least 90% full are treated as turning golfers away. Suggestions stay within 15% of today's rate, in whole dollars, counting carts and extras. Food and pro shop sales aren't counted yet. A box needs at least 100 open spots in the period, or it says Too little data.",
+      "It never changes a price. If you agree, edit the rate on the Rates and extras tab, and in TeeItUp or your other booking provider, since golfers book there. Turn it off in Add-ons › AI › Recommended rates.",
+    ],
+    keywords: ["recommended", "suggested", "dynamic pricing", "yield", "raise price", "lower price", "how full", "utilization", "price advice", "revenue"],
+    managersOnly: true,
+  },
+  {
     id: "add-ons",
     category: "account",
     title: "Add-ons: turn features on or off",

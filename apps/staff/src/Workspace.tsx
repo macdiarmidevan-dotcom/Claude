@@ -1,5 +1,6 @@
 import { Icon, type IconName } from "./Icon";
 import { PricingScreen } from "./PricingScreen";
+import { RateAdviceScreen } from "./RateAdviceScreen";
 import { AddOnsProvider, AddOnsScreen, useAddOn } from "./AddOns";
 import { addOnSettings, type AddOnKey, type AddOnSettings } from "@golf/core";
 import { RadarScreen } from "./RadarScreen";
@@ -307,7 +308,7 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
         ) : section === "pricing" ? (
           <>
             <Header title="Pricing" onOpenMenu={openMenu} subtitle="Green fees, replays, carts and rentals" />
-            <PricingScreen client={client} isManager={isManager} onChanged={refreshCourse} />
+            <PricingArea client={client} isManager={isManager} onChanged={refreshCourse} />
           </>
         ) : section === "add-ons" ? (
           <>
@@ -647,6 +648,37 @@ function CustomersArea({ client, isManager, customers }: { client: Client; isMan
         ))}
       </View>
       {part === "customers" || (part === "gift" && !gift) || (part === "house" && !house) ? customers : part === "gift" ? <GiftCards client={client} isManager={isManager} /> : <HouseAccounts client={client} isManager={isManager} />}
+    </View>
+  );
+}
+
+/** Pricing: the rates and extras, and for managers the recommended rates (an add-on). */
+function PricingArea({ client, isManager, onChanged }: { client: Client; isManager: boolean; onChanged: () => void }) {
+  const [part, setPart] = useState<"rates" | "advice">("rates");
+  const adviceOn = useAddOn("rate_advice") && isManager;
+  const rates = <PricingScreen client={client} isManager={isManager} onChanged={onChanged} />;
+  if (!adviceOn) return rates;
+  return (
+    <View style={{ flex: 1 }}>
+      <View role="tablist" style={styles.tabs}>
+        {(
+          [
+            ["rates", "Rates and extras"],
+            ["advice", "Recommended rates"],
+          ] as const
+        ).map(([id, label]) => (
+          <Pressable
+            key={id}
+            role="tab"
+            aria-selected={part === id}
+            onPress={() => setPart(id)}
+            style={({ focused }: WebPress) => [styles.tab, part === id && styles.tabOn, focused && styles.focusRing]}
+          >
+            <Text style={[styles.tabText, part === id && styles.tabTextOn]}>{label}</Text>
+          </Pressable>
+        ))}
+      </View>
+      {part === "rates" ? rates : <RateAdviceScreen client={client} />}
     </View>
   );
 }

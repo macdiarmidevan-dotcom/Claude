@@ -43,6 +43,7 @@ import {
 import { closeDay, getDayClose, openDay, report } from "./reports.ts";
 import { getBudget, saveBudget } from "./budgets.ts";
 import { managerOverview } from "./analytics.ts";
+import { rateAdvice } from "./advice.ts";
 import { laborReport } from "./labor.ts";
 import { balancesReport, inventoryReport } from "./shopreports.ts";
 import { setupChecklist } from "./setup.ts";
@@ -751,6 +752,13 @@ export function buildApp(
   app.patch("/v1/courses/:slug/pricing/add-ons/:id", async (req) => {
     const course = await managedCourseFor(req);
     return updateAddOn(db, course, idParams.parse(req.params).id, addOnBody.partial().extend({ active: z.boolean().optional() }).parse(req.body));
+  });
+
+  // Recommended rates: a suggested price for each day and time of day from the course's own tee sheet. Managers only; it changes nothing.
+  app.get("/v1/courses/:slug/pricing/recommendations", async (req) => {
+    const course = await managedCourseFor(req);
+    const q = z.object({ weeks: z.coerce.number().int().min(4).max(26).default(8), basis: z.enum(["recent", "last_year"]).default("recent") }).parse(req.query);
+    return rateAdvice(db, course, q.weeks, q.basis);
   });
 
   app.get("/v1/courses/:slug/products", async (req) => {

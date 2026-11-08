@@ -5,3 +5,4 @@ export * from "./import.ts";
 export * from "./help.ts";
 export * from "./addons.ts";
 export * from "./askdata.ts";
+export * from "./advice.ts";
