@@ -181,11 +181,11 @@ export function GolfersScreen({ client, openId, onOpenBooking, isManager }: { cl
         value={q}
         onChangeText={setQ}
         autoCorrect={false}
-        style={[styles.input, { maxWidth: 480 }]}
+        style={styles.input}
       />
       {error && <Text role="alert" style={styles.error}>{error}</Text>}
       {results && results.length === 0 && <Text style={styles.help}>No golfer matches "{q.trim()}".</Text>}
-      <View style={{ maxWidth: 720 }}>
+      <View>
         {results?.map((g) => (
           <Pressable
             key={g.id}
@@ -206,7 +206,7 @@ export function GolfersScreen({ client, openId, onOpenBooking, isManager }: { cl
           </Pressable>
         ))}
       </View>
-      <View style={[styles.box, { maxWidth: 480, marginTop: 20 }]}>
+      <View style={[styles.box, { marginTop: 20 }]}>
         {adding ? (
           <GolferForm client={client} onSaved={(g) => setOpen(g.id)} onCancel={() => setAdding(false)} />
         ) : (
@@ -244,7 +244,7 @@ export function GolferDetail({ client, id, onBack, onOpenBooking, isManager = fa
       )}
       <Text role="heading" style={styles.h1}>{g.name}</Text>
       {editing ? (
-        <View style={[styles.box, { maxWidth: 480 }]}>
+        <View style={styles.box}>
           <GolferForm
             client={client}
             existing={g}
@@ -287,7 +287,7 @@ export function GolferDetail({ client, id, onBack, onOpenBooking, isManager = fa
       {g.history.length === 0 ? (
         <Text style={styles.help}>No bookings yet.</Text>
       ) : (
-        <View style={{ maxWidth: 820 }}>
+        <View>
           {onOpenBooking && <Text style={styles.help}>Tap a round to see it on the tee sheet.</Text>}
           {g.history.map((h) => (
             <Pressable
@@ -332,7 +332,7 @@ function GolferMessages({ client, golfer, onChange }: { client: Client; golfer: 
       .catch((e) => setError(e.message));
   const sent = list?.filter((m) => m.status === "sent").slice(0, 5) ?? [];
   return (
-    <View style={{ maxWidth: 820, marginTop: 8 }}>
+    <View style={{ marginTop: 8 }}>
       <Text role="heading" style={styles.h2}>Messages</Text>
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 16, alignItems: "center" }}>
         <View style={{ flexDirection: "row", gap: 6, alignItems: "center" }}>

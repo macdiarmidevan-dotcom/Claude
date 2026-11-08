@@ -250,7 +250,7 @@ export function BudgetEditor({ client, initialYear, onClose }: { client: Client;
 }
 
 const styles = StyleSheet.create({
-  page: { padding: 16, paddingBottom: 48, maxWidth: 1240 },
+  page: { padding: 16, paddingBottom: 48 },
   head: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 12, marginBottom: 10 },
   yearPick: { flexDirection: "row", alignItems: "center", gap: 6 },
   title: { fontSize: 18, fontWeight: "700", color: colors.text, minWidth: 120, textAlign: "center" },

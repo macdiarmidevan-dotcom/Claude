@@ -233,7 +233,7 @@ function Compose({ client, isManager, timeZone, onSent }: { client: Client; isMa
           onSelectionChange={(e) => setCursor(e.nativeEvent.selection.start)}
           multiline
           placeholder="Hi {first_name}, …"
-          style={[styles.input, { minHeight: 120, maxWidth: 620, textAlignVertical: "top" }]}
+          style={[styles.input, { minHeight: 120, textAlignVertical: "top" }]}
         />
         <View style={[styles.row, { marginTop: 6 }]}>
           <Text style={styles.help}>Fill in for each golfer:</Text>
@@ -460,7 +460,7 @@ const styles = StyleSheet.create({
   tabOn: { borderColor: colors.primary },
   tabText: { color: colors.muted, fontWeight: "600", fontSize: 14 },
   tabTextOn: { color: colors.primary },
-  page: { padding: 16, maxWidth: 1000 },
+  page: { padding: 16 },
   h1: { fontSize: 20, fontWeight: "700", color: colors.text, marginBottom: 4 },
   title: { fontSize: 15, fontWeight: "700", color: colors.text, marginBottom: 8 },
   text: { color: colors.text, fontSize: 14 },

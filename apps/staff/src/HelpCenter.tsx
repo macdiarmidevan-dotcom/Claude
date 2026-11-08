@@ -567,7 +567,7 @@ const styles = StyleSheet.create({
   chipOn: { backgroundColor: colors.primary, borderColor: colors.primary },
   chipText: { fontSize: 13, color: colors.text, fontWeight: "600" },
   pageTitle: { fontSize: 22, fontWeight: "700", color: colors.text, marginBottom: 4 },
-  articleCard: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: radius, padding: 20, maxWidth: 760 },
+  articleCard: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: radius, padding: 20 },
   step: { flexDirection: "row", gap: 12, marginBottom: 12 },
   stepNum: { width: 24, height: 24, borderRadius: 12, backgroundColor: colors.primaryLight, alignItems: "center", justifyContent: "center", marginTop: 1 },
   stepNumText: { color: colors.primaryText, fontSize: 12, fontWeight: "700" },

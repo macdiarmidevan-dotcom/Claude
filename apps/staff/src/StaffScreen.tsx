@@ -406,7 +406,7 @@ function when(iso: string) {
 }
 
 const styles = StyleSheet.create({
-  content: { padding: 16, maxWidth: 820 },
+  content: { padding: 16 },
   row: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 6 },
   h2: { fontSize: 17, fontWeight: "700", color: colors.text, marginBottom: 6 },
   help: { color: colors.muted, fontSize: 14, lineHeight: 22, marginBottom: 12 },

@@ -28,7 +28,8 @@ export function RadarScreen({ station, onChangeStation }: { station?: string; on
     return () => clearInterval(timer);
   }, [code]);
 
-  const imageWidth = Math.min(760, width - 32);
+  // As wide as the card: the page padding and the card's own padding and border come off the window width.
+  const imageWidth = Math.max(240, width - 64);
   const updated = new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   const valid = /^[A-Z]{4}$/.test(draft.trim().toUpperCase());
 
@@ -116,7 +117,7 @@ function Button({ label, onPress, primary, disabled, icon }: { label: string; on
 }
 
 const styles = StyleSheet.create({
-  page: { padding: 16, maxWidth: 820 },
+  page: { padding: 16 },
   card: { borderWidth: 1, borderColor: colors.border, borderRadius: 0, padding: 14, backgroundColor: colors.card, marginBottom: 14 },
   top: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8, marginBottom: 12 },
   title: { fontSize: 15, fontWeight: "700", color: colors.text, marginBottom: 4 },

@@ -607,7 +607,7 @@ function StatementView({ client, id, isManager, onBack }: { client: Client; id: 
       </View>
       {emailed && <Text style={styles.help}>{emailed}</Text>}
       {error && <Text style={styles.error}>{error}</Text>}
-      <View style={[styles.card, { maxWidth: 720 }]}>
+      <View style={styles.card}>
         <Text style={styles.h1}>Statement, {monthName(s.periodStart.slice(0, 7))}</Text>
         <Text style={styles.text}>{s.account.golfer.name}</Text>
         <Text style={styles.help}>
@@ -685,7 +685,7 @@ const styles = StyleSheet.create({
   tabOn: { borderColor: colors.primary },
   tabText: { color: colors.muted, fontWeight: "600", fontSize: 14 },
   tabTextOn: { color: colors.primary },
-  page: { padding: 16, maxWidth: 1000 },
+  page: { padding: 16 },
   h1: { fontSize: 20, fontWeight: "700", color: colors.text, marginBottom: 4 },
   title: { fontSize: 15, fontWeight: "700", color: colors.text, marginBottom: 8 },
   text: { color: colors.text, fontSize: 14 },

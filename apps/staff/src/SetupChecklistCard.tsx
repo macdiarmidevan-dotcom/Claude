@@ -54,7 +54,7 @@ export function SetupChecklistCard({ client, onOpen }: { client: Client; onOpen:
 }
 
 const styles = StyleSheet.create({
-  card: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: radius, padding: 14, marginBottom: 24, maxWidth: 760 },
+  card: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: radius, padding: 14, marginBottom: 24 },
   head: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
   title: { fontSize: 15, fontWeight: "700", color: colors.text },
   count: { fontSize: 13, fontWeight: "700", color: colors.muted },

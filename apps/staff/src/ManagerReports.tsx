@@ -1145,7 +1145,7 @@ function downloadCsv(o: Overview, view: "revenue" | "rounds") {
 }
 
 const styles = StyleSheet.create({
-  page: { padding: 16, paddingBottom: 48, maxWidth: 1240 },
+  page: { padding: 16, paddingBottom: 48 },
   bar: { marginBottom: 12 },
   choices: { flexDirection: "row", flexWrap: "wrap", gap: 6, alignItems: "center" },
   compareLabel: { fontSize: 12, color: colors.muted, fontWeight: "600", marginRight: 2 },
