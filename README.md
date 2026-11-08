@@ -202,6 +202,14 @@ API: `GET /reports/overview?from&to&compare=previous|last_year|none` (managers, 
 
 ![Rounds and tee sheet report](docs/screenshots/reports-rounds.png)
 
+### Ask your data
+
+**Reports › Ask your data** lets a manager ask about the numbers in plain words: "How did revenue this month compare with last month?", "What was labor cost as a share of revenue?", "What needs reordering?". With `ANTHROPIC_API_KEY` set on the server, Claude answers by reading the manager reports through read-only tools (revenue, rounds, labor, inventory, payments and balances, one day on the tee sheet, the budget), and can take follow-up questions. Each answer lists the reports it used; tapping one opens that tab on the same dates. Without the key (and in the demo), the question is matched to the closest report and period ("last week", "this month", "in October"; the last 7 days if none is named) and that report is summed up in a few sentences. It's an add-on (AI › Ask your data), on by default, managers only.
+
+API: `POST /reports/ask` with `{ question, history?: [{ role, content }] }` returns `{ answer, sources: [{ tab, from, to }], via: "ai" | "summary" }` (managers).
+
+![Ask your data](docs/screenshots/reports-ask.png)
+
 ## Accounting export
 
 **Reports › Send to accounting** (managers) turns the report's dates into one balanced journal entry per day that QuickBooks Online or Xero imports, so the bookkeeper doesn't retype the day's totals. Money taken is debited to where it went (cash and checks to Undeposited Funds, cards to Card Clearing, gift cards and rain checks spent against what's held for golfers, charges to house accounts receivable). Revenue (green fees, carts and extras, pro shop, food and drink, leagues and outings), sales tax, gift cards sold and payments on house accounts are credited. A round paid on a different day than it's played lands in a clearing account, which evens out across days. **Show the entries** previews each day; **Download import file** saves the CSV (`Journal No, Journal Date, Account, Debits, Credits, Description` for QuickBooks, the manual journal layout for Xero) and records who exported which dates. **Account names** sets the course's own names (QuickBooks) or codes (Xero) for each line.

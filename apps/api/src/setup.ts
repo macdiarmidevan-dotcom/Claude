@@ -118,7 +118,7 @@ export async function setupChecklist(db: DbClient, course: Course) {
     {
       id: "server-ai",
       title: "Server: set ANTHROPIC_API_KEY",
-      detail: process.env.ANTHROPIC_API_KEY ? "Set. The help assistant uses Claude." : "Without it the help assistant answers from the guides only.",
+      detail: process.env.ANTHROPIC_API_KEY ? "Set. The help assistant and Ask your data use Claude." : "Without it the help assistant answers from the guides only, and Ask your data gives a quick summary of one report.",
       status: process.env.ANTHROPIC_API_KEY ? "done" : "optional",
       where: "none",
     },

@@ -95,6 +95,7 @@ import {
 import { ACCOUNT_KEYS, exportJournal, getAccountingSettings, journal, saveAccountingSettings } from "./accounting.ts";
 import { delayTeeSheet, listDelays, undoDelay } from "./delays.ts";
 import { askHelp, claudeHelpAi, createSupportRequest, listSupportRequests, type HelpAi } from "./help.ts";
+import { askData, claudeDataAi, type DataAi } from "./askdata.ts";
 import { emailStatement, getCampaign, getMessageSettings, golferMessages, listCampaigns, previewAudience, saveMessageSettings, sendMessage, simulator, type MessageSender } from "./messages.ts";
 import {
   addCarts,
@@ -425,11 +426,14 @@ export function buildApp(
     paymentsFetch?: PaymentsFetch;
     /** The help center's assistant. Defaults to Claude when ANTHROPIC_API_KEY is set; null turns it off. */
     helpAi?: HelpAi | null;
+    /** Answers managers' questions about the reports. Defaults to Claude when ANTHROPIC_API_KEY is set; null turns it off. */
+    dataAi?: DataAi | null;
     /** Sends support emails. The simulator until an email provider is picked. */
     supportSender?: MessageSender;
   } = {},
 ): FastifyInstance {
   const helpAi = opts.helpAi === undefined ? claudeHelpAi() : (opts.helpAi ?? undefined);
+  const dataAi = opts.dataAi === undefined ? claudeDataAi() : (opts.dataAi ?? undefined);
   const app = Fastify({ logger: process.env.NODE_ENV !== "test" });
   const processors = providers(opts.paymentsFetch);
 
@@ -840,6 +844,17 @@ export function buildApp(
     const course = await managedCourseFor(req);
     const { from, to } = rangeQuery.parse(req.query);
     return laborReport(db, course, from, to);
+  });
+  // Ask your data: a manager's question answered from the reports above. Managers only.
+  app.post("/v1/courses/:slug/reports/ask", async (req) => {
+    const course = await managedCourseFor(req);
+    const body = z
+      .object({
+        question: z.string().trim().min(1).max(1000),
+        history: z.array(z.object({ role: z.enum(["user", "assistant"]), content: z.string().max(4000) })).max(20).default([]),
+      })
+      .parse(req.body);
+    return askData(db, dataAi, course, body);
   });
   // Pro shop inventory, and payments and balances held or owed. Managers only.
   app.get("/v1/courses/:slug/reports/inventory", async (req) => {

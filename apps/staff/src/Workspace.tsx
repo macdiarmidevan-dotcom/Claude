@@ -23,6 +23,7 @@ import { StationPicker } from "./SetupScreen";
 import { FleetScreen } from "./FleetScreen";
 import { MessagesScreen } from "./MessagesScreen";
 import { ReportsScreen, StartDayForm } from "./ReportsScreen";
+import { AskDataScreen, type AskEntry } from "./AskData";
 import { BalancesReportScreen, DEFAULT_RANGE, InventoryReportScreen, LaborReportScreen, OverviewReport, type ReportRange } from "./ManagerReports";
 import { AccountMenu, FeedbackList } from "./AccountMenu";
 import { HelpCenter } from "./HelpCenter";
@@ -527,8 +528,11 @@ function CustomersArea({ client, isManager, customers }: { client: Client; isMan
 
 /** Reports: the money side (cash drawer and sales) and maintenance (carts, equipment, work orders). */
 function ReportsArea({ client, me, isManager, timeZone, onOpenStaff }: { client: Client; me: Me | undefined; isManager: boolean; timeZone: string; onOpenStaff: () => void }) {
-  const [part, setPart] = useState<"revenue" | "rounds" | "labor" | "inventory" | "balances" | "sales" | "maintenance">(isManager ? "revenue" : "sales");
+  const [part, setPart] = useState<"revenue" | "rounds" | "labor" | "inventory" | "balances" | "ask" | "sales" | "maintenance">(isManager ? "revenue" : "sales");
   const [range, setRange] = useState<ReportRange>(DEFAULT_RANGE);
+  const askOn = useAddOn("ask_data");
+  // Kept here so switching to a report and back doesn't lose the conversation.
+  const [chat, setChat] = useState<AskEntry[]>([]);
   return (
     <View style={{ flex: 1 }}>
       <View role="tablist" style={styles.tabs}>
@@ -541,6 +545,7 @@ function ReportsArea({ client, me, isManager, timeZone, onOpenStaff }: { client:
                   ["labor", "Labor"],
                   ["inventory", "Inventory"],
                   ["balances", "Payments & balances"],
+                  ...(askOn ? ([["ask", "Ask your data"]] as const) : []),
                 ] as const)
               : []),
             ["sales", "Cash & sales"],
@@ -558,8 +563,18 @@ function ReportsArea({ client, me, isManager, timeZone, onOpenStaff }: { client:
           </Pressable>
         ))}
       </View>
-      {part === "revenue" || part === "rounds" ? (
-        <OverviewReport client={client} timeZone={timeZone} view={part} range={range} onRange={setRange} />
+      {part === "ask" && askOn ? (
+        <AskDataScreen
+          client={client}
+          chat={chat}
+          setChat={setChat}
+          onOpen={(s) => {
+            setRange({ ...range, custom: { from: s.from, to: s.to } });
+            setPart(s.tab);
+          }}
+        />
+      ) : part === "revenue" || part === "rounds" || part === "ask" ? (
+        <OverviewReport client={client} timeZone={timeZone} view={part === "ask" ? "revenue" : part} range={range} onRange={setRange} />
       ) : part === "labor" ? (
         <LaborReportScreen client={client} timeZone={timeZone} range={range} onRange={setRange} onOpenStaff={onOpenStaff} />
       ) : part === "inventory" ? (
