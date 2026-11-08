@@ -33,11 +33,11 @@ export const HELP_ARTICLES: HelpArticle[] = [
     id: "read-tee-sheet",
     category: "tee-sheet",
     title: "Reading the tee sheet",
-    summary: "What the colors, columns and week strip mean.",
+    summary: "What the colors, columns and week bar mean.",
     body: [
       "Each row is a tee time with one slot per player. Groups are colored by where they are: blue is booked but not paid, dark blue is booked and paid, orange is checked in at the pro shop, green is on the course, and red is a no-show. The color key sits above the grid.",
       "The two right-hand columns show the cart numbers and a status box: Owes and the amount, Paid, Checked in, On course, No-show or Blocked. The box uses the same colors as the players.",
-      "Use the week strip to change days, Today to come back, or Calendar to jump to any date. The sheet refreshes every few seconds, so changes from the pro shop show up on the starter's iPad.",
+      "The strip above the rows shows the day's players, how many are checked in, open spots and money collected, with the color key beside them. Use the week bar (each day shows how many players are booked) or its arrows to change days, or Calendar in the toolbar to jump to any date. The sheet refreshes every few seconds, so changes from the pro shop show up on the starter's iPad.",
     ],
     keywords: ["colors", "legend", "calendar", "date", "day", "refresh"],
   },
@@ -47,7 +47,7 @@ export const HELP_ARTICLES: HelpArticle[] = [
     title: "Adding a walk-in",
     summary: "Put a golfer on an open tee time.",
     body: [
-      "Tap an open spot on the tee sheet. The panel shows Add a walk-in.",
+      "Tap an open spot on the tee sheet, or Add a walk-in in the toolbar to use the next open time. The panel shows Add a walk-in.",
       "Search the golfer by name, phone or email. If they've never been here, choose New golfer and create their account with their name, mobile phone and email.",
       "Pick the number of players, 9 or 18 holes, walking or riding, and (at the pro shop) resident or nonresident. The total updates as you go. Then tap Add to tee sheet.",
       "Every walk-in needs a golfer account, so Add to tee sheet stays grayed out until one is picked.",
@@ -272,7 +272,7 @@ export const HELP_ARTICLES: HelpArticle[] = [
     body: [
       "Open Add-ons in the menu to see every optional part of the software, grouped as Tee sheet, Customers, Operations, Shop and food, and AI. A manager flips the switch to turn one on or off; everyone else can only look.",
       "Turning an add-on off hides it straight away: its menu item, tab or button goes, but nothing is deleted. Turning it back on brings everything back as it was.",
-      "Tee sheet add-ons also change how the tee sheet looks: prices beside each time, the color key always showing, and the weather delay button.",
+      "Tee sheet add-ons also change how the tee sheet looks: prices beside each time, the color key above the sheet, and the weather delay button.",
     ],
     keywords: ["add-ons", "addons", "features", "turn on", "turn off", "hide", "customize", "settings", "pro shop", "food", "bar"],
   },

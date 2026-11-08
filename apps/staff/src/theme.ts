@@ -61,6 +61,15 @@ export const slotLabel: Record<SlotState, string> = {
   no_show: "No-show",
 };
 
+/** Short names for the color key above the tee sheet. */
+export const slotShort: Record<SlotState, string> = {
+  booked: "Booked",
+  prepaid: "Paid",
+  checked_in: "Checked in",
+  teed_off: "On course",
+  no_show: "No-show",
+};
+
 export const slotMark: Record<SlotState, string> = {
   booked: "",
   prepaid: "$ ",

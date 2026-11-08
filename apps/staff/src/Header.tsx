@@ -2,7 +2,7 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import { colors } from "./theme";
 
 /** A section's title bar (the dark toolbar under the menu). On narrow screens it carries the button that opens the menu. */
-export function Header({ title, subtitle, onOpenMenu, children }: { title: string; subtitle?: string; onOpenMenu?: () => void; children?: React.ReactNode }) {
+export function Header({ title, subtitle, note, onOpenMenu, children }: { title: string; subtitle?: string; /** Shown on the same line, after the title. */ note?: string; onOpenMenu?: () => void; children?: React.ReactNode }) {
   return (
     <View style={styles.header}>
       {onOpenMenu && (
@@ -11,7 +11,10 @@ export function Header({ title, subtitle, onOpenMenu, children }: { title: strin
         </Pressable>
       )}
       <View style={{ flex: 1, minWidth: 0 }}>
-        <Text role="heading" aria-level={1} style={styles.headerTitle} numberOfLines={1}>{title}</Text>
+        <View style={{ flexDirection: "row", alignItems: "baseline", gap: 12 }}>
+          <Text role="heading" aria-level={1} style={styles.headerTitle} numberOfLines={1}>{title}</Text>
+          {note ? <Text style={styles.headerNote} numberOfLines={1}>{note}</Text> : null}
+        </View>
         {subtitle ? <Text style={styles.headerSub} numberOfLines={1}>{subtitle}</Text> : null}
       </View>
       {children}
@@ -26,5 +29,6 @@ const styles = StyleSheet.create({
   menuButton: { width: 44, height: 44, alignItems: "center", justifyContent: "center", borderRadius: 0 },
   menuIcon: { fontSize: 18, color: colors.railText },
   headerTitle: { fontSize: 17, fontWeight: "600", color: "#ffffff" },
+  headerNote: { fontSize: 13, color: "#a9b7ae" },
   headerSub: { fontSize: 12, color: colors.railMuted, marginTop: 1 },
 });

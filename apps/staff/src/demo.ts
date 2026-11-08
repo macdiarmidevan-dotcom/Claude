@@ -127,6 +127,8 @@ interface DemoBooking extends Omit<SheetBooking, "greenFeeCents" | "cartCents"> 
   paid: { amountCents: number; method: PaymentMethod }[];
   /** The round's price before any rain check or refund came off it. */
   originalCents?: number;
+  /** A made-up round on a day before today. The reports already count those days from the same numbers, so money reports skip it. */
+  history?: true;
   externalId?: string;
 }
 interface DemoTeeTime extends Omit<SheetTeeTime, "bookings" | "bookedPlayers"> {
@@ -429,7 +431,7 @@ export function createDemoClient(apiKey: string): Client {
   function demoClose(date: string): DayClose {
     ensureDay(date);
     const expected: Record<MoneyMethod, number> = { cash: 0, card: 0, gift_card: 0, punch_card: 0, season_pass: 0, loyalty: 0, rain_check: 0, check: 0, house_account: 0, prepaid: 0, comp: 0 };
-    for (const b of bookings) if (teeTimes.get(b.teeTimeId)?.date === date) for (const p of b.paid) expected[p.method] += p.amountCents;
+    for (const b of bookings) if (!b.history && teeTimes.get(b.teeTimeId)?.date === date) for (const p of b.paid) expected[p.method] += p.amountCents;
     for (const sale of sales)
       if (sale.status === "completed" && new Intl.DateTimeFormat("en-CA", { timeZone: riverBend.timeZone }).format(new Date(sale.at)) === date) expected[sale.paymentMethod] += sale.totalCents;
     for (const ev of events)
@@ -593,6 +595,25 @@ export function createDemoClient(apiKey: string): Client {
       teeTimes.set(teeTimeId, { id: teeTimeId, date, startsAt: t.startsAt, localTime: t.localTime, maxPlayers: t.maxPlayers, status: "open", note: null });
     }
     if (date === todayIn(riverBend.timeZone)) seedToday(date);
+    else if (date < todayIn(riverBend.timeZone)) seedHistory(date);
+  }
+
+  // Days before today get the same made-up rounds the reports count, so the tee sheet and week bar match them.
+  const HISTORY_NAMES = ["Henderson", "Patel", "Kowalski", "Garcia", "Murphy", "Nguyen", "Johnson", "Schmidt", "Rossi", "Walsh", "Okafor", "Brennan", "Lindqvist", "Castillo", "Fitzgerald", "Novak", "Abrams", "Delgado", "O'Brien", "Yamada", "Becker", "Hughes", "Moreno", "Larsen"];
+  function seedHistory(date: string) {
+    for (const t of teeTimes.values()) {
+      if (t.date !== date) continue;
+      const g = madeUpGroup(date, t);
+      if (!g) continue;
+      const total = quoteGroup(g).lines.reduce((s, l) => s + l.priceCents, 0) * g.players + (g.riding ? cartPrice() * g.players : 0);
+      const k = `${date}${t.localTime}`;
+      bookings.push({
+        id: id(), teeTimeId: t.id, customerName: HISTORY_NAMES[Math.floor(noise(`name${k}`) * HISTORY_NAMES.length)]!, customerPhone: null, golferId: null,
+        players: g.players, holes: g.holes, status: g.noShow ? "no_show" : "teed_off", source: g.source, totalCents: total, cartNumbers: [], signedCarts: [],
+        riding: g.riding, resident: g.resident, payment: { status: "paid", paidCents: total, balanceCents: 0, methods: [] },
+        paid: g.noShow ? [] : [{ amountCents: total, method: g.source === "teeitup" ? "prepaid" : "card" }], history: true,
+      });
+    }
   }
 
   const at = (date: string, localTime: string) => [...teeTimes.values()].find((t) => t.date === date && t.localTime === localTime)!;
@@ -1465,7 +1486,7 @@ export function createDemoClient(apiKey: string): Client {
     let noShows = 0;
     for (const b of bookings) {
       const t = teeTimes.get(b.teeTimeId)!;
-      if (b.status === "cancelled" || !inRange(t.date)) continue;
+      if (b.status === "cancelled" || b.history || !inRange(t.date)) continue;
       if (b.status === "no_show") {
         noShows += b.players;
         continue;
@@ -1604,6 +1625,32 @@ export function createDemoClient(apiKey: string): Client {
     return quoteCache.get(key)!;
   }
   const dowOf = (date: string) => ((new Date(`${date}T12:00:00Z`).getUTCDay() + 6) % 7) + 1;
+  /** The made-up group at one tee time on a day before today, the same every time for the same day and time. */
+  function madeUpGroup(date: string, t: { startsAt: string; localTime: string; maxPlayers: number }): Group | undefined {
+    const today = todayIn(riverBend.timeZone);
+    const dow = dowOf(date);
+    const weekend = dow >= 5;
+    const month = Number(date.slice(5, 7)) - 1;
+    // About one day in eight is rained out.
+    const weather = noise(`rain${date}`) < 0.12 ? 0.15 : 1;
+    const lastYear = date < `${today.slice(0, 4)}-01-01` ? 0.92 : 1;
+    const hour = Number(t.localTime.slice(0, 2));
+    const k = `${date}${t.localTime}`;
+    const want = SEASON[month]! * (HOUR_PULL[hour] ?? 0.2) * (weekend ? 1.2 : 0.9) * weather * lastYear * (0.6 + noise(k) * 0.7);
+    const players = Math.min(t.maxPlayers, Math.round(t.maxPlayers * want));
+    if (players < 1) return undefined;
+    const pick = noise(`p${k}`);
+    return {
+      date, dow, hour, startsAt: t.startsAt, localTime: t.localTime, players,
+      holes: (hour < 11 ? pick < 0.6 : pick < 0.3) ? 18 : 9,
+      riding: noise(`r${k}`) < 0.65,
+      noShow: noise(`n${k}`) < 0.02,
+      resident: noise(`res${k}`) < 0.4,
+      ageGroup: noise(`a${k}`) < 0.2 ? "senior" : noise(`j${k}`) < 0.05 ? "junior" : "adult",
+      source: pick < 0.55 ? "teeitup" : pick < 0.85 ? "staff" : "phone",
+      played: true,
+    };
+  }
   function overviewPeriod(from: string, to: string) {
     const today = todayIn(riverBend.timeZone);
     const groups: Group[] = [];
@@ -1628,29 +1675,13 @@ export function createDemoClient(apiKey: string): Client {
         continue;
       }
       const month = Number(date.slice(5, 7)) - 1;
-      // About one day in eight is rained out.
-      const weather = noise(`rain${date}`) < 0.12 ? 0.15 : 1;
-      const lastYear = date < `${today.slice(0, 4)}-01-01` ? 0.92 : 1;
       let rounds = 0;
       for (const t of generateTeeTimes(date, riverBend.timeZone, riverBendTeeSheet)) {
-        const hour = Number(t.localTime.slice(0, 2));
-        capacity.push({ date, dow, hour, spots: t.maxPlayers });
-        const k = `${date}${t.localTime}`;
-        const want = SEASON[month] * (HOUR_PULL[hour] ?? 0.2) * (weekend ? 1.2 : 0.9) * weather * lastYear * (0.6 + noise(k) * 0.7);
-        const players = Math.min(t.maxPlayers, Math.round(t.maxPlayers * want));
-        if (players < 1) continue;
-        const pick = noise(`p${k}`);
-        groups.push({
-          date, dow, hour, startsAt: t.startsAt, localTime: t.localTime, players,
-          holes: (hour < 11 ? pick < 0.6 : pick < 0.3) ? 18 : 9,
-          riding: noise(`r${k}`) < 0.65,
-          noShow: noise(`n${k}`) < 0.02,
-          resident: noise(`res${k}`) < 0.4,
-          ageGroup: noise(`a${k}`) < 0.2 ? "senior" : noise(`j${k}`) < 0.05 ? "junior" : "adult",
-          source: pick < 0.55 ? "teeitup" : pick < 0.85 ? "staff" : "phone",
-          played: true,
-        });
-        rounds += players;
+        capacity.push({ date, dow, hour: Number(t.localTime.slice(0, 2)), spots: t.maxPlayers });
+        const g = madeUpGroup(date, t);
+        if (!g) continue;
+        groups.push(g);
+        rounds += g.players;
       }
       const m = money(date);
       for (const s of shopDay(date, rounds)) {

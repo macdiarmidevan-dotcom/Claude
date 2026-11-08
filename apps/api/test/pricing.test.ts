@@ -78,7 +78,7 @@ describe("add-ons", () => {
   it("starts from the defaults and lets only managers switch them", async () => {
     const put = (token: string, payload: object) => app.inject({ method: "PUT", url: `${base}/settings/add-ons`, headers: { authorization: `Bearer ${token}` }, payload });
     const start = (await call(staff, "GET", "/settings/add-ons")).json();
-    expect(start).toMatchObject({ radar: true, food_bar: false, pro_shop: false, color_key_open: false });
+    expect(start).toMatchObject({ radar: true, food_bar: false, pro_shop: false, color_key_open: true });
     expect((await put(staff, { key: "food_bar", enabled: true })).statusCode).toBe(403);
     expect((await put(manager, { key: "nope", enabled: true })).statusCode).toBe(400);
     const on = await put(manager, { key: "food_bar", enabled: true });

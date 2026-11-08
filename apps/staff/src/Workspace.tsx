@@ -57,20 +57,21 @@ const SECTION_ICON: Record<Section, IconName> = {
 
 // starters: false hides a section on the starter station (managers still see it).
 // inMenu: false keeps a section out of the sidebar; it opens from the account menu instead.
-const ALL_SECTIONS: { id: Section; label: string; soon?: string; managers?: boolean; group?: Group; starters?: false; inMenu?: false }[] = [
+// short: the name in the top menu bar, where space is tight.
+const ALL_SECTIONS: { id: Section; label: string; short?: string; soon?: string; managers?: boolean; group?: Group; starters?: false; inMenu?: false }[] = [
   { id: "tee-sheet", label: "Tee sheet" },
-  { id: "radar", label: "Radar" },
-  { id: "import", label: "Sync tee sheet", managers: true },
-  { id: "staff", label: "Staff accounts", managers: true },
   { id: "customers", label: "Customers" },
   { id: "messages", label: "Messages" },
-  { id: "inventory", label: "Pro shop" },
+  { id: "events", label: "Leagues & events", short: "Leagues" },
   { id: "pricing", label: "Pricing", starters: false },
-  { id: "add-ons", label: "Add-ons", starters: false },
-  { id: "events", label: "Leagues & events" },
-  { id: "food", label: "Food & bar" },
   { id: "reports", label: "Reports", starters: false },
-  { id: "schedule", label: "Staff schedule" },
+  { id: "schedule", label: "Staff schedule", short: "Schedule" },
+  { id: "radar", label: "Radar" },
+  { id: "add-ons", label: "Add-ons", starters: false },
+  { id: "inventory", label: "Pro shop" },
+  { id: "food", label: "Food & bar" },
+  { id: "import", label: "Sync tee sheet", managers: true },
+  { id: "staff", label: "Staff accounts", managers: true },
   { id: "settings", label: "Settings", inMenu: false },
   { id: "help", label: "Help center", inMenu: false },
 ];
@@ -410,7 +411,7 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
 }
 
 // Roughly how wide a menu item's label is, to decide which fit in the bar before the rest go under More.
-const navWidth = (label: string) => label.length * 7.4 + 26;
+const navWidth = (label: string) => label.length * 7 + 24;
 
 /** The menu across the top on wide screens: course, sections, station and account. Sections that don't fit go under More. */
 function TopBar(props: {
@@ -428,11 +429,11 @@ function TopBar(props: {
   const [moreOpen, setMoreOpen] = useState(false);
   const visible = SECTIONS.filter((s) => sectionOn(s.id, props.addOns) && (!s.managers || isManager) && (s.starters !== false || isManager || settings.station !== "starter") && s.inMenu !== false);
   // Course name, station switch, account and the More button take this much of the bar.
-  let room = width - 220 - (isManager ? 170 : 100) - 200 - 80;
+  let room = width - 200 - (isManager ? 160 : 100) - 150 - 76;
   const shown: typeof visible = [];
   const more: typeof visible = [];
   for (const s of visible) {
-    const w = navWidth(s.label);
+    const w = navWidth(s.short ?? s.label);
     if (!more.length && w <= room) {
       shown.push(s);
       room -= w;
@@ -450,7 +451,7 @@ function TopBar(props: {
         onPress={() => onGo(s.id)}
         style={({ hovered, focused }: WebPress) => [styles.topItem, on && styles.topItemOn, hovered && !on && { backgroundColor: colors.railHover }, focused && styles.focusRing]}
       >
-        <Text style={[styles.topText, on && { color: "#fff", fontWeight: "600" }]} numberOfLines={1}>{s.label}</Text>
+        <Text style={[styles.topText, on && { color: "#fff", fontWeight: "600" }]} numberOfLines={1}>{s.short ?? s.label}</Text>
       </Pressable>
     );
   };

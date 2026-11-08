@@ -58,14 +58,16 @@ export function AccountMenu({
         onPress={() => setOpen(!open)}
         style={({ hovered, focused }: WebPress) => [top ? styles.topButton : styles.foot, (hovered || open) && { backgroundColor: colors.railHover }, focused && styles.focus]}
       >
-        <View style={styles.avatar}>
-          <Text style={styles.avatarText}>{initials(me?.user?.name)}</Text>
-        </View>
-        <View style={{ flex: 1, minWidth: 0 }}>
+        {!top && (
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>{initials(me?.user?.name)}</Text>
+          </View>
+        )}
+        <View style={top ? { alignItems: "flex-end" } : { flex: 1, minWidth: 0 }}>
           <Text style={styles.name} numberOfLines={1}>{me?.user?.name ?? "Shared device"}</Text>
           <Text style={styles.muted}>{isManager ? "Manager" : "Staff"}</Text>
         </View>
-        <Text style={styles.caret}>{open === !top ? "▾" : "▴"}</Text>
+        {!top && <Text style={styles.caret}>{open ? "▾" : "▴"}</Text>}
       </Pressable>
 
       <Modal transparent visible={open} animationType="fade" onRequestClose={() => setOpen(false)}>
@@ -259,12 +261,12 @@ function Button({ label, onPress, primary, disabled }: { label: string; onPress:
 
 const styles = StyleSheet.create({
   foot: { flexDirection: "row", alignItems: "center", gap: 10, borderTopWidth: 1, borderColor: colors.railLine, paddingHorizontal: 14, paddingVertical: 12 },
-  topButton: { flexDirection: "row", alignItems: "center", gap: 10, borderLeftWidth: 1, borderColor: colors.railLine, paddingHorizontal: 16, height: 50, maxWidth: 220 },
+  topButton: { flexDirection: "row", alignItems: "center", borderLeftWidth: 1, borderColor: colors.railLine, paddingHorizontal: 20, height: 50, maxWidth: 220 },
   popupTop: { left: undefined, bottom: undefined, right: 8, top: 52 },
   avatar: { width: 30, height: 30, borderRadius: 0, backgroundColor: colors.primary, alignItems: "center", justifyContent: "center" },
   avatarText: { color: "#fff", fontSize: 13, fontWeight: "700" },
-  name: { color: colors.railText, fontSize: 13, fontWeight: "700" },
-  muted: { color: colors.railMuted, fontSize: 12 },
+  name: { color: colors.railText, fontSize: 12, fontWeight: "600" },
+  muted: { color: colors.railMuted, fontSize: 11 },
   caret: { color: colors.railMuted, fontSize: 12 },
   popup: {
     position: "absolute",

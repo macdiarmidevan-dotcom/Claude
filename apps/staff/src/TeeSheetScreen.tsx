@@ -10,20 +10,26 @@ import { TeeTimePanel } from "./TeeTimePanel";
 import { Header } from "./Header";
 import { Icon, type IconName } from "./Icon";
 import { useAddOn } from "./AddOns";
-import { colors, type WebPress, formatTime, money, slotColor, slotLabel, slotMark, type SlotState } from "./theme";
+import { colors, type WebPress, formatTime, money, slotColor, slotLabel, slotShort, type SlotState } from "./theme";
 
 // Other devices' changes show up within this many seconds.
 const REFRESH_MS = 5000;
-const ROW_HEIGHT = 36;
-const HOUR_HEIGHT = 32;
+const ROW_HEIGHT = 34;
 
-/** 7:02 as "07:02": the hour dividers carry AM and PM. */
-function clock(localTime: string) {
+/** 7:02 as "7:02 AM"; on phones just "7:02". */
+function clock(localTime: string, compact = false) {
   const h = Number(localTime.slice(0, 2));
-  return `${String(((h + 11) % 12) + 1).padStart(2, "0")}:${localTime.slice(3, 5)}`;
+  const hm = `${((h + 11) % 12) + 1}:${localTime.slice(3, 5)}`;
+  return compact ? hm : `${hm} ${h < 12 ? "AM" : "PM"}`;
 }
 
-type Line = { kind: "hour"; key: string; label: string } | { kind: "time"; key: string; teeTime: SheetTeeTime; index: number };
+/** Whole dollars without cents ("$41", "$3,840"); anything else with them. */
+const dollars = (cents: number) => (cents % 100 === 0 ? `$${(cents / 100).toLocaleString("en-US")}` : money(cents));
+
+/** "Henderson" from "Mike Henderson": guests show as "Henderson guest". */
+const lastName = (name: string) => name.trim().split(/\s+/).at(-1) ?? name;
+
+type Line = { kind: "time"; key: string; teeTime: SheetTeeTime; index: number };
 
 interface Props {
   client: Client;
@@ -94,25 +100,13 @@ export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu,
     return sheet.findIndex((t) => t.localTime >= now);
   }, [sheet, course, isToday]);
 
-  // Tee times with a divider at the top of each hour, as on a paper tee sheet.
-  const lines = useMemo(() => {
-    const out: Line[] = [];
-    let hour = "";
-    sheet?.forEach((t, index) => {
-      const h = t.localTime.slice(0, 2);
-      if (h !== hour) {
-        hour = h;
-        out.push({ kind: "hour", key: `h${h}`, label: `${clock(`${h}:00`)} ${Number(h) < 12 ? "AM" : "PM"}` });
-      }
-      out.push({ kind: "time", key: t.id, teeTime: t, index });
-    });
-    return out;
-  }, [sheet]);
+  // One line per tee time, like a spreadsheet: each time carries its own AM or PM.
+  const lines = useMemo(() => (sheet ?? []).map((t, index): Line => ({ kind: "time", key: t.id, teeTime: t, index })), [sheet]);
   const offsets = useMemo(() => {
     let y = 0;
     return lines.map((l) => {
       const at = y;
-      y += l.kind === "hour" ? HOUR_HEIGHT : ROW_HEIGHT;
+      y += ROW_HEIGHT;
       return at;
     });
   }, [lines]);
@@ -141,10 +135,30 @@ export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu,
     const live = sheet?.flatMap((t) => t.bookings).filter((b) => b.status !== "cancelled" && b.status !== "no_show") ?? [];
     const players = live.reduce((s, b) => s + b.players, 0);
     const capacity = sheet?.filter((t) => t.status === "open").reduce((s, t) => s + t.maxPlayers, 0) ?? 0;
-    const owed = live.reduce((s, b) => s + b.payment.balanceCents, 0);
-    const carts = live.reduce((s, b) => s + b.cartNumbers.length, 0);
-    return { players, open: Math.max(0, capacity - players), owed, carts };
+    const checkedIn = live.filter((b) => b.status === "checked_in" || b.status === "teed_off").reduce((s, b) => s + b.players, 0);
+    const collected = sheet?.flatMap((t) => t.bookings).filter((b) => b.status !== "cancelled").reduce((s, b) => s + b.payment.paidCents, 0) ?? 0;
+    return { players, checkedIn, open: Math.max(0, capacity - players), collected };
   }, [sheet]);
+
+  // Players booked on each day of the week shown, for the week bar. The day on screen comes from the live sheet.
+  const monday = weekStart(date);
+  const [weekCounts, setWeekCounts] = useState<Record<string, number>>({});
+  useEffect(() => {
+    let live = true;
+    setWeekCounts({});
+    Promise.all(
+      Array.from({ length: 7 }, (_, i) => addDays(monday, i)).map((d) =>
+        client
+          .teeSheet(d)
+          .then((r) => [d, playersOn(r.teeTimes)] as const)
+          .catch(() => [d, undefined] as const),
+      ),
+    ).then((rows) => live && setWeekCounts(Object.fromEntries(rows.filter((r) => r[1] !== undefined))));
+    return () => {
+      live = false;
+    };
+  }, [client, monday]);
+  const counts = sheet ? { ...weekCounts, [date]: totals.players } : weekCounts;
 
   useEffect(() => {
     if (!notice) return;
@@ -155,9 +169,8 @@ export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu,
   // The tee time under a name dragged dy pixels up or down from the row at lineIndex.
   const teeTimeAt = (lineIndex: number, dy: number) => {
     const y = (offsets[lineIndex] ?? 0) + ROW_HEIGHT / 2 + dy;
-    let i = offsets.findIndex((at, k) => y >= at && y < at + (lines[k]!.kind === "hour" ? HOUR_HEIGHT : ROW_HEIGHT));
+    let i = offsets.findIndex((at) => y >= at && y < at + ROW_HEIGHT);
     if (i === -1) i = y < 0 ? 0 : lines.length - 1;
-    if (lines[i]?.kind === "hour") i++;
     const line = lines[i];
     return line?.kind === "time" ? line.teeTime : undefined;
   };
@@ -290,17 +303,14 @@ export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu,
 
   // Add-ons the course can switch: prices beside each time, the color key, and weather delays.
   const showPrices = useAddOn("tee_sheet_prices");
-  const keyOpen = useAddOn("color_key_open");
+  const showKey = useAddOn("color_key_open");
   const delaysOn = useAddOn("weather_delays");
-  const [showKey, setShowKey] = useState(keyOpen);
-  useEffect(() => setShowKey(keyOpen), [keyOpen]);
   const [delayRequest, setDelayRequest] = useState(0);
-  const [addMenu, setAddMenu] = useState(false);
+  const [calendar, setCalendar] = useState(false);
   const canDelay = !!sheet?.length && date >= today;
   // The walk-in goes on the next tee time with room: from now on today, from the first time on other days.
   const nextOpen = sheet?.find((t, i) => t.status === "open" && t.bookedPlayers < t.maxPlayers && (!isToday || nextIndex === -1 || i >= nextIndex));
   const addWalkIn = () => {
-    setAddMenu(false);
     if (!nextOpen) return setNotice({ text: "No open tee times left on this day", key: Date.now() });
     setSelectedId(nextOpen.id);
     setFocusId(undefined);
@@ -309,49 +319,38 @@ export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu,
     if (at > 1) listRef.current?.scrollToIndex({ index: at - 2, animated: true });
   };
   const stationName = station === "proshop" ? "Pro shop" : "Starter";
+  const longDate = new Date(`${date}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric", timeZone: "UTC" });
 
   return (
     <View style={{ flex: 1 }}>
-      <Header title="Tee sheet" subtitle={compact ? stationName : undefined} onOpenMenu={onOpenMenu}>
-        {!compact && <Text style={styles.stationText}>{stationName}</Text>}
-        <ToolButton icon="swatches" label="Color key" on={showKey} onPress={() => setShowKey(!showKey)} />
-        {delaysOn && <ToolButton icon="cloud" label="Weather delay" disabled={!canDelay} onPress={() => setDelayRequest(Date.now())} />}
-        <View>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Add"
-            accessibilityState={{ expanded: addMenu }}
-            onPress={() => setAddMenu(!addMenu)}
-            style={({ hovered, focused }: WebPress) => [styles.addButton, hovered && { backgroundColor: colors.primaryText }, focused && styles.focusRing]}
-          >
-            <Icon name="plus" size={15} color="#fff" strokeWidth={2.5} />
-            {!compact && <Text style={styles.addText}>Add</Text>}
-            <Icon name="chevronDown" size={14} color="#fff" />
-          </Pressable>
-          {addMenu && (
-            <View style={styles.addMenu} role="menu">
-              <MenuRow label={nextOpen ? `Walk-in at ${formatTime(nextOpen.localTime)}` : "Walk-in"} icon="user" onPress={addWalkIn} />
-              {delaysOn && (
-                <MenuRow
-                  label="Weather delay"
-                  icon="cloud"
-                  disabled={!canDelay}
-                  onPress={() => {
-                    setAddMenu(false);
-                    setDelayRequest(Date.now());
-                  }}
-                />
-              )}
-            </View>
-          )}
-        </View>
+      <Header title="Tee sheet" note={compact ? undefined : longDate} subtitle={compact ? `${dayParts(date).long} · ${stationName}` : undefined} onOpenMenu={onOpenMenu}>
+        {compact ? (
+          <>
+            <ToolButton icon="calendar" label="Calendar" onPress={() => setCalendar(true)} />
+            {delaysOn && <ToolButton icon="cloud" label="Weather delay" disabled={!canDelay} onPress={() => setDelayRequest(Date.now())} />}
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Add a walk-in"
+              onPress={addWalkIn}
+              style={({ hovered, focused }: WebPress) => [styles.addButton, hovered && { backgroundColor: colors.primaryText }, focused && styles.focusRing]}
+            >
+              <Icon name="plus" size={16} color="#fff" strokeWidth={2.5} />
+            </Pressable>
+          </>
+        ) : (
+          <>
+            <BarButton label="Calendar" onPress={() => setCalendar(true)} />
+            {delaysOn && <BarButton label="Weather delay" disabled={!canDelay} onPress={() => setDelayRequest(Date.now())} />}
+            <BarButton label="Add a walk-in" primary onPress={addWalkIn} />
+          </>
+        )}
       </Header>
-      <View style={[styles.page, compact && { padding: 0 }]}>
-      <View style={[styles.card, compact && { borderWidth: 0, borderRadius: 0 }]}>
-      <SheetHeading date={date} today={today} compact={compact} error={error} loading={!sheet} totals={totals} onPick={setDate} />
-      <WeekStrip date={date} today={today} compact={compact} onPick={setDate} />
+      {calendar && <CalendarPicker date={date} today={today} onPick={setDate} onClose={() => setCalendar(false)} />}
+      <View style={[styles.page, compact && { padding: 0, gap: 0 }]}>
+      <WeekBar date={date} counts={counts} compact={compact} onPick={setDate} />
+      <View style={[styles.card, compact && { borderWidth: 0 }]}>
+      <StatsStrip error={error} loading={!sheet} totals={totals} compact={compact} showKey={showKey} />
       {delaysOn && <DelayBar client={client} date={date} today={today} nowLocal={nowIn(course.timeZone)} sheet={sheet} onChanged={load} openRequest={delayRequest} showButton={false} />}
-      {showKey && <Legend />}
       {notice && (
         <View key={notice.key} style={styles.notice} accessibilityLiveRegion="polite" role="status">
           <Text style={styles.noticeText}>{notice.text}</Text>
@@ -381,20 +380,12 @@ export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu,
               extraData={[selectedId, moveDrag]}
               keyExtractor={(l) => l.key}
               getItemLayout={(_, index) => ({
-                length: lines[index]?.kind === "hour" ? HOUR_HEIGHT : ROW_HEIGHT,
+                length: ROW_HEIGHT,
                 offset: offsets[index] ?? 0,
                 index,
               })}
               accessibilityLabel={`Tee times for ${dayParts(date).long}`}
-              renderItem={({ item, index: lineIndex }) =>
-                item.kind === "hour" ? (
-                  <View style={styles.hour} role="heading" aria-level={2}>
-                    <View style={styles.hourPill}>
-                      <Text style={styles.hourText}>{item.label}</Text>
-                    </View>
-                    <View style={styles.hourLine} />
-                  </View>
-                ) : (
+              renderItem={({ item, index: lineIndex }) => (
                   <TeeTimeRow
                     teeTime={item.teeTime}
                     priceCents={compact || !showPrices ? undefined : priceAt(item.teeTime)}
@@ -419,8 +410,7 @@ export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu,
                     onMoveDrop={onMoveDrop}
                     onMoveCancel={stopMoving}
                   />
-                )
-              }
+              )}
             />
           )}
         </View>
@@ -439,40 +429,34 @@ export function TeeSheetScreen({ client, course, station, onSignOut, onOpenMenu,
   );
 }
 
-function WeekStrip({ date, today, compact, onPick }: { date: string; today: string; compact: boolean; onPick: (d: string) => void }) {
+/** The week as one segmented bar: each day with how many players are booked. The day on screen is filled in. */
+function WeekBar({ date, counts, compact, onPick }: { date: string; counts: Record<string, number>; compact: boolean; onPick: (d: string) => void }) {
   const monday = weekStart(date);
   const days = Array.from({ length: 7 }, (_, i) => addDays(monday, i));
   return (
     <View style={styles.week}>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Go to today"
-        disabled={date === today}
-        onPress={() => onPick(today)}
-        style={({ focused }: WebPress) => [styles.todayButton, date === today && { opacity: 0.5 }, focused && styles.focusRing]}
-      >
-        <Text style={styles.todayText}>Today</Text>
-      </Pressable>
       <WeekArrow icon="chevronLeft" name="Previous week" onPress={() => onPick(addDays(date, -7))} />
-      <View style={styles.days}>
-        {days.map((d) => {
-          const on = d === date;
-          const { weekday, day, long } = dayParts(d);
-          return (
-            <Pressable
-              key={d}
-              accessibilityRole="button"
-              accessibilityLabel={`${long}${d === today ? ", today" : ""}`}
-              accessibilityState={{ selected: on }}
-              onPress={() => onPick(d)}
-              style={({ hovered, focused }: WebPress) => [styles.day, hovered && !on && { backgroundColor: colors.bg }, on && styles.dayOn, focused && styles.focusRing]}
-            >
-              <Text style={[styles.dayWeekday, on && { color: "rgba(255,255,255,0.8)" }, d === today && !on && { color: colors.primary }]}>{compact ? weekday.slice(0, 2) : weekday}</Text>
-              <Text style={[styles.dayText, on && { color: "#fff" }, d === today && !on && { color: colors.primary }]}>{day}</Text>
-            </Pressable>
-          );
-        })}
-      </View>
+      {days.map((d) => {
+        const on = d === date;
+        const { weekday, day, long } = dayParts(d);
+        const n = counts[d];
+        return (
+          <Pressable
+            key={d}
+            accessibilityRole="button"
+            accessibilityLabel={`${long}${n !== undefined ? `, ${n} booked` : ""}`}
+            accessibilityState={{ selected: on }}
+            onPress={() => onPick(d)}
+            style={({ hovered, focused }: WebPress) => [styles.day, hovered && !on && { backgroundColor: colors.strip }, on && styles.dayOn, focused && styles.focusRing]}
+          >
+            <Text style={[styles.dayText, on && { color: "#fff" }]} numberOfLines={1}>
+              <Text style={styles.dayWeekday}>{(compact ? weekday.slice(0, 2) : weekday).toUpperCase()} </Text>
+              {day}
+            </Text>
+            {!compact && <Text style={[styles.dayCount, on && { color: "rgba(255,255,255,0.85)" }]}>{n === undefined ? " " : `${n} booked`}</Text>}
+          </Pressable>
+        );
+      })}
       <WeekArrow icon="chevronRight" name="Next week" onPress={() => onPick(addDays(date, 7))} />
     </View>
   );
@@ -480,65 +464,56 @@ function WeekStrip({ date, today, compact, onPick }: { date: string; today: stri
 
 function WeekArrow({ icon, name, onPress }: { icon: IconName; name: string; onPress: () => void }) {
   return (
-    <Pressable accessibilityRole="button" accessibilityLabel={name} onPress={onPress} style={({ hovered, focused }: WebPress) => [styles.arrow, hovered && { backgroundColor: colors.bg }, focused && styles.focusRing]}>
-      <Icon name={icon} size={18} color={colors.text} />
+    <Pressable accessibilityRole="button" accessibilityLabel={name} onPress={onPress} style={({ hovered, focused }: WebPress) => [styles.arrow, hovered && { backgroundColor: colors.rowLine }, focused && styles.focusRing]}>
+      <Icon name={icon} size={14} color={colors.text} />
     </Pressable>
   );
 }
 
-/** The top of the tee sheet card: the day's numbers on the left and the date, which opens the calendar, in the middle. */
-function SheetHeading(props: {
-  date: string;
-  today: string;
-  compact: boolean;
-  error?: string;
-  loading: boolean;
-  totals: { players: number; open: number; owed: number; carts: number };
-  onPick: (d: string) => void;
-}) {
-  const { date, today, compact, error, loading, totals, onPick } = props;
-  const [calendar, setCalendar] = useState(false);
-  const d = new Date(`${date}T12:00:00Z`);
-  const part = (o: Intl.DateTimeFormatOptions) => d.toLocaleDateString("en-US", { ...o, timeZone: "UTC" });
-  const stat = (icon: IconName, value: string, label: string, color: string = colors.text) => (
-    <View style={styles.stat} accessibilityLabel={`${value} ${label}`}>
-      <Icon name={icon} size={15} color={colors.muted} />
-      <Text style={[styles.statValue, { color }]}>{value}</Text>
-      {!compact && <Text style={styles.statLabel}>{label}</Text>}
-    </View>
+/** The strip at the top of the sheet: the day's numbers on the left and the color key on the right. */
+function StatsStrip({ error, loading, totals, compact, showKey }: { error?: string; loading: boolean; totals: { players: number; checkedIn: number; open: number; collected: number }; compact: boolean; showKey: boolean }) {
+  const stat = (value: string, label: string) => (
+    <Text style={styles.statLabel} accessibilityLabel={`${value} ${label}`}>
+      <Text style={styles.statValue}>{value}</Text> {label}
+    </Text>
   );
   return (
-    <View style={[styles.heading, compact && { flexDirection: "column-reverse", alignItems: "stretch", gap: 6 }]}>
-      {calendar && <CalendarPicker date={date} today={today} onPick={onPick} onClose={() => setCalendar(false)} />}
-      <View style={[styles.stats, compact && { justifyContent: "center" }]}>
-        {error ? (
-          <Text style={styles.offline} numberOfLines={1}>{error}</Text>
-        ) : loading ? (
-          <Text style={styles.statLabel}>Loading…</Text>
-        ) : (
-          <>
-            {stat("users", String(totals.players), totals.players === 1 ? "golfer" : "golfers")}
-            {stat("plusCircle", String(totals.open), "open")}
-            {stat("cart", String(totals.carts), totals.carts === 1 ? "cart" : "carts")}
-            {totals.owed > 0 && stat("dollar", money(totals.owed), "owed", colors.noShow)}
-          </>
-        )}
-      </View>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`Pick a date from the calendar. Showing ${dayParts(date).long}`}
-        onPress={() => setCalendar(true)}
-        style={({ hovered, focused }: WebPress) => [styles.bigDate, hovered && { backgroundColor: colors.bg }, focused && styles.focusRing]}
-      >
-        <Text style={styles.bigDay}>{part({ day: "numeric" })}</Text>
-        <View>
-          <Text style={styles.bigWeekday}>{part({ weekday: "long" })}</Text>
-          <Text style={styles.bigMonth}>{part({ month: "long", year: "numeric" })}</Text>
+    <View style={styles.heading}>
+      {error ? (
+        <Text style={styles.offline} numberOfLines={1}>{error}</Text>
+      ) : loading ? (
+        <Text style={styles.statLabel}>Loading…</Text>
+      ) : (
+        <View style={styles.stats}>
+          {stat(String(totals.players), totals.players === 1 ? "player" : "players")}
+          {stat(String(totals.checkedIn), "checked in")}
+          {stat(String(totals.open), compact ? "open" : "open spots")}
+          {stat(dollars(totals.collected), "collected")}
         </View>
-        <Icon name="chevronDown" size={18} color={colors.muted} />
-      </Pressable>
-      {!compact && <View style={{ flex: 1 }} />}
+      )}
+      {!compact && showKey && <Legend />}
     </View>
+  );
+}
+
+/** A text button on the dark toolbar. */
+function BarButton({ label, primary, disabled, onPress }: { label: string; primary?: boolean; disabled?: boolean; onPress: () => void }) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ disabled }}
+      disabled={disabled}
+      onPress={onPress}
+      style={({ hovered, focused }: WebPress) => [
+        styles.barButton,
+        primary && styles.barButtonPrimary,
+        hovered && !disabled && { backgroundColor: primary ? colors.primaryText : colors.railHover },
+        disabled && { opacity: 0.45 },
+        focused && styles.focusRing,
+      ]}
+    >
+      <Text style={styles.barButtonText}>{label}</Text>
+    </Pressable>
   );
 }
 
@@ -559,40 +534,28 @@ function ToolButton({ icon, label, on, disabled, onPress }: { icon: IconName; la
   );
 }
 
-function MenuRow({ label, icon, disabled, onPress }: { label: string; icon: IconName; disabled?: boolean; onPress: () => void }) {
-  return (
-    <Pressable
-      role="menuitem"
-      disabled={disabled}
-      onPress={onPress}
-      style={({ hovered, focused }: WebPress) => [styles.menuRow, hovered && !disabled && { backgroundColor: colors.bg }, disabled && { opacity: 0.45 }, focused && styles.focusRing]}
-    >
-      <Icon name={icon} size={16} color={colors.muted} />
-      <Text style={styles.menuRowText}>{label}</Text>
-    </Pressable>
-  );
-}
-
 function Legend() {
   return (
     <View style={styles.legend} accessibilityLabel="Color key">
       {(Object.keys(slotColor) as SlotState[]).map((s) => (
-        <View key={s} style={styles.legendItem}>
-          <View style={[styles.legendSwatch, { backgroundColor: slotColor[s] }]}>
-            <Text style={styles.legendMark}>{slotMark[s].trim()}</Text>
-          </View>
-          <Text style={styles.legendText}>{slotLabel[s]}</Text>
+        <View key={s} style={styles.legendItem} accessibilityLabel={slotLabel[s]}>
+          <View style={[styles.legendSwatch, { backgroundColor: slotColor[s] }]} />
+          <Text style={styles.legendText}>{slotShort[s]}</Text>
         </View>
       ))}
     </View>
   );
 }
 
+function playersOn(teeTimes: SheetTeeTime[]) {
+  return teeTimes.flatMap((t) => t.bookings).filter((b) => b.status !== "cancelled" && b.status !== "no_show").reduce((s, b) => s + b.players, 0);
+}
+
 /** The row's status box: money owed first, then where the groups are in their round. */
 function rowTag(groups: SheetBooking[], blocked: boolean, owed: number, compact: boolean): { text: string; color: string } | undefined {
   if (blocked) return { text: "Blocked", color: "#5b6574" };
   if (!groups.length) return undefined;
-  if (owed > 0) return { text: compact ? money(owed) : `Owes ${money(owed)}`, color: colors.warn };
+  if (owed > 0) return { text: compact ? dollars(owed) : `Owes ${dollars(owed)}`, color: colors.warn };
   if (groups.every((b) => b.status === "no_show")) return { text: "No-show", color: slotColor.no_show };
   if (groups.some((b) => b.status === "teed_off")) return { text: "On course", color: slotColor.teed_off };
   if (groups.some((b) => b.status === "checked_in")) return { text: "Checked in", color: slotColor.checked_in };
@@ -696,20 +659,19 @@ function TeeTimeRow({ teeTime, priceCents, compact, selected, isNext, past, onPr
         focused && styles.focusRing,
       ]}
     >
-      <View style={[styles.timeCol, compact && { width: 46 }]}>
+      <View style={[styles.timeCol, compact && { width: 48, paddingHorizontal: 6 }]}>
         {/* Earlier tee times today: the time goes grey, the players keep their full colors. */}
-        <Text style={[styles.rowTime, compact && { fontSize: 14 }, past && { color: colors.muted }]}>{clock(teeTime.localTime)}</Text>
-        {isNext && <Text style={styles.next}>NEXT</Text>}
+        <Text style={[styles.rowTime, past && { color: colors.muted }]} numberOfLines={1}>{clock(teeTime.localTime, compact)}</Text>
       </View>
       {priceCents !== undefined && (
         <View style={styles.price}>
-          <Text style={styles.priceText}>{money(priceCents)}</Text>
+          <Text style={styles.priceText}>{blocked ? "" : dollars(priceCents)}</Text>
         </View>
       )}
+      <View style={styles.playerCol}>
       {blocked ? (
         <View style={styles.blockedBar}>
-          <Icon name="lock" size={14} color={colors.muted} />
-          <Text style={styles.blockedText} numberOfLines={1}>Blocked{teeTime.note ? ` · ${teeTime.note}` : ""}</Text>
+          <Text style={styles.blockedText} numberOfLines={1}>Blocked{teeTime.note ? `: ${teeTime.note}` : ""}</Text>
         </View>
       ) : (
         <View style={styles.slots} onLayout={(e) => setSlotsWidth(e.nativeEvent.layout.width)}>
@@ -719,7 +681,6 @@ function TeeTimeRow({ teeTime, priceCents, compact, selected, isNext, past, onPr
                 ...groups.map((b) => (
                   <DragName key={b.id} {...dragProps(b)} style={[styles.slot, { flex: b.players, backgroundColor: slotColor[stateOf(b)] }, lifted(b)]}>
                     <Text style={styles.slotText} numberOfLines={1}>
-                      {slotMark[stateOf(b)]}
                       {b.customerName}
                       {b.players > 1 ? ` (${b.players})` : ""}
                     </Text>
@@ -728,9 +689,7 @@ function TeeTimeRow({ teeTime, priceCents, compact, selected, isNext, past, onPr
                 ...slots
                   .map((x, i) =>
                     x.booking ? null : (
-                      <View key={`open${i}`} style={[styles.slot, styles.slotOpen, ghost(i) && styles.slotGhost]}>
-                        {!ghost(i) && <Icon name="plusCircle" size={14} color="#8a919a" />}
-                      </View>
+                      <View key={`open${i}`} style={[styles.slot, styles.slotOpen, ghost(i) && styles.slotGhost]} />
                     ),
                   )
                   .filter(Boolean),
@@ -746,8 +705,7 @@ function TeeTimeRow({ teeTime, priceCents, compact, selected, isNext, past, onPr
                 style={[styles.slot, { backgroundColor: slotColor[stateOf(s.booking)] }, lifted(s.booking)]}
               >
                 <Text style={styles.slotText} numberOfLines={1}>
-                  {slotMark[stateOf(s.booking)]}
-                  {s.first ? s.booking.customerName : "Guest"}
+                  {s.first ? s.booking.customerName : `${lastName(s.booking.customerName)} guest`}
                 </Text>
               </DragName>
             ) : ghost(i) ? (
@@ -756,24 +714,24 @@ function TeeTimeRow({ teeTime, priceCents, compact, selected, isNext, past, onPr
               </View>
             ) : (
               <View key={i} style={[styles.slot, styles.slotOpen]} accessibilityLabel="Open">
-                {i === firstOpen && teeTime.note ? <Text style={styles.openText} numberOfLines={1}>{teeTime.note}</Text> : <Icon name="plusCircle" size={15} color="#8a919a" />}
+                <Text style={styles.openText} numberOfLines={1}>{i === firstOpen && teeTime.note ? teeTime.note : "Open"}</Text>
               </View>
             ),
           )}
         </View>
       )}
+      </View>
       {/* Carts and the status sit in their own columns so they stay visible when names are cut off. */}
       {!compact && (
         <View style={styles.cartCol} accessibilityLabel={carts.length ? `${carts.length === 1 ? "Cart" : "Carts"} ${carts.join(", ")}` : undefined}>
           {carts.length > 0 && (
             <>
-              <Icon name="cart" size={13} color={colors.muted} />
-              <Text style={styles.cart} numberOfLines={1}>{carts.join(", ")}</Text>
+              <Text style={styles.cart} numberOfLines={1}>{carts.length === 1 ? "Cart" : "Carts"} {carts.join(", ")}</Text>
             </>
           )}
         </View>
       )}
-      <View style={[styles.endCol, compact && { width: 76 }]}>
+      <View style={[styles.endCol, compact && { width: 78, paddingHorizontal: 6, borderLeftWidth: 0 }]}>
         {moveTarget ? (
           <Text style={[styles.pay, { color: moveTarget === "ok" ? colors.primaryText : colors.noShow }]} numberOfLines={1}>
             {moveTarget === "ok" ? "Move here" : blocked ? "Blocked" : "No room"}
@@ -873,65 +831,54 @@ const styles = StyleSheet.create({
   ghostText: { color: colors.primaryText, fontSize: 12, fontWeight: "700" },
   empty: { color: colors.muted, textAlign: "center", marginTop: 40, paddingHorizontal: 24, fontSize: 14, lineHeight: 22 },
   focusRing: { outlineColor: colors.focus, outlineWidth: 2, outlineStyle: "solid", outlineOffset: -2 } as object,
-  page: { flex: 1, backgroundColor: colors.bg, padding: 12 },
-  card: { flex: 1, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: 0, overflow: "hidden" },
-  stationText: { fontSize: 13, color: colors.railMuted, fontWeight: "600", marginRight: 4 },
+  page: { flex: 1, backgroundColor: colors.bg, paddingHorizontal: 20, paddingTop: 14, gap: 12 },
+  card: { flex: 1, backgroundColor: colors.card, borderWidth: 1, borderBottomWidth: 0, borderColor: colors.border, overflow: "hidden" },
   tool: { width: 34, height: 34, borderRadius: 0, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: colors.toolbarLine, backgroundColor: "transparent" },
   toolOn: { borderColor: colors.primary, backgroundColor: colors.primary },
   addButton: { flexDirection: "row", alignItems: "center", gap: 6, height: 34, paddingHorizontal: 12, borderRadius: 0, backgroundColor: colors.primary },
-  addText: { color: "#fff", fontWeight: "700", fontSize: 14 },
-  addMenu: { position: "absolute", top: 40, right: 0, zIndex: 20, minWidth: 220, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: 0, paddingVertical: 4, boxShadow: "0 4px 14px rgba(0,0,0,0.12)" } as object,
-  menuRow: { flexDirection: "row", alignItems: "center", gap: 10, minHeight: 38, paddingHorizontal: 12 },
-  menuRowText: { fontSize: 14, color: colors.text },
-  heading: { flexDirection: "row", alignItems: "center", paddingHorizontal: 14, paddingVertical: 6, backgroundColor: colors.strip, borderBottomWidth: 1, borderColor: colors.border },
-  stats: { flex: 1, flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 16 },
-  stat: { flexDirection: "row", alignItems: "center", gap: 5 },
-  statValue: { fontSize: 14, fontWeight: "700", fontVariant: ["tabular-nums"] },
-  statLabel: { fontSize: 13, color: colors.muted },
+  barButton: { height: 32, paddingHorizontal: 12, justifyContent: "center", borderWidth: 1, borderColor: colors.toolbarLine },
+  barButtonPrimary: { backgroundColor: colors.primary, borderColor: colors.primary, paddingHorizontal: 14 },
+  barButtonText: { color: "#fff", fontSize: 12, fontWeight: "600" },
+  // The day's numbers and the color key, in one strip across the top of the sheet.
+  heading: { minHeight: 36, flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 18, paddingHorizontal: 12, paddingVertical: 6, backgroundColor: colors.strip, borderBottomWidth: 1, borderColor: colors.border },
+  stats: { flex: 1, flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 18 },
+  statValue: { fontSize: 14, fontWeight: "700", color: colors.text, fontVariant: ["tabular-nums"] },
+  statLabel: { fontSize: 12, color: "#3a4452" },
   offline: { fontSize: 13, color: colors.noShow, fontWeight: "600" },
-  bigDate: { flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 0, alignSelf: "center" },
-  bigDay: { fontSize: 28, fontWeight: "300", color: colors.text, fontVariant: ["tabular-nums"] },
-  bigWeekday: { fontSize: 15, fontWeight: "700", color: colors.text },
-  bigMonth: { fontSize: 13, color: colors.muted },
-  week: { flexDirection: "row", alignItems: "stretch", gap: 8, paddingHorizontal: 12, paddingVertical: 8, borderBottomWidth: 1, borderColor: colors.border },
-  todayButton: { borderWidth: 1, borderColor: colors.border, backgroundColor: colors.strip, borderRadius: 0, paddingHorizontal: 14, minHeight: 40, justifyContent: "center" },
-  todayText: { color: colors.text, fontWeight: "700", fontSize: 13 },
-  arrow: { width: 32, minHeight: 40, alignItems: "center", justifyContent: "center", borderRadius: 0, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.strip },
-  days: { flex: 1, flexDirection: "row", borderWidth: 1, borderColor: colors.border, borderRightWidth: 0 },
-  day: { flex: 1, minHeight: 40, borderRadius: 0, alignItems: "center", justifyContent: "center", paddingHorizontal: 2, borderRightWidth: 1, borderColor: colors.border },
+  // The week: one bar of square segments with arrows at each end.
+  week: { flexDirection: "row", alignItems: "stretch", borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card },
+  arrow: { width: 34, alignItems: "center", justifyContent: "center", backgroundColor: colors.strip },
+  day: { flex: 1, minWidth: 0, paddingVertical: 6, alignItems: "center", justifyContent: "center", borderLeftWidth: 1, borderColor: colors.border },
   dayOn: { backgroundColor: colors.primary },
-  dayWeekday: { fontSize: 11, fontWeight: "600", color: colors.muted, textAlign: "center" },
+  dayWeekday: { fontSize: 11, fontWeight: "400", letterSpacing: 0.6 },
   dayText: { fontSize: 14, fontWeight: "700", color: colors.text, textAlign: "center" },
-  legend: { flexDirection: "row", flexWrap: "wrap", gap: 14, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: colors.strip, borderBottomWidth: 1, borderColor: colors.border },
-  legendItem: { flexDirection: "row", alignItems: "center", gap: 6 },
-  legendSwatch: { width: 16, height: 14, borderRadius: 0, alignItems: "center", justifyContent: "center" },
-  legendMark: { color: "#fff", fontSize: 10, fontWeight: "700" },
-  legendText: { fontSize: 12, color: colors.text },
-  hour: { height: HOUR_HEIGHT, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12 },
-  hourPill: { backgroundColor: colors.strip, borderWidth: 1, borderColor: colors.border, borderRadius: 0, paddingHorizontal: 8, paddingVertical: 3 },
-  hourText: { fontSize: 11, fontWeight: "700", color: colors.muted, letterSpacing: 0.5 },
-  hourLine: { flex: 1, height: 1, backgroundColor: colors.border },
-  row: { height: ROW_HEIGHT, flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 12, backgroundColor: colors.card, borderBottomWidth: 1, borderColor: colors.rowLine },
+  dayCount: { fontSize: 11, color: "#5a6576", marginTop: 1 },
+  legend: { flexDirection: "row", flexWrap: "wrap", gap: 18 },
+  legendItem: { flexDirection: "row", alignItems: "center", gap: 5 },
+  legendSwatch: { width: 11, height: 11 },
+  legendText: { fontSize: 12, color: "#3a4452" },
+  // A row is a line of cells, like a spreadsheet: time, price, the four players, carts and status.
+  row: { height: ROW_HEIGHT, flexDirection: "row", alignItems: "stretch", backgroundColor: colors.card, borderBottomWidth: 1, borderColor: colors.rowLine },
   rowSelected: { backgroundColor: colors.primaryLight },
-  timeCol: { width: 52 },
-  rowTime: { fontSize: 15, fontWeight: "700", color: colors.text, fontVariant: ["tabular-nums"] },
-  next: { fontSize: 9, fontWeight: "800", color: colors.primary, letterSpacing: 1 },
-  price: { width: 56, height: 24, borderRadius: 0, alignItems: "flex-start", justifyContent: "center" },
-  priceText: { fontSize: 12, fontWeight: "500", color: colors.muted, fontVariant: ["tabular-nums"] },
-  slots: { flex: 1, flexDirection: "row", gap: 2, minWidth: 0 },
-  slot: { flex: 1, height: 26, borderRadius: 0, justifyContent: "center", paddingHorizontal: 8, minWidth: 0 },
-  slotOpen: { backgroundColor: "transparent", borderWidth: 1, borderStyle: "dashed", borderColor: "#a3adba", alignItems: "center" },
-  slotText: { color: "#fff", fontSize: 13, fontWeight: "600" },
-  openText: { color: colors.muted, fontSize: 12 },
-  blockedBar: { flex: 1, height: 26, borderRadius: 0, backgroundColor: colors.blocked, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 10 },
-  blockedText: { color: colors.muted, fontStyle: "italic", fontSize: 12, flex: 1 },
-  endCol: { width: 112, alignItems: "flex-end" },
+  timeCol: { width: 78, justifyContent: "center", paddingHorizontal: 12, backgroundColor: colors.bg },
+  rowTime: { fontSize: 13, fontWeight: "600", color: colors.text, fontVariant: ["tabular-nums"] },
+  price: { width: 50, justifyContent: "center", paddingHorizontal: 8, borderLeftWidth: 1, borderColor: colors.rowLine },
+  priceText: { fontSize: 12, color: colors.muted, fontVariant: ["tabular-nums"] },
+  playerCol: { flex: 1, minWidth: 0, justifyContent: "center", paddingHorizontal: 8, borderLeftWidth: 1, borderColor: colors.rowLine },
+  slots: { flexDirection: "row", gap: 2, minWidth: 0 },
+  slot: { flex: 1, height: 24, justifyContent: "center", paddingHorizontal: 8, minWidth: 0 },
+  slotOpen: { borderWidth: 1, borderStyle: "dashed", borderColor: "#a3adba" },
+  slotText: { color: "#fff", fontSize: 12, fontWeight: "600" },
+  openText: { color: "#5a6576", fontSize: 12 },
+  blockedBar: { height: 24, backgroundColor: "#d5dae0", justifyContent: "center", paddingHorizontal: 10 },
+  blockedText: { color: "#27303c", fontSize: 12, fontWeight: "600" },
+  cartCol: { width: 100, flexDirection: "row", alignItems: "center", paddingHorizontal: 10, borderLeftWidth: 1, borderColor: colors.rowLine },
+  cart: { fontSize: 12, color: "#3a4452" },
+  cartRow: { flexDirection: "row", alignItems: "center", gap: 4 },
+  endCol: { width: 118, alignItems: "flex-end", justifyContent: "center", paddingHorizontal: 12, borderLeftWidth: 1, borderColor: colors.rowLine },
   pay: { fontWeight: "700", fontSize: 12 },
   // Status as a small solid box, the same colors as the players' boxes.
   tag: { paddingHorizontal: 7, paddingVertical: 3 },
   tagText: { color: "#fff", fontSize: 11, fontWeight: "700", letterSpacing: 0.3 },
-  cartCol: { width: 84, flexDirection: "row", alignItems: "center", gap: 4, alignSelf: "stretch", borderLeftWidth: 1, borderColor: colors.rowLine, paddingLeft: 10 },
-  cartRow: { flexDirection: "row", alignItems: "center", gap: 4 },
-  cart: { fontSize: 12, color: colors.muted, fontWeight: "600" },
   side: { width: 400, borderLeftWidth: 1, borderColor: colors.border, backgroundColor: colors.card },
 });
