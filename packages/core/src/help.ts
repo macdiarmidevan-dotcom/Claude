@@ -270,7 +270,7 @@ export const HELP_ARTICLES: HelpArticle[] = [
     title: "Add-ons: turn features on or off",
     summary: "Show only the parts of the software your course uses.",
     body: [
-      "Open Add-ons in the menu to see every optional part of the software, grouped as Tee sheet, Customers, Operations, and Shop and food. A manager flips the switch to turn one on or off; everyone else can only look.",
+      "Open Add-ons in the menu to see every optional part of the software, grouped as Tee sheet, Customers, Operations, Shop and food, and AI. A manager flips the switch to turn one on or off; everyone else can only look.",
       "Turning an add-on off hides it straight away: its menu item, tab or button goes, but nothing is deleted. Turning it back on brings everything back as it was.",
       "Tee sheet add-ons also change how the tee sheet looks: prices beside each time, the color key always showing, and the weather delay button.",
     ],
@@ -325,6 +325,20 @@ export const HELP_ARTICLES: HelpArticle[] = [
       "To set a budget, press Set budget on Reports › Revenue. Type what you expect each department (green fees, carts and extras, pro shop, food and drink, leagues and outings) to bring in each month, in dollars, then press Save budget. Fill in can start you from last year's revenue plus a percent, rounded to $100. Each month's budget is spread evenly over its days, so 10 days of a 30-day month count a third of it. A month left blank has no budget, and Against budget shows a dash for dates with no budget at all. Budget is shown as a percent: 100% means on budget.",
     ],
     keywords: ["budget", "vs budget", "revenue", "rounds", "utilization", "occupancy", "yield", "revpatt", "rate mix", "heat map", "compare", "last year", "dashboard"],
+    managersOnly: true,
+  },
+  {
+    id: "ask-your-data",
+    category: "reports",
+    title: "Ask your data",
+    summary: "Ask about revenue, rounds, labor, the pro shop or balances in plain words.",
+    body: [
+      "Reports › Ask your data (managers) answers questions about the course's numbers, such as \"How did revenue this month compare with last month?\", \"How full was the tee sheet last week?\" or \"How much do members owe on house accounts?\". Type a question and press Ask, or tap one of the examples.",
+      "Answers come from the manager reports: Revenue, Rounds & tee sheet, Labor, Inventory and Payments & balances. Under each answer are the reports it used; tap one to open that report on the same dates. Pick a date button on the report to go back to the usual dates.",
+      "When the AI assistant is set up on the server, it reads whichever reports the question needs, says which dates it used, and you can ask follow-up questions. Otherwise you get a quick summary of the closest report: name a period like today, yesterday, this week, last week, this month, last month, this year or a month such as October, or it uses the last 7 days.",
+      "It only reads the numbers and never changes anything. It can't answer about things the software doesn't record, such as expenses or the weather. Turn it off in Add-ons › AI › Ask your data.",
+    ],
+    keywords: ["ask", "ai", "question", "assistant", "data", "numbers", "how much", "how many", "claude", "chat"],
     managersOnly: true,
   },
   {

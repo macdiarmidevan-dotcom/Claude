@@ -14,9 +14,10 @@ export type AddOnKey =
   | "leagues"
   | "staff_schedule"
   | "pro_shop"
-  | "food_bar";
+  | "food_bar"
+  | "ask_data";
 
-export type AddOnGroup = "tee_sheet" | "customers" | "operations" | "shop";
+export type AddOnGroup = "tee_sheet" | "customers" | "operations" | "shop" | "ai";
 
 export interface AddOnInfo {
   key: AddOnKey;
@@ -32,6 +33,7 @@ export const ADD_ON_GROUPS: { id: AddOnGroup; label: string }[] = [
   { id: "customers", label: "Customers" },
   { id: "operations", label: "Operations" },
   { id: "shop", label: "Shop and food" },
+  { id: "ai", label: "AI" },
 ];
 
 export const ADD_ONS: AddOnInfo[] = [
@@ -47,6 +49,13 @@ export const ADD_ONS: AddOnInfo[] = [
   { key: "staff_schedule", group: "operations", name: "Staff schedule", description: "Shifts, the time clock, and shift swaps between employees.", defaultOn: true },
   { key: "pro_shop", group: "shop", name: "Pro shop register", description: "A register for merchandise, with products, stock counts, sales history, passes and loyalty points.", defaultOn: false },
   { key: "food_bar", group: "shop", name: "Food and bar", description: "Open tabs, kitchen and bar order screens, and turn-stand sales tied to the golfer.", defaultOn: false },
+  {
+    key: "ask_data",
+    group: "ai",
+    name: "Ask your data",
+    description: "Managers ask about revenue, rounds, labor, the pro shop and balances in plain words, and get an answer with links to the reports it came from.",
+    defaultOn: true,
+  },
 ];
 
 export type AddOnSettings = Record<AddOnKey, boolean>;

@@ -12,6 +12,8 @@ export type Preset = "today" | "yesterday" | "7d" | "30d" | "month" | "last-mont
 export interface ReportRange {
   preset: Preset;
   compare: ReportCompare;
+  /** Dates an answer in Ask your data pointed to; picking a preset clears them. */
+  custom?: { from: string; to: string };
 }
 export const DEFAULT_RANGE: ReportRange = { preset: "30d", compare: "previous" };
 
@@ -52,6 +54,11 @@ function datesFor(preset: Preset, today: string): [string, string] {
   }
 }
 
+/** The dates a range covers: its own dates if it has them, otherwise the preset's. */
+export function rangeDates(range: ReportRange, today: string): [string, string] {
+  return range.custom ? [range.custom.from, range.custom.to] : datesFor(range.preset, today);
+}
+
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const short = (date: string) => `${MONTHS[Number(date.slice(5, 7)) - 1]} ${Number(date.slice(8, 10))}`;
@@ -73,7 +80,7 @@ const SOURCE_LABEL: Record<string, string> = { staff: "Pro shop / walk-in", phon
 function useOverview(client: Client, timeZone: string, range: ReportRange, version = 0) {
   const [data, setData] = useState<Overview>();
   const [error, setError] = useState<string>();
-  const [from, to] = datesFor(range.preset, todayIn(timeZone));
+  const [from, to] = rangeDates(range, todayIn(timeZone));
   useEffect(() => {
     let live = true;
     setError(undefined);
@@ -110,8 +117,9 @@ export function OverviewReport({ client, timeZone, view, range, onRange }: { cli
       <View style={styles.bar}>
         <View style={styles.choices}>
           {PRESETS.map((p) => (
-            <Chip key={p.id} label={p.label} on={range.preset === p.id} onPress={() => onRange({ ...range, preset: p.id })} />
+            <Chip key={p.id} label={p.label} on={!range.custom && range.preset === p.id} onPress={() => onRange({ ...range, preset: p.id, custom: undefined })} />
           ))}
+          {range.custom && <Chip label={span(range.custom.from, range.custom.to)} on onPress={() => undefined} />}
         </View>
         <View style={[styles.choices, { marginTop: 6 }]}>
           <Text style={styles.compareLabel}>Compare with</Text>
@@ -153,7 +161,7 @@ export function OverviewReport({ client, timeZone, view, range, onRange }: { cli
 export function LaborReportScreen({ client, timeZone, range, onRange, onOpenStaff }: { client: Client; timeZone: string; range: ReportRange; onRange: (r: ReportRange) => void; onOpenStaff?: () => void }) {
   const [data, setData] = useState<LaborReport>();
   const [error, setError] = useState<string>();
-  const [from, to] = datesFor(range.preset, todayIn(timeZone));
+  const [from, to] = rangeDates(range, todayIn(timeZone));
   useEffect(() => {
     let live = true;
     setError(undefined);
@@ -170,8 +178,9 @@ export function LaborReportScreen({ client, timeZone, range, onRange, onOpenStaf
     <ScrollView contentContainerStyle={styles.page}>
       <View style={[styles.bar, styles.choices]}>
         {PRESETS.map((p) => (
-          <Chip key={p.id} label={p.label} on={range.preset === p.id} onPress={() => onRange({ ...range, preset: p.id })} />
+          <Chip key={p.id} label={p.label} on={!range.custom && range.preset === p.id} onPress={() => onRange({ ...range, preset: p.id, custom: undefined })} />
         ))}
+        {range.custom && <Chip label={span(range.custom.from, range.custom.to)} on onPress={() => undefined} />}
         {data && Platform.OS === "web" && (
           <Pressable accessibilityRole="button" onPress={() => laborCsv(data)} style={({ focused }: WebPress) => [styles.csv, focused && styles.focus]}>
             <Text style={styles.csvText}>Download CSV</Text>
@@ -340,7 +349,7 @@ function LaborView({ r, onOpenStaff }: { r: LaborReport; onOpenStaff?: () => voi
 function useRangeReport<T extends { from: string; to: string }>(load: (from: string, to: string) => Promise<T>, timeZone: string, range: ReportRange) {
   const [data, setData] = useState<T>();
   const [error, setError] = useState<string>();
-  const [from, to] = datesFor(range.preset, todayIn(timeZone));
+  const [from, to] = rangeDates(range, todayIn(timeZone));
   useEffect(() => {
     let live = true;
     setError(undefined);
@@ -362,8 +371,9 @@ function RangeShell<T extends { from: string; to: string }>({ range, onRange, st
     <ScrollView contentContainerStyle={styles.page}>
       <View style={[styles.bar, styles.choices]}>
         {PRESETS.map((p) => (
-          <Chip key={p.id} label={p.label} on={range.preset === p.id} onPress={() => onRange({ ...range, preset: p.id })} />
+          <Chip key={p.id} label={p.label} on={!range.custom && range.preset === p.id} onPress={() => onRange({ ...range, preset: p.id, custom: undefined })} />
         ))}
+        {range.custom && <Chip label={span(range.custom.from, range.custom.to)} on onPress={() => undefined} />}
         {data && csv && Platform.OS === "web" && (
           <Pressable accessibilityRole="button" onPress={() => csv(data)} style={({ focused }: WebPress) => [styles.csv, focused && styles.focus]}>
             <Text style={styles.csvText}>Download CSV</Text>

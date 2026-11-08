@@ -1,6 +1,6 @@
 // A pretend course that runs entirely in the browser, for showing the app without a server.
 // Only built in when EXPO_PUBLIC_DEMO=1. Nothing is saved: reloading the page starts over.
-import { addOnSettings, type AddOnKey, type RateRule } from "@golf/core";
+import { addOnSettings, parseDataQuestion, quickAnswer, type AddOnKey, type DataAnswer, type DataReport, type DataTurn, type RateRule } from "@golf/core";
 import { answerFromArticles, generateTeeTimes, parseTeeSheetCsv, quotePlayer, riverBend, riverBendAddOns, riverBendRates, riverBendTeeSheet } from "@golf/core";
 import {
   ApiError,
@@ -2109,7 +2109,7 @@ export function createDemoClient(apiKey: string): Client {
       { id: "products", title: "Enter your pro shop stock", detail: `${products.filter((p) => p.active).length} products are set up.`, status: "done", where: "inventory" },
       { id: "cards", title: "Connect a card reader", detail: cardSettings.provider !== "standalone" ? "A card processor is connected." : "Cards are recorded only, taken on your own terminal. Connect Stripe or Square to charge from here.", status: cardSettings.provider !== "standalone" ? "done" : "optional", where: "settings" },
       { id: "server-sync", title: "Server: set SYNC_SECRET", detail: "Needed to store a provider's API sign-in. Set it to a long random string on the server.", status: "optional", where: "none" },
-      { id: "server-ai", title: "Server: set ANTHROPIC_API_KEY", detail: "Without it the help assistant answers from the guides only.", status: "optional", where: "none" },
+      { id: "server-ai", title: "Server: set ANTHROPIC_API_KEY", detail: "Without it the help assistant answers from the guides only, and Ask your data gives a quick summary of one report.", status: "optional", where: "none" },
     ];
     const needed = items.filter((i) => i.status !== "optional");
     return { items, done: needed.filter((i) => i.status === "done").length, total: needed.length };
@@ -2692,6 +2692,22 @@ export function createDemoClient(apiKey: string): Client {
     setup: () => reply(() => demoSetup()),
     inventoryReport: (from: string, to: string) => reply(() => demoInventory(from, to)),
     balancesReport: (from: string, to: string) => reply(() => demoBalances(from, to)),
+    // The demo has no AI: like the server without an API key, it sums up the closest report.
+    askData: (input: { question: string; history: DataTurn[] }) =>
+      reply((): DataAnswer => {
+        managerOnly();
+        if (!input.question.trim()) throw new ApiError(400, "empty_question", "Type a question");
+        const q = parseDataQuestion(input.question, todayIn(riverBend.timeZone));
+        const report: DataReport =
+          q.topic === "revenue" || q.topic === "rounds"
+            ? { topic: q.topic, data: demoOverview(q.from, q.to, "previous") }
+            : q.topic === "labor"
+              ? { topic: "labor", data: demoLabor(q.from, q.to) }
+              : q.topic === "inventory"
+                ? { topic: "inventory", data: demoInventory(q.from, q.to) }
+                : { topic: "balances", data: demoBalances(q.from, q.to) };
+        return { answer: quickAnswer(q, report), sources: [{ tab: q.topic, from: q.from, to: q.to }], via: "summary" };
+      }),
     dayClose: (date: string) => reply(() => demoClose(date)),
     delays: (date: string) => reply(() => delays.filter((d) => d.date === date).map(({ fromAt: _, ...d }) => d)),
     sendFeedback: (input: { body: string; page?: string | null }) =>

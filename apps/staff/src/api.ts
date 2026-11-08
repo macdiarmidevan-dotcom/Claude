@@ -1,6 +1,6 @@
 // Typed client for the golf API. Staff sign in with their own email and password, which gives a
 // session token (st_…). A shared device key (sk_) still works for kiosks.
-import type { AddOnKey, AddOnSettings, RateRule } from "@golf/core";
+import type { AddOnKey, AddOnSettings, DataAnswer, DataTurn, RateRule } from "@golf/core";
 import { createDemoClient, demoSignIn, DEMO, DEMO_URL } from "./demo";
 
 export type Station = "proshop" | "starter";
@@ -1387,6 +1387,7 @@ function createHttpClient(settings: Pick<Settings, "apiUrl" | "courseSlug" | "ap
     setup: () => request<SetupChecklist>("/setup"),
     inventoryReport: (from: string, to: string) => request<InventoryReport>(`/reports/inventory?from=${from}&to=${to}`),
     balancesReport: (from: string, to: string) => request<BalancesReport>(`/reports/balances?from=${from}&to=${to}`),
+    askData: (input: { question: string; history: DataTurn[] }) => request<DataAnswer>("/reports/ask", { method: "POST", body: input }),
     dayClose: (date: string) => request<DayClose>(`/closes/${date}`),
     openDay: (date: string, open: { startingCashCents: number }) => request<DayClose>(`/opens/${date}`, { method: "PUT", body: open }),
     closeDay: (date: string, close: { countedCashCents: number; note?: string | null }) =>

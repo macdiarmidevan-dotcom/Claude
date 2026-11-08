@@ -29,6 +29,7 @@ const ICON: Record<AddOnKey, IconName> = {
   staff_schedule: "calendar",
   pro_shop: "bag",
   food_bar: "coffee",
+  ask_data: "sparkle",
 };
 
 export function AddOnsScreen({ client, isManager, settings, onChange }: { client: Client; isManager: boolean; settings: AddOnSettings; onChange: (s: AddOnSettings) => void }) {
