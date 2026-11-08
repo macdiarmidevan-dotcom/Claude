@@ -96,13 +96,13 @@ export function AddOnsScreen({ client, isManager, settings, onChange }: { client
 }
 
 const styles = StyleSheet.create({
-  page: { padding: 16, maxWidth: 1000 },
+  page: { padding: 16 },
   intro: { color: colors.muted, fontSize: 13, lineHeight: 19, marginBottom: 12, maxWidth: 760 },
   error: { color: colors.noShow, fontSize: 13, marginBottom: 10 },
   group: { marginBottom: 18 },
   groupTitle: { fontSize: 12, fontWeight: "700", color: colors.muted, letterSpacing: 0.8, textTransform: "uppercase", marginBottom: 8 },
   grid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
-  card: { flexGrow: 1, flexBasis: 420, minWidth: 260, maxWidth: 489, flexDirection: "row", alignItems: "center", gap: 12, borderWidth: 1, borderColor: colors.border, borderRadius: 0, padding: 12, backgroundColor: colors.card },
+  card: { flexGrow: 1, flexBasis: 420, minWidth: 260, flexDirection: "row", alignItems: "center", gap: 12, borderWidth: 1, borderColor: colors.border, borderRadius: 0, padding: 12, backgroundColor: colors.card },
   cardOn: { borderColor: "#9cc9ad" },
   iconBox: { width: 38, height: 38, borderRadius: 0, backgroundColor: colors.bg, alignItems: "center", justifyContent: "center" },
   cardTop: { flexDirection: "row", alignItems: "center", gap: 8 },

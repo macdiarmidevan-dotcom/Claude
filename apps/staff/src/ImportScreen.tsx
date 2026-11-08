@@ -257,7 +257,7 @@ function Button({ label, onPress, primary, disabled }: { label: string; onPress:
 }
 
 const styles = StyleSheet.create({
-  page: { padding: 16, paddingBottom: 60, maxWidth: 760 },
+  page: { padding: 16, paddingBottom: 60 },
   sectionTitle: { fontSize: 16, fontWeight: "700", color: "#1c1c1a", marginBottom: 12 },
   lead: { fontSize: 14, lineHeight: 24, color: colors.text, marginBottom: 20 },
   label: { fontSize: 12, fontWeight: "700", color: colors.muted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 },

@@ -157,7 +157,7 @@ function Stat({ label, value }: { label: string; value: string }) {
 }
 
 const styles = StyleSheet.create({
-  page: { padding: 16, maxWidth: 980 },
+  page: { padding: 16 },
   card: { borderWidth: 1, borderColor: colors.border, padding: 14, backgroundColor: colors.card, marginBottom: 14 },
   title: { fontSize: 15, fontWeight: "700", color: colors.text, marginBottom: 4 },
   strong: { fontSize: 14, fontWeight: "600", color: colors.text },

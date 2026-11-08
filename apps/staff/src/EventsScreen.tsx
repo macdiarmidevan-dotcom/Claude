@@ -794,7 +794,7 @@ const styles = StyleSheet.create({
   tabOn: { borderColor: colors.primary },
   tabText: { color: colors.muted, fontWeight: "600", fontSize: 14 },
   tabTextOn: { color: colors.primary },
-  page: { padding: 16, maxWidth: 1100 },
+  page: { padding: 16 },
   h1: { fontSize: 20, fontWeight: "700", color: colors.text, marginBottom: 4 },
   title: { fontSize: 15, fontWeight: "700", color: colors.text, marginBottom: 8 },
   text: { color: colors.text, fontSize: 14 },

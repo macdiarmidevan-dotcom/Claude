@@ -128,7 +128,7 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
   const startDay = (title: string) => (
     <>
       <Header title={title} onOpenMenu={openMenu} subtitle="Start the day first" />
-      <ScrollView contentContainerStyle={{ padding: 16, maxWidth: 720 }}>
+      <ScrollView contentContainerStyle={{ padding: 16 }}>
         <StartDayForm client={client} date={today!} onOpened={setDrawer} />
       </ScrollView>
     </>
@@ -785,7 +785,7 @@ const styles = StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.45)" },
   menuButton: { width: 44, height: 44, alignItems: "center", justifyContent: "center", borderRadius: 0 },
   menuIcon: { fontSize: 18, color: colors.text },
-  content: { padding: 16, maxWidth: 640 },
+  content: { padding: 16 },
   label: { fontSize: 12, fontWeight: "700", color: colors.muted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 },
   help: { color: colors.muted, fontSize: 14, lineHeight: 22 },
   soonTitle: { fontSize: 17, fontWeight: "700", color: colors.text, marginBottom: 8 },

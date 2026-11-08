@@ -57,7 +57,7 @@ export function WalletSection({ client, golferId, isManager }: { client: Client;
   const { loyalty } = wallet;
   const shown = wallet.passes.filter((p) => p.status === "active");
   return (
-    <View style={{ maxWidth: 820 }}>
+    <View>
       <Text role="heading" style={styles.h2}>Passes and points</Text>
       {error && <Text role="alert" style={styles.error}>{error}</Text>}
       <View style={styles.row}>

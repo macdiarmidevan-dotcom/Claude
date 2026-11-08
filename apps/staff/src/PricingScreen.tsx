@@ -288,7 +288,7 @@ function Button({ label, onPress, primary, disabled }: { label: string; onPress:
 }
 
 const styles = StyleSheet.create({
-  page: { padding: 16, maxWidth: 900 },
+  page: { padding: 16 },
   card: { borderWidth: 1, borderColor: colors.border, borderRadius: 0, padding: 14, backgroundColor: colors.card, marginBottom: 14 },
   title: { fontSize: 15, fontWeight: "700", color: colors.text, marginBottom: 4 },
   strong: { fontSize: 14, fontWeight: "600", color: colors.text },

@@ -46,7 +46,7 @@ export function PassSetup({ client, isManager }: { client: Client; isManager: bo
   }
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, maxWidth: 860 }}>
+    <ScrollView contentContainerStyle={{ padding: 16 }}>
       {error && <Text role="alert" style={styles.error}>{error}</Text>}
       <View style={styles.card}>
         <Text role="heading" aria-level={2} style={styles.title}>

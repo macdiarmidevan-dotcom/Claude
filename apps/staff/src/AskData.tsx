@@ -129,7 +129,7 @@ export function AskDataScreen({ client, chat, setChat, onOpen }: { client: Clien
 }
 
 const styles = StyleSheet.create({
-  page: { padding: 16, paddingBottom: 48, maxWidth: 860 },
+  page: { padding: 16, paddingBottom: 48 },
   card: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: radius, padding: 16 },
   titleRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 6 },
   title: { fontSize: 18, fontWeight: "700", color: colors.text },
