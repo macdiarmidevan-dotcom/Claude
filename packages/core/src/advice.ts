@@ -67,10 +67,24 @@ export type AdviceStatus = "raise" | "lower" | "hold" | "no_data" | "no_rate";
 export interface AdviceCell {
   weekday: number;
   band: TimeBand;
+  /** Open tee times in the period. */
+  teeTimes: number;
   spots: number;
   players: number;
+  noShows: number;
   fillPct: number | null;
   noShowPct: number | null;
+  /** Fill compared with the course's average fill (1 = average). */
+  relativeFill: number | null;
+  /** First-loop green fees and extras the players paid, in total and per player. */
+  greenFeeCents: number;
+  extrasCents: number;
+  avgGreenFeeCents: number | null;
+  extrasPerPlayerCents: number | null;
+  /** The assumed price response: the share of players lost per share of price added (e.g. -0.8). */
+  priceResponse: number | null;
+  /** Whether the times were full enough to count as turning golfers away. */
+  turnedAway: boolean;
   /** The standard (nonresident adult) rate at these times today. */
   currentCents: number | null;
   currentRateName: string | null;
@@ -118,6 +132,7 @@ export function recommendRates(input: { teeTimes: AdviceTeeTime[]; rates: RateRu
       groups.push({
         weekday,
         band,
+        teeTimes: times.length,
         spots: sum("spots"),
         players: sum("players"),
         noShows: sum("noShows"),
@@ -131,16 +146,25 @@ export function recommendRates(input: { teeTimes: AdviceTeeTime[]; rates: RateRu
   const allSpots = enough.reduce((s, g) => s + g.spots, 0);
   const average = allSpots ? enough.reduce((s, g) => s + g.players, 0) / allSpots : 0;
 
-  const cells: AdviceCell[] = groups.map(({ weekday, band, spots, players, noShows, green, extras, rate }) => {
+  const cells: AdviceCell[] = groups.map(({ weekday, band, teeTimes, spots, players, noShows, green, extras, rate }) => {
     const fill = spots ? players / spots : null;
     const noShowPct = players + noShows ? Math.round((noShows / (players + noShows)) * 1000) / 10 : null;
     const base: AdviceCell = {
       weekday,
       band: band.id,
+      teeTimes,
       spots,
       players,
+      noShows,
       fillPct: fill === null ? null : Math.round(fill * 1000) / 10,
       noShowPct,
+      relativeFill: fill !== null && average ? Math.round((fill / average) * 100) / 100 : null,
+      greenFeeCents: green,
+      extrasCents: extras,
+      avgGreenFeeCents: players ? Math.round(green / players) : null,
+      extrasPerPlayerCents: players ? Math.round(extras / players) : null,
+      priceResponse: null,
+      turnedAway: false,
       currentCents: rate?.priceCents ?? null,
       currentRateName: rate?.name ?? null,
       recommendedCents: null,
@@ -193,6 +217,8 @@ export function recommendRates(input: { teeTimes: AdviceTeeTime[]; rates: RateRu
       ...base,
       recommendedCents: best,
       status,
+      priceResponse: Math.round(response * 100) / 100,
+      turnedAway: full,
       projectedRevenuePerSpotCents: revenueAt(p0) ? Math.round(((revenueAt(best) / revenueAt(p0)) * (green + extras)) / spots) : base.revenuePerSpotCents,
       weeklyPlayersChange: Math.round(weeklyPlayers * 10) / 10,
       weeklyGainCents: Math.round(weeklyGain),

@@ -51,6 +51,10 @@ describe("recommended rates", () => {
     expect(quiet.recommendedCents! % 100).toBe(0);
     expect(quiet.weeklyPlayersChange).toBeGreaterThan(0);
     expect(quiet.reason).toMatch(/against 50% across the week/);
+    // The inputs behind each number come back too.
+    expect(quiet).toMatchObject({ teeTimes: 96, spots: 384, noShows: 0, avgGreenFeeCents: 2900, extrasPerPlayerCents: 780, turnedAway: false });
+    expect(quiet.relativeFill).toBeCloseTo(0.4, 1);
+    expect(quiet.priceResponse).toBeLessThan(busy.priceResponse!);
   });
 
   it("keeps the price when every time is about as full", () => {
