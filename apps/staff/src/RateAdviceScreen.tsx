@@ -84,8 +84,8 @@ export function RateAdviceScreen({ client }: { client: Client }) {
       {advice && (
         <View style={styles.card}>
           <Text style={[styles.help, { marginBottom: 8 }]}>Each box shows the suggested price, the change from today's nonresident rate, and how full those times were. Tap one to see why.</Text>
-          <ScrollView horizontal>
-            <View role="table" aria-label="Recommended rates by day and time">
+          <ScrollView horizontal contentContainerStyle={{ flexGrow: 1 }}>
+            <View role="table" aria-label="Recommended rates by day and time" style={{ flexGrow: 1 }}>
               <View role="row" style={styles.gridRow}>
                 <View style={styles.bandCell} />
                 {DAYS.map((d) => (
@@ -143,7 +143,125 @@ export function RateAdviceScreen({ client }: { client: Client }) {
           How it works: there's no way to know yet whether your overall price level is right, so a time as full as your average ({Math.round(advice!.averageFillPct)}% for this period) keeps today's rate, and the rest are priced around it. Golfers who want busy times are assumed to care less about price than golfers at quiet times. Times at least {Math.round(a.fullAt * 100)}% full are treated as turning golfers away. Suggestions stay within {Math.round(a.maxChange * 100)}% of today's rate and aim for no more than {Math.round(a.targetFill * 100)}% full to leave room for walk-ups. Food and pro shop sales aren't counted yet. Price tests at your course will replace these guesses later.
         </Text>
       )}
+
+      {advice && <AdviceData advice={advice} />}
     </ScrollView>
+  );
+}
+
+const COLUMNS: { label: string; width: number; help: string }[] = [
+  { label: "Day", width: 96, help: "" },
+  { label: "Time", width: 116, help: "" },
+  { label: "Tee times", width: 76, help: "Open tee times in the period (blocked times left out)" },
+  { label: "Open spots", width: 84, help: "Player spots on those tee times" },
+  { label: "Players", width: 68, help: "Players who came" },
+  { label: "No-shows", width: 76, help: "Booked players who didn't show" },
+  { label: "Fill", width: 64, help: "Players over open spots" },
+  { label: "vs average", width: 80, help: "Fill compared with the course average; 1.00 is average" },
+  { label: "Green fee paid", width: 104, help: "Average first-loop green fee per player, after resident, senior and other rates" },
+  { label: "Extras per player", width: 116, help: "Carts, rentals and other extras per player" },
+  { label: "Money per spot", width: 104, help: "Green fees plus extras over open spots" },
+  { label: "Today's rate", width: 210, help: "Nonresident adult rate at these times" },
+  { label: "Price response", width: 104, help: "Assumed share of players lost for each share of price added" },
+  { label: "Turned away", width: 88, help: "At least 90% full, so counted as turning golfers away" },
+  { label: "Suggested", width: 104, help: "" },
+  { label: "Players a week", width: 104, help: "Expected change in players a week at the suggested price" },
+  { label: "Money a week", width: 104, help: "Expected change in green fees and extras a week" },
+];
+
+const signed = (cents: number) => (cents === 0 ? "$0.00" : `${cents > 0 ? "+" : "−"}${money(Math.abs(cents))}`);
+
+/** Every number that goes into the suggestions, one row per day and time, with the settings used. */
+function AdviceData({ advice }: { advice: RateAdvice }) {
+  const a = advice.assumptions;
+  const bandIndex = (c: AdviceCell) => TIME_BANDS.findIndex((b) => b.id === c.band);
+  const rows = [...advice.cells].sort((x, y) => x.weekday - y.weekday || bandIndex(x) - bandIndex(y));
+  const total = (k: "teeTimes" | "spots" | "players" | "noShows" | "greenFeeCents" | "extrasCents" | "weeklyGainCents") => rows.reduce((s, c) => s + c[k], 0);
+  const players = total("players");
+  const spots = total("spots");
+  const settings: [string, string][] = [
+    ["Period", `${shortDate(advice.from)} to ${shortDate(advice.to)} (${advice.weeks} weeks${advice.basis === "last_year" ? ", one year ago" : ""})`],
+    ["Course average fill", `${advice.averageFillPct}%, from times with at least ${a.minSpots} open spots`],
+    ["Times treated as turning golfers away", `${Math.round(a.fullAt * 100)}% full or more, with ${Math.round((a.turnedAway - 1) * 100)}% more golfers assumed to have wanted them`],
+    ["Most players expected", `${Math.round(a.targetFill * 100)}% of open spots, leaving room for walk-ups`],
+    ["Largest change", `${Math.round(a.maxChange * 100)}% from today's rate, in whole dollars`],
+    ["Smallest gain worth a change", `${Math.round(a.minGain * 1000) / 10}% more money per open spot`],
+    ["Price response", `At an average time it's set so today's rate earns the most, then multiplied by (average fill ÷ fill) to the power ${a.busyBend}`],
+    ["Not counted yet", "Food, bar and pro shop sales, weather, holidays and how far ahead people book"],
+  ];
+  const right = { textAlign: "right" as const };
+  const td = (key: string, text: string, width: number, extra?: object) => (
+    <Text key={key} role="cell" style={[styles.td, { flexGrow: width, flexBasis: width }, extra]}>
+      {text}
+    </Text>
+  );
+  const w = COLUMNS.map((c) => c.width);
+  return (
+    <View style={[styles.card, { marginTop: 14 }]}>
+      <Text role="heading" aria-level={2} style={styles.title}>The data behind these rates</Text>
+      <Text style={[styles.help, { marginBottom: 10 }]}>Everything the suggestions are worked out from, for the period picked above.</Text>
+      <View role="table" aria-label="Settings used" style={{ marginBottom: 14 }}>
+        {settings.map(([k, v]) => (
+          <View key={k} role="row" style={styles.settingRow}>
+            <Text role="rowheader" style={styles.settingKey}>{k}</Text>
+            <Text role="cell" style={styles.settingValue}>{v}</Text>
+          </View>
+        ))}
+      </View>
+      <ScrollView horizontal contentContainerStyle={{ flexGrow: 1 }}>
+        <View role="table" aria-label="Data for each day and time" style={{ flexGrow: 1 }}>
+          <View role="row" style={[styles.tr, { backgroundColor: colors.strip }]}>
+            {COLUMNS.map((c, i) => (
+              <Text key={c.label} role="columnheader" accessibilityHint={c.help || undefined} style={[styles.th, { flexGrow: c.width, flexBasis: c.width }, i >= 2 && right]}>
+                {c.label}
+              </Text>
+            ))}
+          </View>
+          {rows.map((c) => {
+            const has = c.recommendedCents !== null;
+            const dash = (v: string | null) => v ?? "–";
+            return (
+              <View key={`${c.weekday}-${c.band}`} role="row" style={styles.tr}>
+                {td("day", DAY_NAMES[c.weekday - 1]!, w[0]!, { fontWeight: "600" })}
+                {td("time", TIME_BANDS[bandIndex(c)]!.label, w[1]!)}
+                {td("tt", String(c.teeTimes), w[2]!, right)}
+                {td("sp", String(c.spots), w[3]!, right)}
+                {td("pl", String(c.players), w[4]!, right)}
+                {td("ns", String(c.noShows), w[5]!, right)}
+                {td("fill", dash(c.fillPct === null ? null : `${c.fillPct.toFixed(1)}%`), w[6]!, right)}
+                {td("rel", dash(c.relativeFill === null ? null : c.relativeFill.toFixed(2)), w[7]!, right)}
+                {td("gf", dash(c.avgGreenFeeCents === null ? null : money(c.avgGreenFeeCents)), w[8]!, right)}
+                {td("ex", dash(c.extrasPerPlayerCents === null ? null : money(c.extrasPerPlayerCents)), w[9]!, right)}
+                {td("rps", dash(c.revenuePerSpotCents === null ? null : money(c.revenuePerSpotCents)), w[10]!, right)}
+                {td("rate", dash(c.currentCents === null ? null : `${money(c.currentCents)} · ${c.currentRateName}`), w[11]!, right)}
+                {td("resp", dash(c.priceResponse === null ? null : c.priceResponse.toFixed(2)), w[12]!, right)}
+                {td("ta", has ? (c.turnedAway ? "Yes" : "No") : "–", w[13]!, right)}
+                {td("sug", has ? money(c.recommendedCents!) : change(c), w[14]!, has ? { ...right, fontWeight: "700" } : { ...right, color: colors.muted })}
+                {td("pw", has ? `${c.weeklyPlayersChange > 0 ? "+" : ""}${c.weeklyPlayersChange}` : "–", w[15]!, right)}
+                {td("mw", has ? signed(c.weeklyGainCents) : "–", w[16]!, right)}
+              </View>
+            );
+          })}
+          <View role="row" style={[styles.tr, { backgroundColor: colors.strip }]}>
+            {td("day", "Whole week", w[0]! + w[1]!, { fontWeight: "700" })}
+            {td("tt", String(total("teeTimes")), w[2]!, { ...right, fontWeight: "700" })}
+            {td("sp", String(spots), w[3]!, { ...right, fontWeight: "700" })}
+            {td("pl", String(players), w[4]!, { ...right, fontWeight: "700" })}
+            {td("ns", String(total("noShows")), w[5]!, { ...right, fontWeight: "700" })}
+            {td("fill", spots ? `${Math.round((players / spots) * 1000) / 10}%` : "–", w[6]!, { ...right, fontWeight: "700" })}
+            {td("rel", "", w[7]!)}
+            {td("gf", players ? money(Math.round(total("greenFeeCents") / players)) : "–", w[8]!, { ...right, fontWeight: "700" })}
+            {td("ex", players ? money(Math.round(total("extrasCents") / players)) : "–", w[9]!, { ...right, fontWeight: "700" })}
+            {td("rps", spots ? money(Math.round((total("greenFeeCents") + total("extrasCents")) / spots)) : "–", w[10]!, { ...right, fontWeight: "700" })}
+            {td("gap", "", w.slice(11, 16).reduce((s, x) => s + x, 0))}
+            {td("mw", signed(total("weeklyGainCents")), w[16]!, { ...right, fontWeight: "700" })}
+          </View>
+        </View>
+      </ScrollView>
+      <Text style={[styles.help, { marginTop: 10 }]}>
+        Fill and money count players who came; no-shows are left out. "vs average" above 1.00 means busier than the course's average time. Price response −0.80 means about 8% fewer players for a price 10% higher, and 8% more for a price 10% lower.
+      </Text>
+    </View>
   );
 }
 
@@ -174,12 +292,18 @@ const styles = StyleSheet.create({
   gridRow: { flexDirection: "row" },
   bandCell: { width: 120, paddingRight: 8, justifyContent: "center" },
   bandText: { fontSize: 13, fontWeight: "600", color: colors.text, paddingVertical: 8 },
-  dayHead: { width: 104, textAlign: "center", fontSize: 12, fontWeight: "700", color: colors.muted, paddingVertical: 6, backgroundColor: colors.strip, borderWidth: 1, borderColor: colors.rowLine, marginLeft: -1 },
-  cell: { width: 104, height: 74, borderWidth: 1, borderColor: colors.rowLine, marginLeft: -1, marginTop: -1, alignItems: "center", justifyContent: "center", gap: 1 },
+  dayHead: { flexGrow: 1, flexBasis: 104, textAlign: "center", fontSize: 12, fontWeight: "700", color: colors.muted, paddingVertical: 6, backgroundColor: colors.strip, borderWidth: 1, borderColor: colors.rowLine, marginLeft: -1 },
+  cell: { flexGrow: 1, flexBasis: 104, height: 74, borderWidth: 1, borderColor: colors.rowLine, marginLeft: -1, marginTop: -1, alignItems: "center", justifyContent: "center", gap: 1 },
   cellOpen: { borderColor: colors.primary, borderWidth: 2, zIndex: 1 },
   price: { fontSize: 17, fontWeight: "700", color: colors.text, fontVariant: ["tabular-nums"] },
   delta: { fontSize: 12, fontWeight: "700" },
   fill: { fontSize: 11, color: colors.muted },
+  settingRow: { flexDirection: "row", flexWrap: "wrap", borderBottomWidth: 1, borderColor: colors.rowLine, paddingVertical: 6, columnGap: 12 },
+  settingKey: { width: 280, fontSize: 13, fontWeight: "600", color: colors.text },
+  settingValue: { flex: 1, minWidth: 220, fontSize: 13, color: colors.text },
+  tr: { flexDirection: "row", borderBottomWidth: 1, borderColor: colors.rowLine },
+  th: { fontSize: 12, fontWeight: "700", color: colors.muted, paddingVertical: 7, paddingHorizontal: 6 },
+  td: { fontSize: 13, color: colors.text, paddingVertical: 6, paddingHorizontal: 6, fontVariant: ["tabular-nums"] },
   detail: { marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderColor: colors.border },
   focus: { outlineColor: colors.focus, outlineWidth: 2, outlineStyle: "solid" } as object,
 });
