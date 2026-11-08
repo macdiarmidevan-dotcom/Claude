@@ -15,7 +15,8 @@ export type AddOnKey =
   | "staff_schedule"
   | "pro_shop"
   | "food_bar"
-  | "ask_data";
+  | "ask_data"
+  | "rate_advice";
 
 export type AddOnGroup = "tee_sheet" | "customers" | "operations" | "shop" | "ai";
 
@@ -54,6 +55,13 @@ export const ADD_ONS: AddOnInfo[] = [
     group: "ai",
     name: "Ask your data",
     description: "Managers ask about revenue, rounds, labor, the pro shop and balances in plain words, and get an answer with links to the reports it came from.",
+    defaultOn: true,
+  },
+  {
+    key: "rate_advice",
+    group: "ai",
+    name: "Recommended rates",
+    description: "A suggested green fee for each day and time of day, worked out from how full your tee sheet gets. Managers only; it never changes a price.",
     defaultOn: true,
   },
 ];
