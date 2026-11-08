@@ -1,43 +1,54 @@
 import type { PressableStateCallbackType } from "react-native";
 
 export const colors = {
-  // A plain, businesslike palette: neutral grays with one blue for actions and selection.
-  primary: "#1f6fd1",
-  primaryLight: "#e8f0fb",
-  primaryText: "#1a5bb0",
-  bg: "#f2f3f5",
+  // Forest green chrome around a near-white work area, with square corners and thin lines.
+  primary: "#1d6b47",
+  primaryLight: "#e3f0e8",
+  primaryText: "#17573a",
+  bg: "#f4f6f8",
   card: "#ffffff",
-  border: "#d8dbe0",
-  text: "#1f2328",
-  muted: "#5f6670",
+  border: "#c9d0d8",
+  /** Lines between rows inside a table, lighter than the borders around it. */
+  rowLine: "#e2e6eb",
+  /** Header strips inside cards: table headings, stats and week bars. */
+  strip: "#eef1f4",
+  text: "#121821",
+  muted: "#4a5566",
   /** Example text inside an empty input. */
   placeholder: "#a3a9b1",
-  blocked: "#d6dade",
-  checkedIn: "#2e7d4f",
-  confirmed: "#2b5f9e",
-  noShow: "#b3261e",
-  warn: "#9a6700",
-  // Sidebar, like a desktop app's navigation rail.
-  rail: "#1d1f22",
-  railText: "#e6e8eb",
-  railMuted: "#9aa0a6",
-  railActive: "#1f6fd1",
+  blocked: "#d5dae0",
+  checkedIn: "#15703f",
+  confirmed: "#2563c9",
+  noShow: "#b42323",
+  warn: "#8a4200",
+  // The top bar (and the phone menu): dark forest green.
+  rail: "#0f1f18",
+  railText: "#e8eee9",
+  railMuted: "#aebfb4",
+  railActive: "#1d6b47",
+  railHover: "#1a3226",
+  railLine: "#22382c",
+  /** The bar under the menu with the page title and its buttons. */
+  toolbar: "#172a21",
+  toolbarLine: "#2f4a3b",
+  /** The line under the open menu item. */
+  railAccent: "#4caf7d",
   focus: "#1a73e8",
 };
 
-/** Corner radius used everywhere: square-ish, like desktop business software. */
-export const radius = 3;
+/** Corner radius used everywhere: square corners, like desktop business software. */
+export const radius = 0;
 
 /**
  * Fill colors for players on the tee sheet grid. Each has at least 4.5:1 contrast with
  * white text, and every state also has its own mark and words, so color is never the only cue.
  */
 export const slotColor = {
-  booked: "#1d5aa6",
-  prepaid: "#132d52",
-  checked_in: "#8f4700",
-  teed_off: "#1d5e33",
-  no_show: "#961c17",
+  booked: "#2563c9",
+  prepaid: "#173f86",
+  checked_in: "#b4580e",
+  teed_off: "#157a4a",
+  no_show: "#b42323",
 } as const;
 
 export type SlotState = keyof typeof slotColor;
@@ -69,7 +80,7 @@ export const statusLabel: Record<string, string> = {
 export const statusColor: Record<string, string> = {
   confirmed: colors.confirmed,
   checked_in: colors.checkedIn,
-  teed_off: "#2b6e45",
+  teed_off: "#157a4a",
   no_show: colors.noShow,
   cancelled: colors.muted,
 };

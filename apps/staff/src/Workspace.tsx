@@ -94,7 +94,7 @@ const sectionOn = (id: Section, addOns: AddOnSettings) => {
 // Below this width the menu folds away behind a button, as on phones and iPads held upright.
 const RAIL_BREAKPOINT = 1024;
 
-/** The signed-in app: a menu on the left and the chosen section beside it. */
+/** The signed-in app: a menu bar across the top and the chosen section under it (a fold-away menu on narrow screens). */
 export function Workspace({ settings, onChangeSettings, onSignOut }: { settings: Settings; onChangeSettings: (s: Settings) => void; onSignOut: () => void }) {
   const { apiUrl, courseSlug, apiKey } = settings;
   const client = useMemo(() => createClient({ apiUrl, courseSlug, apiKey }), [apiUrl, courseSlug, apiKey]);
@@ -179,7 +179,35 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
     setMenuOpen(false);
   };
 
-  const menu = (
+  const account = (top?: boolean) => (
+    <AccountMenu
+      top={top}
+      client={client}
+      course={course}
+      me={me}
+      isManager={isManager}
+      station={settings.station}
+      page={SECTIONS.find((s) => s.id === section)?.label ?? section}
+      onGo={(to) => {
+        setOnlyMine(to === "schedule");
+        if (to === "help" && section !== "help") setHelpFrom(SECTIONS.find((s) => s.id === section)?.label ?? null);
+        go(to);
+      }}
+      onSignOut={signOut}
+    />
+  );
+  const menu = rail ? (
+    <TopBar
+      courseName={course?.name ?? "Loading…"}
+      section={section}
+      onGo={go}
+      settings={settings}
+      onChangeSettings={onChangeSettings}
+      isManager={isManager}
+      addOns={addOns}
+      account={account(true)}
+    />
+  ) : (
     <SideMenu
       courseName={course?.name ?? "Loading…"}
       section={section}
@@ -190,23 +218,8 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
       addOns={addOns}
       me={me}
       onSignOut={signOut}
-      onClose={rail ? undefined : () => setMenuOpen(false)}
-      account={
-        <AccountMenu
-          client={client}
-          course={course}
-          me={me}
-          isManager={isManager}
-          station={settings.station}
-          page={SECTIONS.find((s) => s.id === section)?.label ?? section}
-          onGo={(to) => {
-            setOnlyMine(to === "schedule");
-            if (to === "help" && section !== "help") setHelpFrom(SECTIONS.find((s) => s.id === section)?.label ?? null);
-            go(to);
-          }}
-          onSignOut={signOut}
-        />
-      }
+      onClose={() => setMenuOpen(false)}
+      account={account()}
     />
   );
   const openMenu = rail ? undefined : () => setMenuOpen(true);
@@ -215,7 +228,7 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
   return (
     <AddOnsProvider value={addOns}>
     <CardReaderProvider client={client} terminalId={settings.terminalId}>
-    <View style={styles.page}>
+    <View style={[styles.page, rail && { flexDirection: "column" }]}>
       {rail && menu}
       <View style={styles.main}>
         {needsStart && section === "inventory" ? (
@@ -396,6 +409,117 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
   );
 }
 
+// Roughly how wide a menu item's label is, to decide which fit in the bar before the rest go under More.
+const navWidth = (label: string) => label.length * 7.4 + 26;
+
+/** The menu across the top on wide screens: course, sections, station and account. Sections that don't fit go under More. */
+function TopBar(props: {
+  courseName: string;
+  section: Section;
+  onGo: (s: Section) => void;
+  settings: Settings;
+  onChangeSettings: (s: Settings) => void;
+  isManager: boolean;
+  addOns: AddOnSettings;
+  account: React.ReactNode;
+}) {
+  const { courseName, section, onGo, settings, onChangeSettings, isManager, account } = props;
+  const { width } = useWindowDimensions();
+  const [moreOpen, setMoreOpen] = useState(false);
+  const visible = SECTIONS.filter((s) => sectionOn(s.id, props.addOns) && (!s.managers || isManager) && (s.starters !== false || isManager || settings.station !== "starter") && s.inMenu !== false);
+  // Course name, station switch, account and the More button take this much of the bar.
+  let room = width - 220 - (isManager ? 170 : 100) - 200 - 80;
+  const shown: typeof visible = [];
+  const more: typeof visible = [];
+  for (const s of visible) {
+    const w = navWidth(s.label);
+    if (!more.length && w <= room) {
+      shown.push(s);
+      room -= w;
+    } else more.push(s);
+  }
+  const moreHolds = more.some((s) => s.id === section);
+  const link = (s: (typeof SECTIONS)[number]) => {
+    const on = s.id === section;
+    return (
+      <Pressable
+        key={s.id}
+        accessibilityRole="link"
+        accessibilityState={{ selected: on }}
+        aria-current={on ? "page" : undefined}
+        onPress={() => onGo(s.id)}
+        style={({ hovered, focused }: WebPress) => [styles.topItem, on && styles.topItemOn, hovered && !on && { backgroundColor: colors.railHover }, focused && styles.focusRing]}
+      >
+        <Text style={[styles.topText, on && { color: "#fff", fontWeight: "600" }]} numberOfLines={1}>{s.label}</Text>
+      </Pressable>
+    );
+  };
+  return (
+    <View role="navigation" aria-label="Main menu" style={styles.topBar}>
+      <View style={styles.topCourse}>
+        <Text style={styles.topCourseName} numberOfLines={1}>{courseName}</Text>
+        <Text style={styles.topCourseSub}>COURSE OPERATIONS</Text>
+      </View>
+      <View style={{ flex: 1, flexDirection: "row", alignItems: "stretch", minWidth: 0, paddingLeft: 6 }}>
+        {shown.map(link)}
+        {more.length > 0 && (
+          <View>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ expanded: moreOpen }}
+              onPress={() => setMoreOpen(!moreOpen)}
+              style={({ hovered, focused }: WebPress) => [styles.topItem, moreHolds && styles.topItemOn, (hovered || moreOpen) && { backgroundColor: colors.railHover }, focused && styles.focusRing]}
+            >
+              <Text style={[styles.topText, moreHolds && { color: "#fff", fontWeight: "600" }]}>More ▾</Text>
+            </Pressable>
+            {moreOpen && (
+              <View role="menu" style={styles.moreMenu}>
+                {more.map((s) => (
+                  <Pressable
+                    key={s.id}
+                    role="menuitem"
+                    aria-current={s.id === section ? "page" : undefined}
+                    onPress={() => {
+                      setMoreOpen(false);
+                      onGo(s.id);
+                    }}
+                    style={({ hovered, focused }: WebPress) => [styles.moreItem, (hovered || focused) && { backgroundColor: colors.primaryLight }]}
+                  >
+                    <Icon name={SECTION_ICON[s.id]} size={15} color={s.id === section ? colors.primary : colors.muted} />
+                    <Text style={[styles.moreText, s.id === section && { fontWeight: "700", color: colors.primaryText }]}>{s.label}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            )}
+          </View>
+        )}
+      </View>
+      <View style={styles.topStation}>
+        {/* Staff stay on the station they signed in to; managers can switch. */}
+        {isManager ? (
+          (["proshop", "starter"] as const).map((st) => {
+            const on = settings.station === st;
+            return (
+              <Pressable
+                key={st}
+                accessibilityRole="button"
+                accessibilityState={{ selected: on }}
+                onPress={() => onChangeSettings({ ...settings, station: st })}
+                style={({ focused }: WebPress) => [styles.stationButton, on && { backgroundColor: colors.primary, borderColor: colors.primary }, st === "starter" && { marginLeft: -1 }, focused && styles.focusRing]}
+              >
+                <Text style={[styles.stationButtonText, on && { color: "#fff" }]}>{STATION_LABEL[st]}</Text>
+              </Pressable>
+            );
+          })
+        ) : (
+          <Text style={styles.topStationTag}>{STATION_LABEL[settings.station]}</Text>
+        )}
+      </View>
+      {account}
+    </View>
+  );
+}
+
 function SideMenu(props: {
   courseName: string;
   section: Section;
@@ -431,7 +555,7 @@ function SideMenu(props: {
           styles.navItem,
           nested && { paddingLeft: 41 },
           on && styles.navItemOn,
-          hovered && !on && { backgroundColor: "#1d3826" },
+          hovered && !on && { backgroundColor: colors.railHover },
           focused && styles.focusRing,
         ]}
       >
@@ -479,7 +603,7 @@ function SideMenu(props: {
                 accessibilityRole="button"
                 accessibilityState={{ expanded: open }}
                 onPress={() => setOpenGroup(open ? undefined : group)}
-                style={({ hovered, focused }: WebPress) => [styles.navItem, hovered && { backgroundColor: "#1d3826" }, focused && styles.focusRing]}
+                style={({ hovered, focused }: WebPress) => [styles.navItem, hovered && { backgroundColor: colors.railHover }, focused && styles.focusRing]}
               >
                 <Icon name={GROUP_ICON[group]} size={17} color={holdsCurrent && !open ? "#fff" : colors.railMuted} />
                 <Text style={[styles.navText, holdsCurrent && !open && { fontWeight: "700", color: "#fff" }]}>{GROUP_LABEL[group]}</Text>
@@ -589,9 +713,24 @@ function ReportsArea({ client, me, isManager, timeZone, onOpenStaff }: { client:
 const STATION_LABEL: Record<Settings["station"], string> = { proshop: "Pro shop", starter: "Starter" };
 
 const styles = StyleSheet.create({
-  stationTag: { color: "#fff", backgroundColor: colors.primary, borderRadius: 3, paddingVertical: 8, fontSize: 14, fontWeight: "600", textAlign: "center" },
+  topBar: { zIndex: 30, height: 50, flexDirection: "row", alignItems: "stretch", backgroundColor: colors.rail },
+  topCourse: { justifyContent: "center", paddingLeft: 20, paddingRight: 20, borderRightWidth: 1, borderColor: colors.railLine, maxWidth: 220 },
+  topCourseName: { color: colors.railText, fontSize: 14, fontWeight: "700", letterSpacing: 0.3 },
+  topCourseSub: { color: colors.railMuted, fontSize: 10, letterSpacing: 1.2 },
+  topItem: { justifyContent: "center", paddingHorizontal: 12, height: 50 },
+  // The open section is underlined in light green, like a tab.
+  topItemOn: { boxShadow: `inset 0 -3px 0 ${colors.railAccent}` } as object,
+  topText: { color: colors.railMuted, fontSize: 13, fontWeight: "500" },
+  moreMenu: { position: "absolute", top: 50, left: 0, minWidth: 200, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, paddingVertical: 4, boxShadow: "0 4px 14px rgba(0,0,0,0.14)" } as object,
+  moreItem: { flexDirection: "row", alignItems: "center", gap: 10, minHeight: 36, paddingHorizontal: 12 },
+  moreText: { fontSize: 14, color: colors.text },
+  topStation: { flexDirection: "row", alignItems: "center", paddingHorizontal: 14, borderLeftWidth: 1, borderColor: colors.railLine },
+  stationButton: { borderWidth: 1, borderColor: colors.toolbarLine, paddingHorizontal: 10, paddingVertical: 5 },
+  stationButtonText: { color: colors.railMuted, fontSize: 12, fontWeight: "600" },
+  topStationTag: { color: "#fff", backgroundColor: colors.primary, paddingHorizontal: 10, paddingVertical: 5, fontSize: 12, fontWeight: "600" },
+  stationTag: { color: "#fff", backgroundColor: colors.primary, borderRadius: 0, paddingVertical: 8, fontSize: 14, fontWeight: "600", textAlign: "center" },
   page: { flex: 1, flexDirection: "row", backgroundColor: colors.bg },
-  tabs: { flexDirection: "row", flexWrap: "wrap", borderBottomWidth: 1, borderColor: colors.border, paddingHorizontal: 16, backgroundColor: colors.card },
+  tabs: { flexDirection: "row", flexWrap: "wrap", borderBottomWidth: 1, borderColor: colors.border, paddingHorizontal: 16, backgroundColor: colors.strip },
   tab: { paddingHorizontal: 14, paddingVertical: 9, borderBottomWidth: 2, borderColor: "transparent", marginBottom: -1 },
   tabOn: { borderColor: colors.primary },
   tabText: { fontSize: 14, color: colors.muted, fontWeight: "600" },
@@ -599,10 +738,10 @@ const styles = StyleSheet.create({
   main: { flex: 1, minWidth: 0 },
   rail: { width: 240, backgroundColor: colors.rail, paddingTop: 16, height: "100%" },
   railTop: { flexDirection: "row", alignItems: "flex-start", paddingHorizontal: 12, marginBottom: 14 },
-  courseBox: { flex: 1, flexDirection: "row", alignItems: "center", gap: 10, borderWidth: 1, borderColor: "#3a3e44", borderRadius: 3, paddingHorizontal: 10, paddingVertical: 8 },
+  courseBox: { flex: 1, flexDirection: "row", alignItems: "center", gap: 10, borderWidth: 1, borderColor: colors.railLine, borderRadius: 0, paddingHorizontal: 10, paddingVertical: 8 },
   brand: { color: colors.railMuted, fontSize: 11, fontWeight: "700", letterSpacing: 1, textTransform: "uppercase" },
   course: { color: colors.railText, fontSize: 14, fontWeight: "700", marginTop: 1 },
-  navItem: { flexDirection: "row", alignItems: "center", gap: 12, minHeight: 36, paddingHorizontal: 12, marginHorizontal: 8, borderRadius: 3 },
+  navItem: { flexDirection: "row", alignItems: "center", gap: 12, minHeight: 36, paddingHorizontal: 12, marginHorizontal: 8, borderRadius: 0 },
   navItemOn: { backgroundColor: colors.railActive },
   navIcon: { color: colors.railText, fontSize: 14, width: 20, textAlign: "center" },
   navText: { color: colors.railText, fontSize: 14, flex: 1 },
@@ -611,13 +750,13 @@ const styles = StyleSheet.create({
   focusRing: { outlineColor: colors.focus, outlineWidth: 2, outlineStyle: "solid" } as object,
   drawerWrap: { flex: 1, flexDirection: "row" },
   backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.45)" },
-  menuButton: { width: 44, height: 44, alignItems: "center", justifyContent: "center", borderRadius: 3 },
+  menuButton: { width: 44, height: 44, alignItems: "center", justifyContent: "center", borderRadius: 0 },
   menuIcon: { fontSize: 18, color: colors.text },
   content: { padding: 16, maxWidth: 640 },
   label: { fontSize: 12, fontWeight: "700", color: colors.muted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 },
   help: { color: colors.muted, fontSize: 14, lineHeight: 22 },
   soonTitle: { fontSize: 17, fontWeight: "700", color: colors.text, marginBottom: 8 },
-  button: { backgroundColor: colors.primary, borderRadius: 3, paddingHorizontal: 12, minHeight: 36, justifyContent: "center", alignSelf: "flex-start", marginTop: 4 },
+  button: { backgroundColor: colors.primary, borderRadius: 0, paddingHorizontal: 12, minHeight: 36, justifyContent: "center", alignSelf: "flex-start", marginTop: 4 },
   buttonQuiet: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, marginTop: 12 },
   buttonText: { color: "#fff", fontSize: 14, fontWeight: "600" },
 });

@@ -69,9 +69,9 @@ const count = (n: number) => n.toLocaleString("en-US");
 const hourLabel = (h: number) => `${h % 12 || 12}${h < 12 ? "a" : "p"}`;
 
 const DEPARTMENTS: { key: keyof Omit<Departments, "totalCents">; label: string; color: string }[] = [
-  { key: "greenFeesCents", label: "Green fees", color: "#1f6fd1" },
-  { key: "cartsAndExtrasCents", label: "Carts and extras", color: "#7fb0ea" },
-  { key: "proShopCents", label: "Pro shop", color: "#2e7d4f" },
+  { key: "greenFeesCents", label: "Green fees", color: "#1d6b47" },
+  { key: "cartsAndExtrasCents", label: "Carts and extras", color: "#8cc4a5" },
+  { key: "proShopCents", label: "Pro shop", color: "#2563c9" },
   { key: "foodBevCents", label: "Food and drink", color: "#c27c0e" },
   { key: "eventsCents", label: "Leagues and outings", color: "#7b4fb3" },
 ];
@@ -1023,7 +1023,7 @@ function RoundsView({ o }: { o: Overview }) {
   const r = o.rounds;
   const p = o.previous?.rounds;
   const sources = Object.entries(r.bySource).sort((a, b) => b[1] - a[1]);
-  const SOURCE_COLORS = ["#1f6fd1", "#7fb0ea", "#2e7d4f", "#c27c0e", "#7b4fb3"];
+  const SOURCE_COLORS = ["#1d6b47", "#8cc4a5", "#2563c9", "#c27c0e", "#7b4fb3"];
   const firstLoops = o.rateMix.filter((m) => !m.isReplay).reduce((t, m) => t + m.rounds, 0);
   const prevMix = new Map((o.previous?.rateMix ?? []).map((m) => [m.code, m]));
   return (
@@ -1049,7 +1049,7 @@ function RoundsView({ o }: { o: Overview }) {
 
       <View style={styles.columns}>
         <Card title="Who's playing" half>
-          <SplitBar title="Holes" parts={[["18 holes", r.holes18, "#1f6fd1"], ["9 holes", r.holes9, "#7fb0ea"]]} prev={p && [p.holes18, p.holes9]} />
+          <SplitBar title="Holes" parts={[["18 holes", r.holes18, "#1d6b47"], ["9 holes", r.holes9, "#8cc4a5"]]} prev={p && [p.holes18, p.holes9]} />
           <SplitBar title="Walking or riding" parts={[["Riding", r.riding, "#2e7d4f"], ["Walking", r.walking, "#9cc9ad"]]} prev={p && [p.riding, p.walking]} />
           <SplitBar title="Booked through" parts={sources.map(([s, n], i) => [SOURCE_LABEL[s] ?? s, n, SOURCE_COLORS[i % SOURCE_COLORS.length]])} />
           <WeekSplit r={r} p={p} />
@@ -1183,7 +1183,7 @@ const styles = StyleSheet.create({
   legend: { flexDirection: "row", flexWrap: "wrap", gap: 12, marginTop: 10, alignItems: "center" },
   legendItem: { flexDirection: "row", alignItems: "center", gap: 5 },
   legendText: { fontSize: 12, color: colors.muted },
-  swatch: { width: 10, height: 10, borderRadius: 2 },
+  swatch: { width: 10, height: 10, borderRadius: 0 },
   sizes: { justifyContent: "flex-end", marginBottom: 2 },
   mark: { position: "absolute", left: "8%", right: "8%", height: 0 },
   markBefore: { borderTopWidth: 2, borderColor: "#3a3e44" },
@@ -1198,13 +1198,13 @@ const styles = StyleSheet.create({
   help: { fontSize: 11, color: colors.muted, marginTop: 1 },
   rowLine: { flexDirection: "row", alignItems: "center", gap: 6 },
   share: { fontSize: 12, color: colors.muted, marginLeft: "auto" },
-  track: { height: 6, backgroundColor: "#eceef1", borderRadius: 2, overflow: "hidden", marginTop: 5 },
+  track: { height: 6, backgroundColor: "#eceef1", borderRadius: 0, overflow: "hidden", marginTop: 5 },
   fill: { height: "100%" },
   tag: { fontSize: 10, fontWeight: "700", color: colors.muted, letterSpacing: 0.5 },
   heatRow: { flexDirection: "row", alignItems: "center", gap: 3, marginBottom: 3 },
   heatDay: { width: 34 },
   heatHead: { flex: 1, minWidth: 34, textAlign: "center" },
-  heatCell: { flex: 1, minWidth: 34, height: 30, borderRadius: 2, alignItems: "center", justifyContent: "center" },
+  heatCell: { flex: 1, minWidth: 34, height: 30, borderRadius: 0, alignItems: "center", justifyContent: "center" },
   heatEmpty: { borderWidth: 1, borderColor: "#eceef1", borderStyle: "dashed" },
   heatText: { fontSize: 11, fontWeight: "600", color: colors.text, fontVariant: ["tabular-nums"] },
   notice: { backgroundColor: "#fff6e0", borderWidth: 1, borderColor: "#ecd9a6", borderRadius: radius, padding: 10, gap: 4, marginBottom: 12 },

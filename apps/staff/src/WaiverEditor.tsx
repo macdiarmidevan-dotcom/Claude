@@ -111,10 +111,10 @@ const styles = StyleSheet.create({
   body: { padding: 16, paddingBottom: 60, width: "100%", maxWidth: 720, alignSelf: "center" },
   note: { color: colors.muted, fontSize: 13, lineHeight: 20, marginBottom: 16 },
   label: { fontSize: 12, fontWeight: "700", color: colors.muted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 },
-  input: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, padding: 12, fontSize: 14, backgroundColor: colors.card, marginBottom: 16, color: colors.text },
+  input: { borderWidth: 1, borderColor: colors.border, borderRadius: 0, padding: 12, fontSize: 14, backgroundColor: colors.card, marginBottom: 16, color: colors.text },
   bodyInput: { minHeight: 320, lineHeight: 22 },
   error: { color: colors.noShow, marginBottom: 12 },
   saved: { color: colors.checkedIn, fontWeight: "600", marginBottom: 12 },
-  save: { backgroundColor: colors.primary, borderRadius: 3, padding: 16, alignItems: "center", marginBottom: 16 },
+  save: { backgroundColor: colors.primary, borderRadius: 0, padding: 16, alignItems: "center", marginBottom: 16 },
   saveText: { color: "#fff", fontSize: 15, fontWeight: "700" },
 });

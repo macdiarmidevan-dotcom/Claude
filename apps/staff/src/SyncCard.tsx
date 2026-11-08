@@ -238,22 +238,22 @@ function Button(props: { label: string; onPress: () => void; primary?: boolean; 
 }
 
 const styles = StyleSheet.create({
-  card: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: 3, padding: 14, marginBottom: 28 },
+  card: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: 0, padding: 14, marginBottom: 28 },
   row: { flexDirection: "row", alignItems: "center", gap: 10 },
   title: { fontSize: 16, fontWeight: "700", color: colors.text, marginBottom: 6 },
-  pill: { fontSize: 12, fontWeight: "700", color: colors.muted, borderWidth: 1, borderColor: colors.border, borderRadius: 3, paddingHorizontal: 10, paddingVertical: 3 },
+  pill: { fontSize: 12, fontWeight: "700", color: colors.muted, borderWidth: 1, borderColor: colors.border, borderRadius: 0, paddingHorizontal: 10, paddingVertical: 3 },
   pillOn: { color: "#fff", backgroundColor: colors.checkedIn, borderColor: colors.checkedIn },
   text: { color: colors.text, fontSize: 14, lineHeight: 22, marginTop: 4 },
   muted: { color: colors.muted, fontSize: 13, marginTop: 6 },
   label: { fontSize: 12, fontWeight: "700", color: colors.muted, textTransform: "uppercase", letterSpacing: 0.5, marginTop: 14, marginBottom: 6 },
   status: { borderLeftWidth: 4, paddingLeft: 12, paddingVertical: 4, marginTop: 14 },
   statusTitle: { fontWeight: "700", fontSize: 14 },
-  notice: { backgroundColor: colors.primaryLight, borderRadius: 3, padding: 12, marginTop: 10 },
+  notice: { backgroundColor: colors.primaryLight, borderRadius: 0, padding: 12, marginTop: 10 },
   error: { color: colors.noShow, marginTop: 10 },
   actions: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 },
-  button: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, paddingHorizontal: 14, minHeight: 36, justifyContent: "center", backgroundColor: colors.card },
+  button: { borderWidth: 1, borderColor: colors.border, borderRadius: 0, paddingHorizontal: 14, minHeight: 36, justifyContent: "center", backgroundColor: colors.card },
   buttonOn: { backgroundColor: colors.primary, borderColor: colors.primary },
   buttonText: { fontSize: 14, fontWeight: "600", color: colors.text },
-  input: { borderWidth: 1, borderColor: colors.border, borderRadius: 3, padding: 11, fontSize: 14, color: colors.text, backgroundColor: "#fff" },
+  input: { borderWidth: 1, borderColor: colors.border, borderRadius: 0, padding: 11, fontSize: 14, color: colors.text, backgroundColor: "#fff" },
   focus: { outlineColor: colors.focus, outlineWidth: 2, outlineStyle: "solid" } as object,
 });
