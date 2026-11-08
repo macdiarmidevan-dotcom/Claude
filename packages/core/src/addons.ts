@@ -40,7 +40,7 @@ export const ADD_ONS: AddOnInfo[] = [
   { key: "radar", group: "tee_sheet", name: "Weather radar", description: "A Radar page with the National Weather Service radar loop around the course.", defaultOn: true },
   { key: "weather_delays", group: "tee_sheet", name: "Weather delays", description: "Push the tee sheet back for frost, rain or lightning and tell the golfers whose times moved.", defaultOn: true },
   { key: "tee_sheet_prices", group: "tee_sheet", name: "Prices on the tee sheet", description: "Show each tee time's standard green fee next to the time.", defaultOn: true },
-  { key: "color_key_open", group: "tee_sheet", name: "Color key always showing", description: "Keep the key to the player colors open above the tee sheet instead of behind a button.", defaultOn: false },
+  { key: "color_key_open", group: "tee_sheet", name: "Color key", description: "Show the key to the player colors in the strip above the tee sheet.", defaultOn: true },
   { key: "tee_sheet_sync", group: "tee_sheet", name: "Booking provider sync", description: "Pull tee times and bookings in from TeeItUp, GolfNow or a CSV export.", defaultOn: true },
   { key: "messages", group: "customers", name: "Golfer messaging", description: "Email and text golfers: everyone on a day, a league, account holders or one golfer.", defaultOn: true },
   { key: "gift_cards", group: "customers", name: "Gift cards", description: "Sell, reload and redeem gift cards at check-in and the register.", defaultOn: true },
