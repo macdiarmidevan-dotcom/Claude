@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import type { Client, PriceAddOn, PriceRate, RateInput } from "./api";
+import type { Client, Overview, PriceAddOn, PriceRate, RateInput } from "./api";
+import { addDays, todayIn } from "./dates";
+import { ChartCard, DOWN, HBars, Row, Tile, Tiles, UP } from "./PricingCharts";
 import { colors, formatTime, money, type WebPress } from "./theme";
 
 // Pricing: green fee rates, and the carts, rentals and other extras golfers add to a round. Everyone can look;
@@ -55,7 +57,7 @@ function useRun(load: () => void, onChanged?: () => void) {
   return { error, setError, run };
 }
 
-export function PricingScreen({ client, isManager, onChanged }: { client: Client; isManager: boolean; onChanged?: () => void }) {
+export function PricingScreen({ client, isManager, onChanged, timeZone }: { client: Client; isManager: boolean; onChanged?: () => void; timeZone?: string }) {
   const [rates, setRates] = useState<PriceRate[]>();
   const [editing, setEditing] = useState<string>(); // a rate id, or "new"
   const load = () => {
@@ -97,6 +99,7 @@ export function PricingScreen({ client, isManager, onChanged }: { client: Client
       <Text style={[styles.help, { marginBottom: 12 }]}>
         Each player pays the most specific rate that fits their tee time and profile: a rate for seniors beats one for everyone, and a rate with hours beats an all-day one. Bookings keep the price they were made at.
       </Text>
+      {isManager && timeZone && <PricingGlance client={client} timeZone={timeZone} rates={rates} />}
       {isManager &&
         (editing === "new" ? (
           <View style={styles.card}>
@@ -113,6 +116,75 @@ export function PricingScreen({ client, isManager, onChanged }: { client: Client
       <Extras client={client} isManager={isManager} onChanged={onChanged} />
       {!isManager && <Text style={styles.help}>Only a manager can change prices.</Text>}
     </ScrollView>
+  );
+}
+
+const RESIDENCY_COLOR = { resident: "#2563c9", nonresident: colors.primary, any: "#6b4fa0" } as const;
+
+/** Managers: what golfers actually paid in the last 30 days, the rate mix, and the rate card as a chart. */
+function PricingGlance({ client, timeZone, rates }: { client: Client; timeZone: string; rates: PriceRate[] | undefined }) {
+  const [o, setO] = useState<Overview>();
+  const [error, setError] = useState<string>();
+  useEffect(() => {
+    const today = todayIn(timeZone);
+    client.overview(addDays(today, -30), addDays(today, -1), "previous").then(setO).catch((e) => setError(e.message));
+  }, [client, timeZone]);
+  if (error) return <Text style={[styles.help, { marginBottom: 12 }]}>Couldn't load the last 30 days: {error}</Text>;
+  if (!o) return null;
+  const prev = o.previous;
+  const vs = (now: number | null, before: number | null | undefined, unit: (x: number) => string) => {
+    if (now === null || before === null || before === undefined || before === 0) return { note: "No earlier 30 days to compare", tone: undefined };
+    const d = (now - before) / before;
+    const r = Math.round(d * 1000) / 10;
+    return { note: `${r > 0 ? "+" : r < 0 ? "−" : ""}${Math.abs(r)}% on the 30 days before (${unit(before)})`, tone: r > 0 ? UP : r < 0 ? DOWN : undefined };
+  };
+  const extrasPer = (rev: { cartsAndExtrasCents: number }, rounds: number) => (rounds ? Math.round(rev.cartsAndExtrasCents / rounds) : null);
+  const avg = vs(o.yield.avgGreenFeeCents, prev?.yield.avgGreenFeeCents, money);
+  const patt = vs(o.yield.revPattCents, prev?.yield.revPattCents, money);
+  const rounds = vs(o.rounds.rounds, prev?.rounds.rounds, (x) => String(x));
+  const ex = vs(extrasPer(o.revenue, o.rounds.rounds), prev ? extrasPer(prev.revenue, prev.rounds.rounds) : null, money);
+  const mix = [...o.rateMix].sort((a, b) => b.revenueCents - a.revenueCents).slice(0, 10);
+  const mixRounds = mix.reduce((s, r) => s + r.rounds, 0);
+  const card = (rates ?? []).filter((r) => !r.isReplay).sort((a, b) => b.priceCents - a.priceCents);
+  const wholeDollars = (c: number) => `$${Math.round(c / 100).toLocaleString("en-US")}`;
+  return (
+    <View>
+      <Text role="heading" aria-level={2} style={[styles.title, { marginBottom: 8 }]}>Last 30 days</Text>
+      <Tiles>
+        <Tile label="Average green fee paid" value={o.yield.avgGreenFeeCents === null ? "–" : money(o.yield.avgGreenFeeCents)} note={avg.note} tone={avg.tone} />
+        <Tile label="Below your top rate" value={o.avgDiscountPct === null ? "–" : `${Math.round(o.avgDiscountPct)}%`} note={o.topRateCents === null ? "No top rate" : `Average against ${money(o.topRateCents)}`} />
+        <Tile label="Green fees per open spot" value={o.yield.revPattCents === null ? "–" : money(o.yield.revPattCents)} note={patt.note} tone={patt.tone} />
+        <Tile label="Rounds" value={o.rounds.rounds.toLocaleString("en-US")} note={o.rounds.occupancy === null ? rounds.note : `${Math.round(o.rounds.occupancy)}% of open spots filled`} tone={rounds.tone} />
+        <Tile label="Carts and extras per round" value={extrasPer(o.revenue, o.rounds.rounds) === null ? "–" : money(extrasPer(o.revenue, o.rounds.rounds)!)} note={ex.note} tone={ex.tone} />
+      </Tiles>
+      <Row>
+        <ChartCard half title="Green fee money by rate" note="Which rates the money came from in the last 30 days, with how many rounds and the average paid.">
+          <HBars
+            rows={mix.map((r) => ({
+              label: r.name,
+              sub: `${r.rounds} rounds (${mixRounds ? Math.round((r.rounds / mixRounds) * 100) : 0}%)${r.avgCents === null ? "" : ` · avg ${money(r.avgCents)}`}`,
+              value: r.revenueCents,
+              text: wholeDollars(r.revenueCents),
+              color: r.isReplay ? "#8a94a3" : colors.primary,
+            }))}
+          />
+        </ChartCard>
+        <ChartCard half title="Your green fee rates" note="Every green fee from highest to lowest, colored by who it's for.">
+          <HBars
+            rows={card.map((r) => ({ label: r.name, sub: rateTerms(r), value: r.priceCents, text: money(r.priceCents), color: RESIDENCY_COLOR[r.residency ?? "any"] }))}
+          />
+          <View style={styles.legendRow}>
+            {(["nonresident", "resident", "any"] as const).filter((k) => card.some((r) => (r.residency ?? "any") === k)).map((k) => (
+              <View key={k} style={styles.legendItem}>
+                <View style={[styles.swatch, { backgroundColor: RESIDENCY_COLOR[k] }]} />
+                <Text style={styles.help}>{k === "any" ? "Everyone" : k === "resident" ? "Residents" : "Nonresidents"}</Text>
+              </View>
+            ))}
+          </View>
+        </ChartCard>
+      </Row>
+      <Text role="heading" aria-level={2} style={[styles.title, { marginBottom: 8, marginTop: 4 }]}>Rates</Text>
+    </View>
   );
 }
 
@@ -291,6 +363,9 @@ const styles = StyleSheet.create({
   page: { padding: 16 },
   card: { borderWidth: 1, borderColor: colors.border, borderRadius: 0, padding: 14, backgroundColor: colors.card, marginBottom: 14 },
   title: { fontSize: 15, fontWeight: "700", color: colors.text, marginBottom: 4 },
+  legendRow: { flexDirection: "row", flexWrap: "wrap", gap: 12, marginTop: 10 },
+  legendItem: { flexDirection: "row", alignItems: "center", gap: 5 },
+  swatch: { width: 10, height: 10 },
   strong: { fontSize: 14, fontWeight: "600", color: colors.text },
   help: { color: colors.muted, fontSize: 13, lineHeight: 19 },
   error: { color: colors.noShow, marginBottom: 8, fontSize: 13 },

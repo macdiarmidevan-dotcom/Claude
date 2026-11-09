@@ -308,7 +308,7 @@ export function Workspace({ settings, onChangeSettings, onSignOut }: { settings:
         ) : section === "pricing" ? (
           <>
             <Header title="Pricing" onOpenMenu={openMenu} subtitle="Green fees, replays, carts and rentals" />
-            <PricingArea client={client} isManager={isManager} onChanged={refreshCourse} />
+            <PricingArea client={client} isManager={isManager} onChanged={refreshCourse} timeZone={course?.timeZone} />
           </>
         ) : section === "add-ons" ? (
           <>
@@ -653,10 +653,10 @@ function CustomersArea({ client, isManager, customers }: { client: Client; isMan
 }
 
 /** Pricing: the rates and extras, and for managers the recommended rates (an add-on). */
-function PricingArea({ client, isManager, onChanged }: { client: Client; isManager: boolean; onChanged: () => void }) {
+function PricingArea({ client, isManager, onChanged, timeZone }: { client: Client; isManager: boolean; onChanged: () => void; timeZone?: string }) {
   const [part, setPart] = useState<"rates" | "advice">("rates");
   const adviceOn = useAddOn("rate_advice") && isManager;
-  const rates = <PricingScreen client={client} isManager={isManager} onChanged={onChanged} />;
+  const rates = <PricingScreen client={client} isManager={isManager} onChanged={onChanged} timeZone={timeZone} />;
   if (!adviceOn) return rates;
   return (
     <View style={{ flex: 1 }}>
