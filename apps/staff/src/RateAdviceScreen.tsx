@@ -3,6 +3,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { TIME_BANDS, type AdviceCell } from "@golf/core";
 import type { AdviceBasis, Client, RateAdvice } from "./api";
 import { colors, money, type WebPress } from "./theme";
+import { BAND_COLORS, ChartCard, DOWN, GroupedColumns, Legend, PriceMoves, Row, SignedColumns, Tile, Tiles, TODAY, UP } from "./PricingCharts";
 
 // Recommended rates: a suggested green fee for each day and time of day, from how full the tee
 // sheet was. Managers only. It never changes a price; the manager decides, and changes the rate
@@ -69,17 +70,10 @@ export function RateAdviceScreen({ client }: { client: Client }) {
             </Pressable>
           ))}
         </View>
-        {advice && (
-          <View style={styles.stats}>
-            <Stat label="Expected if you follow them all" value={`${advice.weeklyGainCents >= 0 ? "+" : "−"}${money(Math.abs(advice.weeklyGainCents))} a week`} />
-            <Stat label="Raise" value={String(count("raise"))} />
-            <Stat label="Lower" value={String(count("lower"))} />
-            <Stat label="Keep" value={String(count("hold"))} />
-            <Stat label="Average fill" value={`${Math.round(advice.averageFillPct)}%`} />
-            <Stat label="Based on" value={`${shortDate(advice.from)} to ${shortDate(advice.to)}`} />
-          </View>
-        )}
+        {advice && <Text style={[styles.help, { marginTop: 10 }]}>Based on {shortDate(advice.from)} to {shortDate(advice.to)}.</Text>}
       </View>
+
+      {advice && <AdviceGlance advice={advice} count={count} />}
 
       {advice && (
         <View style={styles.card}>
@@ -138,6 +132,8 @@ export function RateAdviceScreen({ client }: { client: Client }) {
         </View>
       )}
 
+      {advice && <AdviceCharts advice={advice} />}
+
       {a && (
         <Text style={styles.help}>
           How it works: there's no way to know yet whether your overall price level is right, so a time as full as your average ({Math.round(advice!.averageFillPct)}% for this period) keeps today's rate, and the rest are priced around it. Golfers who want busy times are assumed to care less about price than golfers at quiet times. Times at least {Math.round(a.fullAt * 100)}% full are treated as turning golfers away. Suggestions stay within {Math.round(a.maxChange * 100)}% of today's rate and aim for no more than {Math.round(a.targetFill * 100)}% full to leave room for walk-ups. Food and pro shop sales aren't counted yet. Price tests at your course will replace these guesses later.
@@ -146,6 +142,75 @@ export function RateAdviceScreen({ client }: { client: Client }) {
 
       {advice && <AdviceData advice={advice} />}
     </ScrollView>
+  );
+}
+
+const whole = (cents: number) => `${cents < 0 ? "−" : ""}$${Math.round(Math.abs(cents) / 100).toLocaleString("en-US")}`;
+const signedWhole = (cents: number) => (Math.round(cents / 100) === 0 ? "$0" : `${cents > 0 ? "+" : "−"}${whole(Math.abs(cents))}`);
+
+/** The headline numbers: what following the advice is worth, how full the course is, and how many prices move. */
+function AdviceGlance({ advice, count }: { advice: RateAdvice; count: (s: AdviceCell["status"]) => number }) {
+  const priced = advice.cells.filter((c) => c.recommendedCents !== null);
+  const spots = priced.reduce((s, c) => s + c.spots, 0);
+  const now = priced.reduce((s, c) => s + c.greenFeeCents + c.extrasCents, 0);
+  const expected = priced.reduce((s, c) => s + (c.projectedRevenuePerSpotCents ?? 0) * c.spots, 0);
+  const moves = priced.filter((c) => c.status !== "hold").map((c) => (c.recommendedCents! - c.currentCents!) / c.currentCents!);
+  const full = advice.cells.filter((c) => c.turnedAway).length;
+  const pct = (x: number) => `${x > 0 ? "+" : x < 0 ? "−" : ""}${Math.round(Math.abs(x) * 100)}%`;
+  const maxPct = Math.round(advice.assumptions.maxChange * 100);
+  return (
+    <Tiles>
+      <Tile label="Expected gain a week" value={signedWhole(advice.weeklyGainCents)} note={`About ${signedWhole(advice.weeklyGainCents * 52)} a year if every suggestion is followed`} tone={advice.weeklyGainCents > 0 ? UP : advice.weeklyGainCents < 0 ? DOWN : undefined} />
+      <Tile label="Money per open spot" value={spots ? money(Math.round(now / spots)) : "–"} note={spots ? `${money(Math.round(expected / spots))} expected at suggested prices` : "Not enough data"} />
+      <Tile label="Average fill" value={`${Math.round(advice.averageFillPct)}%`} note={`${full} of 28 times ${full === 1 ? "was" : "were"} ${Math.round(advice.assumptions.fullAt * 100)}% full or more`} />
+      <Tile label="Prices to change" value={`${count("raise")} up · ${count("lower")} down`} note={`${count("hold")} kept, ${count("no_data") + count("no_rate")} without enough data`} />
+      <Tile label="Size of changes" value={moves.length ? `${pct(Math.min(...moves))} to ${pct(Math.max(...moves))}` : "None"} note={`Never more than ${maxPct}% either way`} />
+    </Tiles>
+  );
+}
+
+/** Charts: how full each day and time was, what moves, and where the money comes from. */
+function AdviceCharts({ advice }: { advice: RateAdvice }) {
+  const cells = advice.cells;
+  const at = (day: number, band: string) => cells.find((c) => c.weekday === day && c.band === band)!;
+  const prices = cells.flatMap((c) => (c.currentCents !== null && c.recommendedCents !== null ? [c.currentCents, c.recommendedCents] : []));
+  const lo = prices.length ? Math.floor(Math.min(...prices) / 500) * 500 : 0;
+  const hi = prices.length ? Math.ceil(Math.max(...prices) / 500) * 500 : 10000;
+  const byDay = DAYS.map((label, i) => ({ label, value: cells.filter((c) => c.weekday === i + 1).reduce((s, c) => s + c.weeklyGainCents, 0) }));
+  const perSpot = DAYS.map((label, i) => ({ label, values: TIME_BANDS.map((b) => at(i + 1, b.id).revenuePerSpotCents) }));
+  const topPerSpot = Math.max(1000, ...perSpot.flatMap((g) => g.values.map((v) => v ?? 0)));
+  const series = TIME_BANDS.map((b, i) => ({ label: b.label, color: BAND_COLORS[i]! }));
+  return (
+    <>
+      <Row>
+        <ChartCard half title="How full each day and time was" note={`Players who came over open spots. The dashed line is the course average (${Math.round(advice.averageFillPct)}%): times above it are priced up, times below it down.`}>
+          <GroupedColumns
+            groups={DAYS.map((label, i) => ({ label, values: TIME_BANDS.map((b) => at(i + 1, b.id).fillPct) }))}
+            series={series}
+            max={Math.min(100, Math.ceil(Math.max(10, ...cells.map((c) => c.fillPct ?? 0)) / 10) * 10 + 10)}
+            format={(v) => `${Math.round(v)}%`}
+            reference={{ value: advice.averageFillPct, label: "Course average" }}
+          />
+        </ChartCard>
+        <ChartCard half title="Expected gain a week, by day" note="Extra green fees, carts and extras a week if that day's suggestions are followed.">
+          <SignedColumns items={byDay} format={signedWhole} />
+        </ChartCard>
+      </Row>
+      <ChartCard title="Today's price and the suggested one" note="Nonresident adult green fee. The hollow dot is today's rate and the solid dot the suggestion: green is a raise, orange a cut, grey keeps the price.">
+        <Row>
+          {TIME_BANDS.map((b) => (
+            <View key={b.id} style={styles.moveBox}>
+              <Text style={styles.moveTitle}>{b.label}</Text>
+              <PriceMoves rows={DAYS.map((label, i) => ({ label, today: at(i + 1, b.id).currentCents, suggested: at(i + 1, b.id).recommendedCents }))} min={lo} max={hi} />
+            </View>
+          ))}
+        </Row>
+        <Legend items={[{ label: "Today", color: TODAY, dot: true }, { label: "Raise", color: UP, dot: true }, { label: "Lower", color: DOWN, dot: true }]} />
+      </ChartCard>
+      <ChartCard title="Money per open spot" note="Green fees plus carts and extras over every open spot on the tee sheet, as it went in this period. Busy times that already earn the most are where a raise costs the fewest golfers.">
+        <GroupedColumns groups={perSpot} series={series} max={Math.ceil(topPerSpot / 1000) * 1000} format={(v) => whole(v)} />
+      </ChartCard>
+    </>
   );
 }
 
@@ -285,6 +350,8 @@ const styles = StyleSheet.create({
   chip: { borderWidth: 1, borderColor: colors.border, paddingHorizontal: 10, paddingVertical: 7, backgroundColor: "#fff" },
   chipOn: { backgroundColor: colors.primary, borderColor: colors.primary },
   chipText: { fontSize: 13, color: colors.text },
+  moveBox: { flexGrow: 1, flexBasis: 220, minWidth: 0, paddingVertical: 6, paddingRight: 12 },
+  moveTitle: { fontSize: 12, fontWeight: "700", color: colors.muted, textTransform: "uppercase", marginBottom: 4 },
   stats: { flexDirection: "row", flexWrap: "wrap", gap: 18, marginTop: 12 },
   stat: { minWidth: 110 },
   statLabel: { fontSize: 12, color: colors.muted, fontWeight: "600" },
